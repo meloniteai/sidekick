@@ -9,24 +9,20 @@ import (
 )
 
 var (
-	styleHeader      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	styleGrid        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	styleGoal        = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	styleAxis        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleRunning     = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	styleSnakeOn     = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	styleSnakeOff    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleReason      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleGoalLbl     = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	styleHeader        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	styleGrid          = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	styleGoal          = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	styleAxis          = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleRunning       = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	styleReason        = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	styleGoalLbl       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	styleArrowOutHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 	styleArrowOutTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("88"))
 	styleArrowInHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28"))
-	styleArrowCalHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
-	styleArrowCalTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("54"))
-	styleHeaderBox   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("252"))
-	styleHeaderLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleSessionOn   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("252"))
+	styleHeaderLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	styleSessionOn     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 )
 
 // directionArrow points outward along each compass axis (away from goal toward
@@ -85,11 +81,12 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return "initializing..."
 	}
-	header := m.renderHeader(m.width - 4)
+	header := m.renderHeader(m.width)
 	headerLines := strings.Count(header, "\n") + 1
+	listLines := m.listLineCount()
 
-	gridW := m.width - 4
-	gridH := m.height - headerLines - 4 - len(m.snapshot.Verifiers)
+	gridW := m.width - styleGrid.GetHorizontalFrameSize()
+	gridH := m.height - headerLines - 3 - listLines
 	if gridH < 9 {
 		gridH = 9
 	}
@@ -105,19 +102,19 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	b.WriteString(styleGrid.Render(m.renderGrid(gridW, gridH)))
 	b.WriteString("\n\n")
-	b.WriteString(m.renderList())
-	b.WriteString("\n")
-	b.WriteString(styleReason.Render("press q to quit  ·  press t to trigger"))
+	b.WriteString(m.renderList(m.width))
 	return b.String()
 }
 
 // renderHeader builds the framed metadata box at the top of the screen. The
-// box stretches to the same width as the grid (innerW + 2 for the border) so
-// it visually anchors over the compass below it.
-func (m Model) renderHeader(innerW int) string {
-	if innerW < 24 {
-		innerW = 24
+// box stretches to the same total width as the grid so it visually anchors
+// over the compass below it.
+func (m Model) renderHeader(totalW int) string {
+	if totalW < 28 {
+		totalW = 28
 	}
+	styleW := totalW - styleHeaderBox.GetHorizontalBorderSize()
+	contentW := styleW - styleHeaderBox.GetHorizontalPadding()
 	ver := m.snapshot.Version
 	if ver == "" {
 		ver = "dev"
@@ -145,11 +142,14 @@ func (m Model) renderHeader(innerW int) string {
 	if goal == "" {
 		goalRow += styleReason.Render("(none — submit a prompt or run `hud goal ...`)")
 	} else {
-		goalRow += truncate(goal, innerW-len("goal: ")-2)
+		goalRow += truncate(goal, contentW-len("goal: ")-2)
 	}
 	rows = append(rows, goalRow)
 
-	return styleHeaderBox.Width(innerW).Render(strings.Join(rows, "\n"))
+	// Row 4 — keyboard shortcuts.
+	rows = append(rows, styleHeaderLabel.Render("keys: ")+"q quit  ·  t trigger")
+
+	return styleHeaderBox.Width(styleW).Render(strings.Join(rows, "\n"))
 }
 
 // formatTimestamp renders a wall-clock HH:MM:SS for the header. Zero values
@@ -268,10 +268,6 @@ func (m Model) renderGrid(w, h int) string {
 			if a, ok := arrows[[2]int{c, r}]; ok {
 				var style lipgloss.Style
 				switch {
-				case a.calibrating && a.intensity == 0:
-					style = styleArrowCalHead
-				case a.calibrating:
-					style = styleArrowCalTrail
 				case a.inward && a.intensity == 0:
 					style = styleArrowInHead
 				case a.inward:
@@ -301,52 +297,61 @@ func (m Model) renderGrid(w, h int) string {
 	return sb.String()
 }
 
-func (m Model) renderList() string {
+func (m Model) listLineCount() int {
 	if len(m.snapshot.Verifiers) == 0 {
-		return styleReason.Render("(no verifiers configured)")
+		return 1
+	}
+	return len(m.snapshot.Verifiers)
+}
+
+func (m Model) renderList(maxWidth int) string {
+	if len(m.snapshot.Verifiers) == 0 {
+		return styleReason.Render(truncate("(no verifiers configured)", maxWidth))
 	}
 	var b strings.Builder
-	for _, v := range m.snapshot.Verifiers {
+	for i, v := range m.snapshot.Verifiers {
 		label := fmt.Sprintf("%c", first(v.Name))
 		head := fmt.Sprintf("[%s] %-12s %s  ", label, v.Name, v.Direction) +
 			orbStyle(v.Distance).Render(fmt.Sprintf("d=%.2f", v.Distance))
 		if v.Running {
-			head += "  " + styleRunning.Render("running") + " " + renderSnake(m.tick)
+			head += "  " + styleRunning.Render("running") + " " + renderDot(m.tick)
 		}
 		b.WriteString(head)
 		if v.Reason != "" {
-			b.WriteString("  ")
-			b.WriteString(styleReason.Render(truncate(v.Reason, 80)))
+			remaining := maxWidth - lipgloss.Width(head) - 2
+			if remaining > 0 {
+				b.WriteString("  ")
+				b.WriteString(styleReason.Render(truncate(v.Reason, remaining)))
+			}
 		}
-		b.WriteString("\n")
+		if i < len(m.snapshot.Verifiers)-1 {
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }
 
-// snakeTrack is the total number of positions in the inline snake marquee;
-// snakeBody is the number of lit body segments. The snake head advances one
-// position per tick, wrapping around.
-const (
-	snakeTrack = 8
-	snakeBody  = 3
-)
+// dotTrack is the number of positions in the ping-pong dot spinner. The dot
+// bounces left-to-right and back, completing one full cycle every
+// (dotTrack-1)*2 ticks.
+const dotTrack = 5
 
-// renderSnake renders a bracketed inline spinner: a snake of snakeBody lit
-// segments (█) travels along a snakeTrack-cell track, with empty positions
-// shown as░. The result is always "[" + snakeTrack cells + "]".
-func renderSnake(tick int) string {
-	head := ((tick % snakeTrack) + snakeTrack) % snakeTrack
-	var lit [snakeTrack]bool
-	for i := 0; i < snakeBody; i++ {
-		lit[(head-i+snakeTrack)%snakeTrack] = true
+// renderDot renders a bracketed ping-pong spinner: a single "." bounces
+// across a dotTrack-wide field. Result is always "[" + dotTrack cells + "]".
+func renderDot(tick int) string {
+	period := (dotTrack - 1) * 2
+	phase := ((tick % period) + period) % period
+	pos := phase
+	if pos >= dotTrack {
+		pos = period - phase
 	}
 	var sb strings.Builder
 	sb.WriteByte('[')
-	for i := 0; i < snakeTrack; i++ {
-		if lit[i] {
-			sb.WriteString(styleSnakeOn.Render("█"))
+	for i := 0; i < dotTrack; i++ {
+		if i == pos {
+			sb.WriteString(styleRunning.Render("."))
 		} else {
-			sb.WriteString(styleSnakeOff.Render("░"))
+			sb.WriteByte(' ')
 		}
 	}
 	sb.WriteByte(']')
@@ -361,8 +366,21 @@ func first(s string) byte {
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	if n <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	if n == 1 {
+		return "…"
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if lipgloss.Width(b.String()+string(r)+"…") > n {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String() + "…"
 }

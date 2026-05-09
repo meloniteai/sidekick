@@ -1,62 +1,38 @@
 package hud
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
-// litPositions extracts the set of cell indices showing the lit body rune
-// from a rendered snake frame, ignoring lipgloss ANSI escape codes.
-func litPositions(s string) map[int]bool {
-	out := map[int]bool{}
-	pos := 0
-	for _, r := range s {
-		switch r {
-		case '█':
-			out[pos] = true
-			pos++
-		case '░':
-			pos++
-		}
-	}
-	return out
-}
-
-func TestRenderSnakeStructure(t *testing.T) {
-	out := renderSnake(0)
+func TestRenderDotStructure(t *testing.T) {
+	out := renderDot(0)
 	if !strings.HasPrefix(out, "[") || !strings.HasSuffix(out, "]") {
 		t.Fatalf("missing brackets: %q", out)
 	}
-	if got, want := strings.Count(out, "█"), snakeBody; got != want {
-		t.Errorf("body cells: got %d, want %d", got, want)
-	}
-	if got, want := strings.Count(out, "░"), snakeTrack-snakeBody; got != want {
-		t.Errorf("empty cells: got %d, want %d", got, want)
+	if got := strings.Count(out, "."); got != 1 {
+		t.Errorf("dot count: got %d, want 1", got)
 	}
 }
 
-func TestRenderSnakeWrapAround(t *testing.T) {
-	// Frames must repeat every snakeTrack ticks.
-	if renderSnake(0) != renderSnake(snakeTrack) || renderSnake(0) != renderSnake(2*snakeTrack) {
-		t.Errorf("expected period %d", snakeTrack)
+func TestRenderDotPingPong(t *testing.T) {
+	period := (dotTrack - 1) * 2
+	// Frames repeat every period ticks.
+	if renderDot(0) != renderDot(period) || renderDot(0) != renderDot(2*period) {
+		t.Errorf("expected period %d", period)
 	}
-	// Adjacent ticks within a period must differ.
-	if renderSnake(0) == renderSnake(1) {
+	// Adjacent ticks must differ (dot moves each tick).
+	if renderDot(0) == renderDot(1) {
 		t.Errorf("frames at tick 0 and 1 should differ")
 	}
-	// At the wrap point, the body straddles the right edge back to the left.
-	lit := litPositions(renderSnake(snakeTrack - 1))
-	want := map[int]bool{}
-	head := snakeTrack - 1
-	for j := 0; j < snakeBody; j++ {
-		want[(head-j+snakeTrack)%snakeTrack] = true
-	}
-	if !reflect.DeepEqual(lit, want) {
-		t.Errorf("wrap-around lit positions: got %v, want %v", lit, want)
+	// The dot should reach both ends: position 0 at tick 0 and position dotTrack-1 at tick dotTrack-1.
+	if renderDot(0) == renderDot(dotTrack-1) {
+		t.Errorf("opposite ends of track should differ")
 	}
 }
 
@@ -70,7 +46,7 @@ func TestRenderListSnakeGating(t *testing.T) {
 			},
 		},
 	}
-	lines := strings.Split(strings.TrimRight(m.renderList(), "\n"), "\n")
+	lines := strings.Split(strings.TrimRight(m.renderList(80), "\n"), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("got %d lines, want 2: %q", len(lines), lines)
 	}
@@ -86,11 +62,86 @@ func TestRenderListSnakeGating(t *testing.T) {
 	if running == "" || idle == "" {
 		t.Fatalf("missing verifier lines: running=%q idle=%q", running, idle)
 	}
-	if !strings.Contains(running, "█") {
-		t.Errorf("running row missing snake body: %q", running)
+	if !strings.Contains(running, ".") {
+		t.Errorf("running row missing dot: %q", running)
 	}
-	if strings.Contains(idle, "█") || strings.Contains(idle, "░") {
-		t.Errorf("idle row should not render snake: %q", idle)
+	if strings.Contains(idle, "running") {
+		t.Errorf("idle row should not render running indicator: %q", idle)
+	}
+}
+
+func TestRenderListNoTrailingNewline(t *testing.T) {
+	m := Model{
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.1},
+				{Name: "Security", Direction: "S", Distance: 0.2},
+			},
+		},
+	}
+	if out := m.renderList(80); strings.HasSuffix(out, "\n") {
+		t.Fatalf("renderList should not add a trailing newline: %q", out)
+	}
+}
+
+func TestRenderListTruncatesReasonToWidth(t *testing.T) {
+	m := Model{
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{
+					Name:      "Architect",
+					Direction: "N",
+					Distance:  0.1,
+					Reason:    strings.Repeat("long visual reason ", 8),
+				},
+			},
+		},
+	}
+	const width = 54
+	out := m.renderList(width)
+	if got := lipgloss.Width(out); got > width {
+		t.Fatalf("rendered line width = %d, want <= %d: %q", got, width, out)
+	}
+	if !strings.Contains(out, "…") {
+		t.Fatalf("expected truncated reason marker in %q", out)
+	}
+}
+
+func TestViewFitsTerminalHeight(t *testing.T) {
+	m := Model{
+		width:  80,
+		height: 24,
+		snapshot: ipc.StatusReply{
+			Goal: "keep the TUI visually stable",
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.1},
+				{Name: "Test", Direction: "E", Distance: 0.2},
+				{Name: "Security", Direction: "S", Distance: 0.3},
+				{Name: "Deployment", Direction: "W", Distance: 0.4},
+			},
+		},
+	}
+	out := m.View()
+	if lines := len(strings.Split(out, "\n")); lines > m.height {
+		t.Fatalf("view rendered %d lines into height %d:\n%s", lines, m.height, out)
+	}
+}
+
+func TestHeaderAndGridWidthsMatch(t *testing.T) {
+	const width = 80
+	m := Model{
+		snapshot: ipc.StatusReply{
+			Goal:    "keep the header aligned with the compass",
+			Version: "dev",
+		},
+	}
+	header := m.renderHeader(width)
+	grid := styleGrid.Render(m.renderGrid(width-styleGrid.GetHorizontalFrameSize(), 9))
+	if got, want := lipgloss.Width(header), lipgloss.Width(grid); got != want {
+		t.Fatalf("header width = %d, grid width = %d\nheader:\n%s\ngrid:\n%s", got, want, header, grid)
+	}
+	if got := lipgloss.Width(header); got != width {
+		t.Fatalf("header width = %d, want %d:\n%s", got, width, header)
 	}
 }
 
@@ -196,6 +247,7 @@ func TestRenderHeaderFields(t *testing.T) {
 		"last mcp: ", "12:34:55",
 		"verifiers: ", "3",
 		"goal: ", "ship the header",
+		"keys: ", "q quit", "t trigger",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("header missing %q in:\n%s", want, out)
@@ -213,12 +265,23 @@ func TestRenderHeaderFields(t *testing.T) {
 	}
 }
 
-func TestRenderSnakeNegativeTick(t *testing.T) {
-	// Must not panic and must remain modular: tick=-1 == tick=snakeTrack-1.
-	if renderSnake(-1) != renderSnake(snakeTrack-1) {
+func TestRenderDotNegativeTick(t *testing.T) {
+	period := (dotTrack - 1) * 2
+	// Must not panic and must be modular: tick=-1 == tick=period-1.
+	if renderDot(-1) != renderDot(period-1) {
 		t.Errorf("negative tick should be modular")
 	}
-	if got := strings.Count(renderSnake(-1), "█"); got != snakeBody {
-		t.Errorf("negative tick body cells: got %d, want %d", got, snakeBody)
+	if got := strings.Count(renderDot(-1), "."); got != 1 {
+		t.Errorf("negative tick dot count: got %d, want 1", got)
+	}
+}
+
+func TestTruncateUsesVisualWidth(t *testing.T) {
+	got := truncate("測試abc", 4)
+	if lipgloss.Width(got) > 4 {
+		t.Fatalf("truncate width = %d, want <= 4: %q", lipgloss.Width(got), got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("expected ellipsis suffix in %q", got)
 	}
 }
