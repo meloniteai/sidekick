@@ -1,0 +1,3 @@
+[mcp_servers.hud]
+args = ["mcp"]
+command = "/Users/uriahlevy/bin/hud"
