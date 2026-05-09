@@ -89,6 +89,7 @@ EOF
 # write tools — verifiers must not mutate the working tree.
 raw=$(printf '%s' "$prompt" | claude -p \
     --output-format json \
+    --model sonnet \
     --allowedTools \
         "Bash(git diff:*)" \
         "Bash(git diff)" \

@@ -17,8 +17,13 @@ import (
 
 // File is the on-disk shape of `hud.yaml`.
 type File struct {
-	GoalSource string         `yaml:"goal_source"` // "prompt" | "manual"; informational only for MVP
-	Verifiers  []VerifierSpec `yaml:"verifiers"`
+	GoalSource string `yaml:"goal_source"` // "prompt" | "manual"; informational only for MVP
+	// QuietPeriod sets a minimum gap between verifier batch runs across all
+	// verifiers (LLM calls are expensive). Bursts of file edits inside the
+	// window are coalesced; the next batch fires once the window elapses,
+	// so we never miss a change. Empty → use the runtime default.
+	QuietPeriod string         `yaml:"quiet_period,omitempty"`
+	Verifiers   []VerifierSpec `yaml:"verifiers"`
 }
 
 // VerifierSpec mirrors verifier.Verifier with YAML tags.
@@ -54,6 +59,24 @@ func Load(path string) (*File, string, error) {
 		return nil, path, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return &f, path, nil
+}
+
+// ResolveQuietPeriod parses the optional root-level quiet_period field. A
+// missing or empty value returns 0, signalling "use the runtime default".
+// Negative values are rejected so a typo (e.g. "-2s") fails loudly rather
+// than collapsing to 0.
+func (f *File) ResolveQuietPeriod() (time.Duration, error) {
+	if f.QuietPeriod == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(f.QuietPeriod)
+	if err != nil {
+		return 0, fmt.Errorf("bad quiet_period %q: %w", f.QuietPeriod, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("quiet_period must be non-negative, got %s", d)
+	}
+	return d, nil
 }
 
 // Resolve converts the parsed file into runtime verifiers, resolving any

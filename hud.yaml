@@ -8,6 +8,14 @@
 # Replace any of them with your own scripts (deterministic linters,
 # coverage gates, custom checks, etc.).
 goal_source: prompt
+
+# quiet_period sets the minimum gap between verifier batch starts. Bursts of
+# file edits inside the window coalesce into a single run, and pending
+# changes are *not* dropped — once the window elapses, the queued batch
+# fires. Tune this up if your verifiers are LLM-backed and edits come fast.
+# Defaults to 2s when omitted.
+quiet_period: 2s
+
 verifiers:
   - name: Architect
     direction: N

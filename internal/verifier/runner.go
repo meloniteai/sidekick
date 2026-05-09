@@ -16,20 +16,25 @@ import (
 // pull from CC's JSONL transcript and forward to verifier subprocesses.
 const transcriptTurns = 12
 
-// DefaultDebounce coalesces bursts of file-write events from a single
-// agent edit operation (Edit/MultiEdit can emit several within milliseconds).
-const DefaultDebounce = 2 * time.Second
+// DefaultQuietPeriod is the minimum gap between batch starts when the user
+// hasn't configured one. Bursts of writes inside the window are coalesced;
+// once the window elapses the queued batch fires, so no change is dropped.
+const DefaultQuietPeriod = 2 * time.Second
 
 // Runner schedules verifier subprocess runs in response to file-write events
-// and writes their results into the daemon's State.
+// and writes their results into the daemon's State. It enforces a minimum
+// quiet period between batch starts to keep LLM-backed verifier costs
+// bounded, while guaranteeing that a coalesced burst still triggers a run.
 type Runner struct {
 	verifiers []Verifier
 	state     *daemon.State
-	debounce  time.Duration
 
 	mu           sync.Mutex
+	quietPeriod  time.Duration
 	timer        *time.Timer
 	changedFiles map[string]struct{}
+	lastBatchAt  time.Time
+	running      bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -37,13 +42,13 @@ type Runner struct {
 
 // NewRunner returns a Runner bound to the given state and registered
 // verifiers. Each verifier is also seeded into State so the TUI shows them
-// from boot.
+// from boot. Use SetQuietPeriod to override the default coalescing window.
 func NewRunner(parent context.Context, state *daemon.State, verifiers []Verifier) *Runner {
 	ctx, cancel := context.WithCancel(parent)
 	r := &Runner{
 		verifiers:    verifiers,
 		state:        state,
-		debounce:     DefaultDebounce,
+		quietPeriod:  DefaultQuietPeriod,
 		changedFiles: map[string]struct{}{},
 		ctx:          ctx,
 		cancel:       cancel,
@@ -59,20 +64,60 @@ func NewRunner(parent context.Context, state *daemon.State, verifiers []Verifier
 	return r
 }
 
+// SetQuietPeriod overrides the minimum gap between batch starts. Pass 0 to
+// keep the existing value (callers wiring config can pass through whatever
+// hud.yaml resolved without branching on "unset").
+func (r *Runner) SetQuietPeriod(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	r.mu.Lock()
+	r.quietPeriod = d
+	r.mu.Unlock()
+}
+
+// QuietPeriod reports the current configured minimum gap between batch
+// starts. Useful for tests and for the daemon to log on boot.
+func (r *Runner) QuietPeriod() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.quietPeriod
+}
+
 // Stop cancels any in-flight runs.
 func (r *Runner) Stop() { r.cancel() }
 
-// Trigger registers a changed file and schedules a debounced batch run.
+// Trigger registers a changed file and ensures a batch run will happen no
+// later than quietPeriod after the previous batch's start.
+//
+// If a batch is already scheduled or actively running, the new file simply
+// joins the pending set — we never reset the timer (debounce-style), because
+// a stream of edits could otherwise starve the verifiers indefinitely. The
+// post-run hook reschedules whenever changes accumulated mid-batch.
 func (r *Runner) Trigger(file string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if file != "" {
 		r.changedFiles[file] = struct{}{}
 	}
-	if r.timer != nil {
-		r.timer.Stop()
+	if r.timer != nil || r.running {
+		return
 	}
-	r.timer = time.AfterFunc(r.debounce, r.runBatch)
+	r.scheduleLocked()
+}
+
+// scheduleLocked arms r.timer to fire at lastBatchAt+quietPeriod, or
+// immediately if we're already past that point (or have never run). Caller
+// must hold r.mu.
+func (r *Runner) scheduleLocked() {
+	delay := time.Duration(0)
+	if !r.lastBatchAt.IsZero() {
+		delay = r.quietPeriod - time.Since(r.lastBatchAt)
+		if delay < 0 {
+			delay = 0
+		}
+	}
+	r.timer = time.AfterFunc(delay, r.runBatch)
 }
 
 // RunNow runs all verifiers synchronously (used in tests).
@@ -85,6 +130,9 @@ func (r *Runner) runBatch() {
 		files = append(files, f)
 	}
 	r.changedFiles = map[string]struct{}{}
+	r.timer = nil
+	r.lastBatchAt = time.Now()
+	r.running = true
 	r.mu.Unlock()
 
 	cwd, _ := os.Getwd()
@@ -117,4 +165,14 @@ func (r *Runner) runBatch() {
 		}(v)
 	}
 	wg.Wait()
+
+	// If writes accumulated during the run, schedule the next batch now —
+	// possibly immediately, since a long-running batch will already have
+	// consumed (often more than) the quiet period.
+	r.mu.Lock()
+	r.running = false
+	if len(r.changedFiles) > 0 {
+		r.scheduleLocked()
+	}
+	r.mu.Unlock()
 }

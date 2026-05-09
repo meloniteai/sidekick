@@ -8,16 +8,38 @@ import (
 )
 
 var (
-	styleHeader  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	styleGrid    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	styleGoal    = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	styleAxis    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	styleSnakeOn = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	styleSnakeOff = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleReason  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleGoalLbl = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	styleHeader     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	styleGrid       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	styleGoal       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	styleAxis       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleRunning    = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	styleSnakeOn    = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	styleSnakeOff   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleReason     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	styleGoalLbl    = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	styleArrowHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
+	styleArrowTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("97"))
 )
+
+// directionArrow points outward along each compass axis — i.e. away from the
+// goal toward the orb. We render it on the verifier's plane during the brief
+// post-computation animation so the user can see which verifier just had a
+// fresh cycle land.
+var directionArrow = map[string]rune{
+	"E":  '→',
+	"W":  '←',
+	"N":  '↑',
+	"S":  '↓',
+	"NE": '↗',
+	"NW": '↖',
+	"SE": '↘',
+	"SW": '↙',
+}
+
+// arrowTrailLen is the number of trailing cells drawn behind the head as the
+// arrow climbs the axis. Two cells is enough to read motion at 5fps without
+// crowding short axes.
+const arrowTrailLen = 2
 
 // goalGlyph is the target the orbs converge on at the grid center.
 const goalGlyph = "◎"
@@ -114,6 +136,45 @@ func (m Model) renderGrid(w, h int) string {
 		placements = append(placements, placed{col, row, label, v.Distance})
 	}
 
+	// arrowAt indexes the active animation frame's head + trail by cell. The
+	// head is intensity 0 (bright); each trailing cell increases intensity.
+	// Orbs still win the cell — the animation visualizes the path toward the
+	// orb, not the orb itself.
+	type arrowCell struct {
+		glyph     rune
+		intensity int
+	}
+	arrows := map[[2]int]arrowCell{}
+	for _, v := range m.snapshot.Verifiers {
+		frame, active := m.animFrame(v.Name)
+		if !active || v.Distance <= 0 {
+			continue
+		}
+		glyph, ok := directionArrow[v.Direction]
+		if !ok {
+			continue
+		}
+		// Place head at frame+1 / arrowAnimFrames of the way to the orb, with
+		// trailing cells one step behind per arrowTrailLen. We draw each cell
+		// only if it hasn't already been claimed by a brighter cell.
+		for t := 0; t <= arrowTrailLen; t++ {
+			step := frame + 1 - t
+			if step <= 0 {
+				break
+			}
+			progress := float64(step) / float64(arrowAnimFrames)
+			col, row, ok := project(v.Direction, v.Distance*progress, w, h)
+			if !ok || (col == cx && row == cy) {
+				continue
+			}
+			key := [2]int{col, row}
+			if existing, exists := arrows[key]; exists && existing.intensity <= t {
+				continue
+			}
+			arrows[key] = arrowCell{glyph: glyph, intensity: t}
+		}
+	}
+
 	var sb strings.Builder
 	for r := 0; r < h; r++ {
 		for c := 0; c < w; c++ {
@@ -128,6 +189,14 @@ func (m Model) renderGrid(w, h int) string {
 				}
 			}
 			if placedHere {
+				continue
+			}
+			if a, ok := arrows[[2]int{c, r}]; ok {
+				style := styleArrowHead
+				if a.intensity > 0 {
+					style = styleArrowTrail
+				}
+				sb.WriteString(style.Render(string(a.glyph)))
 				continue
 			}
 			if c == cx && r == cy {

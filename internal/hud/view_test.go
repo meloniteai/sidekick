@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/uriahlevy/hud/internal/ipc"
 )
@@ -90,6 +91,79 @@ func TestRenderListSnakeGating(t *testing.T) {
 	}
 	if strings.Contains(idle, "█") || strings.Contains(idle, "░") {
 		t.Errorf("idle row should not render snake: %q", idle)
+	}
+}
+
+// TestRenderGridArrowAnimation pins down the post-computation arrow on a
+// verifier's compass plane: when the snapshot reports a fresh ComputedAt the
+// model arms an animation, and the next render places the direction's arrow
+// glyph somewhere along the path between the goal and that verifier's orb.
+func TestRenderGridArrowAnimation(t *testing.T) {
+	earlier := time.Unix(1_700_000_000, 0)
+	later := earlier.Add(time.Second)
+
+	m := Model{
+		width:  41,
+		height: 21,
+		anims:  map[string]arrowAnim{},
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.8, ComputedAt: earlier},
+			},
+		},
+	}
+	// First refresh seeds the anim entry without scheduling an animation.
+	m.refreshAnims()
+	first := m.renderGrid(41, 21)
+	if strings.Contains(first, "↑") {
+		t.Fatalf("first render should not paint the arrow; got:\n%s", first)
+	}
+
+	// New ComputedAt arrives → next refresh starts the animation; the next
+	// render must paint the arrow somewhere in the grid.
+	m.tick++
+	m.snapshot.Verifiers[0].ComputedAt = later
+	m.refreshAnims()
+	if frame, active := m.animFrame("Architect"); !active || frame != 0 {
+		t.Fatalf("expected frame 0 active after fresh ComputedAt, got frame=%d active=%v", frame, active)
+	}
+	mid := m.renderGrid(41, 21)
+	if !strings.Contains(mid, "↑") {
+		t.Fatalf("animating render should paint ↑; got:\n%s", mid)
+	}
+
+	// After arrowAnimFrames ticks, the arrow stops painting.
+	m.tick += arrowAnimFrames
+	if _, active := m.animFrame("Architect"); active {
+		t.Fatalf("animation should be over after %d ticks", arrowAnimFrames)
+	}
+	done := m.renderGrid(41, 21)
+	if strings.Contains(done, "↑") {
+		t.Fatalf("post-animation render should not paint ↑; got:\n%s", done)
+	}
+}
+
+// TestRenderGridArrowDistanceZero guards the visually-meaningless case where
+// a verifier sits exactly on the goal — no path to animate, so we skip.
+func TestRenderGridArrowDistanceZero(t *testing.T) {
+	earlier := time.Unix(1_700_000_000, 0)
+	later := earlier.Add(time.Second)
+	m := Model{
+		width:  41,
+		height: 21,
+		anims:  map[string]arrowAnim{},
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Test", Direction: "E", Distance: 0.0, ComputedAt: earlier},
+			},
+		},
+	}
+	m.refreshAnims()
+	m.tick++
+	m.snapshot.Verifiers[0].ComputedAt = later
+	m.refreshAnims()
+	if out := m.renderGrid(41, 21); strings.Contains(out, "→") {
+		t.Errorf("zero-distance verifier should not paint an arrow; got:\n%s", out)
 	}
 }
 

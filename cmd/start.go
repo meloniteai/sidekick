@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -69,7 +70,7 @@ func newStartCmd() *cobra.Command {
 			}
 			fmt.Fprintf(os.Stderr, "[hud] session base ref: %s\n", baseRef)
 
-			available, source, err := loadVerifiers(configPath)
+			available, quietPeriod, source, err := loadVerifiers(configPath)
 			if err != nil {
 				return err
 			}
@@ -92,6 +93,8 @@ func newStartCmd() *cobra.Command {
 			state := daemon.NewState()
 			state.SetSessionBaseRef(baseRef)
 			runner := verifier.NewRunner(ctx, state, verifiers)
+			runner.SetQuietPeriod(quietPeriod)
+			fmt.Fprintf(os.Stderr, "[hud] quiet period: %s\n", runner.QuietPeriod())
 			defer runner.Stop()
 
 			handler := &runnerHandler{state: state, runner: runner}
@@ -184,20 +187,25 @@ func captureSessionBaseRef() (string, error) {
 		"Run `git commit --allow-empty -m \"init\"` (or stage and commit your work) and try again.")
 }
 
-// loadVerifiers returns runtime verifiers from hud.yaml, falling back to the
-// built-in demo set when no config exists. The returned string is a short
+// loadVerifiers returns runtime verifiers and the configured quiet period
+// from hud.yaml, falling back to the built-in demo set (and runtime default
+// quiet period) when no config exists. The returned string is a short
 // description of the source for logging.
-func loadVerifiers(configPath string) ([]verifier.Verifier, string, error) {
+func loadVerifiers(configPath string) ([]verifier.Verifier, time.Duration, string, error) {
 	f, path, err := config.Load(configPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return demoVerifiers(), "demo (no hud.yaml found)", nil
+		return demoVerifiers(), 0, "demo (no hud.yaml found)", nil
 	}
 	if err != nil {
-		return nil, "", err
+		return nil, 0, "", err
 	}
 	vs, err := f.Resolve(filepath.Dir(path))
 	if err != nil {
-		return nil, "", err
+		return nil, 0, "", err
 	}
-	return vs, fmt.Sprintf("%d from %s", len(vs), path), nil
+	quiet, err := f.ResolveQuietPeriod()
+	if err != nil {
+		return nil, 0, "", err
+	}
+	return vs, quiet, fmt.Sprintf("%d from %s", len(vs), path), nil
 }

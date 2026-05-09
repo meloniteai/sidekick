@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeTemp(t *testing.T, body string) string {
@@ -75,5 +76,48 @@ func TestLoadMissing(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := Load(filepath.Join(dir, "nope.yaml")); err == nil {
 		t.Fatal("expected missing file error")
+	}
+}
+
+func TestResolveQuietPeriod(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		want    string // duration; "" means 0
+		wantErr bool
+	}{
+		{"unset", `verifiers: [{name: A, direction: N, command: ["x"]}]`, "", false},
+		{"explicit", "quiet_period: 30s\nverifiers: [{name: A, direction: N, command: [\"x\"]}]", "30s", false},
+		{"bad_format", "quiet_period: notaduration\nverifiers: [{name: A, direction: N, command: [\"x\"]}]", "", true},
+		{"negative", "quiet_period: -5s\nverifiers: [{name: A, direction: N, command: [\"x\"]}]", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeTemp(t, tc.body)
+			f, _, err := Load(p)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			got, err := f.ResolveQuietPeriod()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got duration %s", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.want == "" {
+				if got != 0 {
+					t.Fatalf("expected zero duration, got %s", got)
+				}
+				return
+			}
+			want, _ := time.ParseDuration(tc.want)
+			if got != want {
+				t.Fatalf("got %s, want %s", got, want)
+			}
+		})
 	}
 }
