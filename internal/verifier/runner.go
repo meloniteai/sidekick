@@ -35,6 +35,14 @@ type Runner struct {
 	changedFiles map[string]struct{}
 	lastBatchAt  time.Time
 	running      bool
+	// batchCancel is non-nil while a batch's verifier subprocesses are
+	// in-flight. KillBatch cancels it to terminate just the current batch
+	// without tearing down the runner (Stop is the full-shutdown path).
+	batchCancel context.CancelFunc
+	// killed is set when KillBatch fires mid-batch, so the post-batch
+	// reschedule path knows to drop any writes that landed during the kill
+	// instead of immediately starting a new batch.
+	killed bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -84,8 +92,29 @@ func (r *Runner) QuietPeriod() time.Duration {
 	return r.quietPeriod
 }
 
-// Stop cancels any in-flight runs.
+// Stop cancels any in-flight runs and tears down the runner permanently.
+// Use KillBatch instead if you only want to abort the current batch and
+// keep accepting future triggers.
 func (r *Runner) Stop() { r.cancel() }
+
+// KillBatch terminates any in-flight verifier subprocesses and discards
+// pending or scheduled work. The runner stays usable: subsequent Trigger
+// or TriggerImmediate calls schedule fresh batches as normal. Per-verifier
+// distances are preserved (Reason becomes "stopped") so the last known
+// score remains visible to the user.
+func (r *Runner) KillBatch() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.timer != nil {
+		r.timer.Stop()
+		r.timer = nil
+	}
+	r.changedFiles = map[string]struct{}{}
+	if r.batchCancel != nil {
+		r.killed = true
+		r.batchCancel()
+	}
+}
 
 // Trigger registers a changed file and ensures a batch run will happen no
 // later than quietPeriod after the previous batch's start.
@@ -144,6 +173,8 @@ func (r *Runner) runBatch() {
 	r.timer = nil
 	r.lastBatchAt = time.Now()
 	r.running = true
+	batchCtx, batchCancel := context.WithCancel(r.ctx)
+	r.batchCancel = batchCancel
 	r.mu.Unlock()
 
 	cwd, _ := os.Getwd()
@@ -160,14 +191,20 @@ func (r *Runner) runBatch() {
 		go func(v Verifier) {
 			defer wg.Done()
 			r.state.MarkRunning(v.Name, true)
-			res, err := v.Verify(r.ctx, session)
+			res, err := v.Verify(batchCtx, session)
 			cur, _ := r.state.Verifier(v.Name)
 			cur.Running = false
 			cur.ComputedAt = time.Now()
 			if err != nil {
-				cur.Reason = "error: " + err.Error()
-				cur.Distance = 1.0
-				fmt.Fprintf(os.Stderr, "[hud] verifier %s failed: %v\n", v.Name, err)
+				if batchCtx.Err() != nil {
+					// User-initiated stop: keep the previously displayed
+					// distance and just label the row so the kill is visible.
+					cur.Reason = "stopped"
+				} else {
+					cur.Reason = "error: " + err.Error()
+					cur.Distance = 1.0
+					fmt.Fprintf(os.Stderr, "[hud] verifier %s failed: %v\n", v.Name, err)
+				}
 			} else {
 				cur.Distance = res.Distance
 				cur.Reason = res.Reason
@@ -177,12 +214,21 @@ func (r *Runner) runBatch() {
 	}
 	wg.Wait()
 
-	// If writes accumulated during the run, schedule the next batch now —
-	// possibly immediately, since a long-running batch will already have
-	// consumed (often more than) the quiet period.
 	r.mu.Lock()
+	batchCancel()
+	r.batchCancel = nil
 	r.running = false
-	if len(r.changedFiles) > 0 {
+	killed := r.killed
+	r.killed = false
+	switch {
+	case killed:
+		// User pressed stop: discard anything that landed during the kill
+		// rather than immediately rescheduling against their wishes.
+		r.changedFiles = map[string]struct{}{}
+	case len(r.changedFiles) > 0:
+		// Writes accumulated during the run; schedule the next batch.
+		// A long-running batch may already have consumed the quiet period,
+		// in which case scheduleLocked fires immediately.
 		r.scheduleLocked()
 	}
 	r.mu.Unlock()

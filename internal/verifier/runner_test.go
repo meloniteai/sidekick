@@ -137,6 +137,76 @@ func TestQuietPeriodChangesDuringBatchReschedule(t *testing.T) {
 	}
 }
 
+// TestKillBatchStopsRunningSubprocess verifies that KillBatch terminates an
+// in-flight verifier subprocess promptly, leaves the runner usable for
+// subsequent triggers, and labels the row "stopped" without overwriting the
+// previously known distance.
+func TestKillBatchStopsRunningSubprocess(t *testing.T) {
+	state := daemon.NewState()
+	// A verifier that would sleep for 10s if not killed.
+	v := Verifier{
+		Name:      "Slow",
+		Direction: "N",
+		Command:   []string{"sh", "-c", `sleep 10; printf '{"distance":0.1,"reason":"done"}\n'`},
+		Timeout:   30 * time.Second,
+	}
+	r := NewRunner(context.Background(), state, []Verifier{v})
+	defer r.Stop()
+	r.SetQuietPeriod(50 * time.Millisecond)
+
+	// Seed a known distance so we can prove KillBatch preserves it.
+	state.UpsertVerifier(state.Snapshot().Verifiers[0])
+	cur, _ := state.Verifier("Slow")
+	cur.Distance = 0.42
+	state.UpsertVerifier(cur)
+
+	r.Trigger("a.go")
+	if !waitFor(time.Second, func() bool {
+		s, _ := state.Verifier("Slow")
+		return s.Running
+	}) {
+		t.Fatal("batch never started")
+	}
+
+	start := time.Now()
+	r.KillBatch()
+
+	if !waitFor(2*time.Second, func() bool {
+		s, _ := state.Verifier("Slow")
+		return !s.Running
+	}) {
+		t.Fatal("KillBatch did not terminate subprocess within 2s")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("KillBatch took too long: %s", elapsed)
+	}
+
+	s, _ := state.Verifier("Slow")
+	if s.Reason != "stopped" {
+		t.Errorf("expected Reason=%q, got %q", "stopped", s.Reason)
+	}
+	if s.Distance != 0.42 {
+		t.Errorf("KillBatch should preserve last distance: got %v, want 0.42", s.Distance)
+	}
+
+	// Runner must remain usable: a fresh trigger schedules and runs a new batch.
+	v2 := Verifier{
+		Name:      "Slow",
+		Direction: "N",
+		Command:   []string{"sh", "-c", `printf '{"distance":0.2,"reason":"ok"}\n'`},
+		Timeout:   2 * time.Second,
+	}
+	r.verifiers = []Verifier{v2}
+	r.Trigger("b.go")
+	if !waitFor(2*time.Second, func() bool {
+		s, _ := state.Verifier("Slow")
+		return !s.Running && s.Reason == "ok"
+	}) {
+		s, _ := state.Verifier("Slow")
+		t.Fatalf("runner unusable after KillBatch; reason=%q running=%v", s.Reason, s.Running)
+	}
+}
+
 // TestQuietPeriodSetsDefault locks the default and the override path.
 func TestQuietPeriodSetsDefault(t *testing.T) {
 	state := daemon.NewState()

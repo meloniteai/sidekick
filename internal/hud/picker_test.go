@@ -58,12 +58,8 @@ func TestPickerEnterRequiresMin(t *testing.T) {
 
 func TestPickerEnterBelowMinIsRejected(t *testing.T) {
 	p := NewPicker(samplePickerVerifiers(6))
-	// toggle off three -> 3 selected, below min
-	m := tea.Model(p)
-	for i := 0; i < 3; i++ {
-		m = sendKey(t, m, " ")
-		m = sendNamedKey(t, m, tea.KeyDown)
-	}
+	// toggle all off -> 0 selected, below min=1
+	m := sendKey(t, p, "a")
 	m = sendNamedKey(t, m, tea.KeyEnter)
 	pm := m.(PickerModel)
 	if pm.Confirmed() {

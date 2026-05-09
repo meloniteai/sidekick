@@ -117,7 +117,12 @@ func newStartCmd() *cobra.Command {
 				state.SetGoal("manual trigger, goal unknown")
 				runner.TriggerImmediate()
 			}
-			p := tea.NewProgram(hudtui.New(state).WithManualTrigger(manualTrigger), tea.WithAltScreen())
+			p := tea.NewProgram(
+				hudtui.New(state).
+					WithManualTrigger(manualTrigger).
+					WithStopAll(runner.KillBatch),
+				tea.WithAltScreen(),
+			)
 			if _, err := p.Run(); err != nil {
 				cancel()
 				<-serveErr

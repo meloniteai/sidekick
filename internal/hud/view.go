@@ -23,6 +23,7 @@ var (
 	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("252"))
 	styleHeaderLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleSessionOn     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	styleWind          = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Bold(true)
 )
 
 // directionArrow points outward along each compass axis (away from goal toward
@@ -147,7 +148,7 @@ func (m Model) renderHeader(totalW int) string {
 	rows = append(rows, goalRow)
 
 	// Row 4 — keyboard shortcuts.
-	rows = append(rows, styleHeaderLabel.Render("keys: ")+"q quit  ·  t trigger")
+	rows = append(rows, styleHeaderLabel.Render("keys: ")+"q quit  ·  t trigger  ·  esc stop")
 
 	return styleHeaderBox.Width(styleW).Render(strings.Join(rows, "\n"))
 }
@@ -181,24 +182,62 @@ func (m Model) renderGrid(w, h int) string {
 
 	// One orb per verifier, projected to (direction, distance). project() reads
 	// v.Distance from the live snapshot, so the orb position reflects the most
-	// recent verifier run (which the file-write hook triggers).
+	// recent verifier run (which the file-write hook triggers). The orb is
+	// rendered as the full verifier name in lowercase, centered horizontally
+	// on the projected cell so the user can identify it without consulting
+	// the list below.
 	type placed struct {
 		col, row int
-		label    rune
+		glyph    rune
 		distance float64
 	}
 	var placements []placed
-	for i, v := range m.snapshot.Verifiers {
+	for _, v := range m.snapshot.Verifiers {
 		col, row, ok := project(v.Direction, v.Distance, w, h)
 		if !ok {
 			continue
 		}
-		label := rune('A' + i%26)
-		if len(v.Name) > 0 {
-			label = rune(v.Name[0])
+		name := strings.ToLower(v.Name)
+		if name == "" {
+			name = "?"
 		}
-		placements = append(placements, placed{col, row, label, v.Distance})
+		runes := []rune(name)
+		startCol := col - len(runes)/2
+		if startCol+len(runes) > w {
+			startCol = w - len(runes)
+		}
+		if startCol < 0 {
+			startCol = 0
+		}
+		for i, ch := range runes {
+			c := startCol + i
+			if c < 0 || c >= w {
+				continue
+			}
+			placements = append(placements, placed{c, row, ch, v.Distance})
+		}
 	}
+
+	// Wind-direction markers around the perimeter give the compass a frame of
+	// reference even when no orb is sitting on a given axis.
+	windCells := map[[2]int]rune{}
+	addWind := func(text string, col, row int) {
+		for i, ch := range text {
+			c := col + i
+			if c < 0 || c >= w || row < 0 || row >= h {
+				continue
+			}
+			windCells[[2]int{c, row}] = ch
+		}
+	}
+	addWind("N", cx, 0)
+	addWind("S", cx, h-1)
+	addWind("E", w-1, cy)
+	addWind("W", 0, cy)
+	addWind("NW", 0, 0)
+	addWind("NE", w-2, 0)
+	addWind("SW", 0, h-1)
+	addWind("SE", w-2, h-1)
 
 	// arrowAt indexes the active animation frame's head + trail by cell. The
 	// head is intensity 0 (bright); each trailing cell increases intensity.
@@ -257,7 +296,7 @@ func (m Model) renderGrid(w, h int) string {
 			placedHere := false
 			for _, p := range placements {
 				if p.col == c && p.row == r {
-					sb.WriteString(orbStyle(p.distance).Render(string(p.label)))
+					sb.WriteString(orbStyle(p.distance).Render(string(p.glyph)))
 					placedHere = true
 					break
 				}
@@ -282,6 +321,10 @@ func (m Model) renderGrid(w, h int) string {
 			}
 			if c == cx && r == cy {
 				sb.WriteString(styleGoal.Render(goalGlyph))
+				continue
+			}
+			if wch, ok := windCells[[2]int{c, r}]; ok {
+				sb.WriteString(styleWind.Render(string(wch)))
 				continue
 			}
 			if cells[r][c] == '·' {

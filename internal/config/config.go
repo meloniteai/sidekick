@@ -184,6 +184,11 @@ func resolveCommand(configDir string, in []string) []string {
 }
 
 func resolveLocalPath(configDir, p string) string {
+	if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, p[2:])
+		}
+	}
 	if strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") {
 		return filepath.Join(configDir, p)
 	}

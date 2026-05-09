@@ -40,6 +40,7 @@ type Model struct {
 	height          int
 	tick            int
 	onManualTrigger func()
+	onStopAll       func()
 	// anims is keyed by verifier name. We seed an entry on first observation
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
@@ -56,6 +57,14 @@ func New(state *daemon.State) Model {
 // safe to call concurrently with background verifier runs.
 func (m Model) WithManualTrigger(fn func()) Model {
 	m.onManualTrigger = fn
+	return m
+}
+
+// WithStopAll sets a callback invoked when the user presses ESC on the main
+// screen, asking the runner to terminate any in-flight verifier subprocesses
+// and discard pending work. Same concurrency contract as WithManualTrigger.
+func (m Model) WithStopAll(fn func()) Model {
+	m.onStopAll = fn
 	return m
 }
 
@@ -77,6 +86,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "t":
 			if m.onManualTrigger != nil {
 				m.onManualTrigger()
+			}
+		case "esc":
+			if m.onStopAll != nil {
+				m.onStopAll()
 			}
 		}
 	case tickMsg:

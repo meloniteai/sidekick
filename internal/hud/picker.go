@@ -11,8 +11,8 @@ import (
 )
 
 // MinSelected is the minimum number of verifiers a user must enable before
-// the HUD can start. Four covers the cardinal compass points.
-const MinSelected = 4
+// the HUD can start. One is enough — the compass renders any subset.
+const MinSelected = 1
 
 var (
 	stylePickerHelp     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
