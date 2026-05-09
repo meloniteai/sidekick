@@ -41,6 +41,7 @@ the HUD re-evaluates, and the agent itself can read the result via the
 | Binary | Role | Lifetime |
 |---|---|---|
 | `hud start` | Long-running daemon + Bubble Tea TUI. Owns state, runs verifiers. Listens on `~/.hud/sock`. | foreground |
+| `hud menubar` | macOS menu bar daemon UI. Owns the same state, runner, hooks, and MCP socket as `hud start`, but renders only as a compact status-menu item. | foreground |
 | `hud hook <event>` | Spawned by Claude Code or Codex hooks. Reads hook JSON on stdin, posts a normalized event to the daemon, exits. | one-shot |
 | `hud mcp` | Spawned by the agent client as an MCP server. Proxies `hud_status` / `hud_explain` to the daemon. | per agent session |
 
@@ -162,6 +163,17 @@ hud goal "ship the auth module"     # set goal explicitly
 hud status                           # print JSON snapshot
 echo '{"tool_input":{"file_path":"src/auth.go"}}' | hud hook write
 ```
+
+On macOS, use the menu bar UI instead of the full terminal UI:
+
+```bash
+hud menubar
+```
+
+It starts the same daemon, verifier runner, hook listener, and MCP socket as
+`hud start`. The status item shows the current overall distance, and its menu
+keeps the compact HUD controls: goal, socket/MCP activity, verifier distance
+and reason rows, manual trigger, stop current run, and quit.
 
 ## Verifier types
 

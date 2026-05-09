@@ -18,5 +18,6 @@ func New() *cobra.Command {
 	root.AddCommand(newGoalCmd())
 	root.AddCommand(newStatusCmd())
 	root.AddCommand(newMcpCmd())
+	root.AddCommand(newMenubarCmd())
 	return root
 }
