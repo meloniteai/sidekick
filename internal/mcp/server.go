@@ -84,7 +84,7 @@ func Run(ctx context.Context, version string) error {
 }
 
 func statusHandler(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	resp, err := ipc.Send(ipc.Request{Type: ipc.TypeStatus})
+	resp, err := ipc.Send(ipc.Request{Type: ipc.TypeStatus, Source: ipc.SourceMCP})
 	if err != nil {
 		return nil, fmt.Errorf("hud daemon unreachable (is `hud start` running?): %w", err)
 	}
@@ -105,7 +105,7 @@ func setGoalHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ipc.Send(ipc.Request{Type: ipc.TypeGoal, Data: data}); err != nil {
+	if _, err := ipc.Send(ipc.Request{Type: ipc.TypeGoal, Source: ipc.SourceMCP, Data: data}); err != nil {
 		return nil, fmt.Errorf("hud daemon unreachable (is `hud start` running?): %w", err)
 	}
 	return mcp.NewToolResultJSON(map[string]any{"goal": goal})
@@ -121,7 +121,7 @@ func explainHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	if err != nil {
 		return nil, err
 	}
-	resp, err := ipc.Send(ipc.Request{Type: ipc.TypeExplain, Data: data})
+	resp, err := ipc.Send(ipc.Request{Type: ipc.TypeExplain, Source: ipc.SourceMCP, Data: data})
 	if err != nil {
 		return nil, fmt.Errorf("hud daemon unreachable: %w", err)
 	}

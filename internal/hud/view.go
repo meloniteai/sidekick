@@ -3,28 +3,33 @@ package hud
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
 var (
-	styleHeader     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	styleGrid       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	styleGoal       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	styleAxis       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleRunning    = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	styleSnakeOn    = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	styleSnakeOff   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleReason     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleGoalLbl    = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	styleArrowHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
-	styleArrowTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("97"))
+	styleHeader      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	styleGrid        = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	styleGoal        = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	styleAxis        = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleRunning     = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	styleSnakeOn     = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	styleSnakeOff    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleReason      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	styleGoalLbl     = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
+	styleArrowOutHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	styleArrowOutTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("88"))
+	styleArrowInHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28"))
+	styleHeaderBox   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("252"))
+	styleHeaderLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	styleSessionOn   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 )
 
-// directionArrow points outward along each compass axis — i.e. away from the
-// goal toward the orb. We render it on the verifier's plane during the brief
-// post-computation animation so the user can see which verifier just had a
-// fresh cycle land.
+// directionArrow points outward along each compass axis (away from goal toward
+// the orb) and is used when distance grew. directionArrowInward points the
+// opposite way for when distance shrank.
 var directionArrow = map[string]rune{
 	"E":  '→',
 	"W":  '←',
@@ -34,6 +39,17 @@ var directionArrow = map[string]rune{
 	"NW": '↖',
 	"SE": '↘',
 	"SW": '↙',
+}
+
+var directionArrowInward = map[string]rune{
+	"E":  '←',
+	"W":  '→',
+	"N":  '↓',
+	"S":  '↑',
+	"NE": '↙',
+	"NW": '↘',
+	"SE": '↖',
+	"SW": '↗',
 }
 
 // arrowTrailLen is the number of trailing cells drawn behind the head as the
@@ -67,8 +83,11 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return "initializing..."
 	}
+	header := m.renderHeader(m.width - 4)
+	headerLines := strings.Count(header, "\n") + 1
+
 	gridW := m.width - 4
-	gridH := m.height - 6 - 2 - len(m.snapshot.Verifiers) // header + list
+	gridH := m.height - headerLines - 4 - len(m.snapshot.Verifiers)
 	if gridH < 9 {
 		gridH = 9
 	}
@@ -80,22 +99,65 @@ func (m Model) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(styleHeader.Render("HUD"))
-	b.WriteString("  ")
-	b.WriteString(styleGoalLbl.Render("goal: "))
-	if g := m.snapshot.Goal; g != "" {
-		b.WriteString(g)
-	} else {
-		b.WriteString(styleReason.Render("(none — submit a prompt or run `hud goal ...`)"))
-	}
-	b.WriteString("\n\n")
-
+	b.WriteString(header)
+	b.WriteString("\n")
 	b.WriteString(styleGrid.Render(m.renderGrid(gridW, gridH)))
 	b.WriteString("\n\n")
 	b.WriteString(m.renderList())
 	b.WriteString("\n")
 	b.WriteString(styleReason.Render("press q to quit"))
 	return b.String()
+}
+
+// renderHeader builds the framed metadata box at the top of the screen. The
+// box stretches to the same width as the grid (innerW + 2 for the border) so
+// it visually anchors over the compass below it.
+func (m Model) renderHeader(innerW int) string {
+	if innerW < 24 {
+		innerW = 24
+	}
+	ver := m.snapshot.Version
+	if ver == "" {
+		ver = "dev"
+	}
+
+	var rows []string
+
+	// Row 1 — identity + session indicator.
+	rows = append(rows,
+		styleHeader.Render("HUD")+
+			"  "+styleHeaderLabel.Render("version: ")+ver+
+			"  "+styleHeaderLabel.Render("session: ")+styleSessionOn.Render("active"),
+	)
+
+	// Row 2 — telemetry: socket / mcp last-seen + verifier count.
+	rows = append(rows,
+		styleHeaderLabel.Render("last socket: ")+formatTimestamp(m.snapshot.LastSocketAt)+
+			"  "+styleHeaderLabel.Render("last mcp: ")+formatTimestamp(m.snapshot.LastMCPAt)+
+			"  "+styleHeaderLabel.Render("verifiers: ")+fmt.Sprintf("%d", len(m.snapshot.Verifiers)),
+	)
+
+	// Row 3 — goal summary, single line, truncated to fit.
+	goal := m.snapshot.Goal
+	goalRow := styleGoalLbl.Render("goal: ")
+	if goal == "" {
+		goalRow += styleReason.Render("(none — submit a prompt or run `hud goal ...`)")
+	} else {
+		goalRow += truncate(goal, innerW-len("goal: ")-2)
+	}
+	rows = append(rows, goalRow)
+
+	return styleHeaderBox.Width(innerW).Render(strings.Join(rows, "\n"))
+}
+
+// formatTimestamp renders a wall-clock HH:MM:SS for the header. Zero values
+// (no traffic seen yet) are shown as a dim em-dash so the layout stays
+// stable from the first frame.
+func formatTimestamp(t time.Time) string {
+	if t.IsZero() {
+		return styleReason.Render("—")
+	}
+	return t.Format("15:04:05")
 }
 
 func (m Model) renderGrid(w, h int) string {
@@ -143,26 +205,35 @@ func (m Model) renderGrid(w, h int) string {
 	type arrowCell struct {
 		glyph     rune
 		intensity int
+		inward    bool
 	}
 	arrows := map[[2]int]arrowCell{}
 	for _, v := range m.snapshot.Verifiers {
-		frame, active := m.animFrame(v.Name)
+		frame, active, inward := m.animInfo(v.Name)
 		if !active || v.Distance <= 0 {
 			continue
 		}
-		glyph, ok := directionArrow[v.Direction]
+		glyphMap := directionArrow
+		if inward {
+			glyphMap = directionArrowInward
+		}
+		glyph, ok := glyphMap[v.Direction]
 		if !ok {
 			continue
 		}
-		// Place head at frame+1 / arrowAnimFrames of the way to the orb, with
-		// trailing cells one step behind per arrowTrailLen. We draw each cell
-		// only if it hasn't already been claimed by a brighter cell.
+		// Outward: head starts near center and moves to orb (progress 0→1).
+		// Inward: head starts near orb and moves to center (progress 1→0).
 		for t := 0; t <= arrowTrailLen; t++ {
 			step := frame + 1 - t
 			if step <= 0 {
 				break
 			}
-			progress := float64(step) / float64(arrowAnimFrames)
+			var progress float64
+			if inward {
+				progress = 1.0 - float64(step)/float64(arrowAnimFrames)
+			} else {
+				progress = float64(step) / float64(arrowAnimFrames)
+			}
 			col, row, ok := project(v.Direction, v.Distance*progress, w, h)
 			if !ok || (col == cx && row == cy) {
 				continue
@@ -171,7 +242,7 @@ func (m Model) renderGrid(w, h int) string {
 			if existing, exists := arrows[key]; exists && existing.intensity <= t {
 				continue
 			}
-			arrows[key] = arrowCell{glyph: glyph, intensity: t}
+			arrows[key] = arrowCell{glyph: glyph, intensity: t, inward: inward}
 		}
 	}
 
@@ -192,9 +263,16 @@ func (m Model) renderGrid(w, h int) string {
 				continue
 			}
 			if a, ok := arrows[[2]int{c, r}]; ok {
-				style := styleArrowHead
-				if a.intensity > 0 {
-					style = styleArrowTrail
+				var style lipgloss.Style
+				switch {
+				case a.inward && a.intensity == 0:
+					style = styleArrowInHead
+				case a.inward:
+					style = styleArrowInTrail
+				case a.intensity == 0:
+					style = styleArrowOutHead
+				default:
+					style = styleArrowOutTrail
 				}
 				sb.WriteString(style.Render(string(a.glyph)))
 				continue
@@ -223,7 +301,8 @@ func (m Model) renderList() string {
 	var b strings.Builder
 	for _, v := range m.snapshot.Verifiers {
 		label := fmt.Sprintf("%c", first(v.Name))
-		head := fmt.Sprintf("[%s] %-12s %s  d=%.2f", label, v.Name, v.Direction, v.Distance)
+		head := fmt.Sprintf("[%s] %-12s %s  ", label, v.Name, v.Direction) +
+			orbStyle(v.Distance).Render(fmt.Sprintf("d=%.2f", v.Distance))
 		if v.Running {
 			head += "  " + styleRunning.Render("(running…)") + " " + renderSnake(m.tick)
 		}

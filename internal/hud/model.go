@@ -25,8 +25,10 @@ type tickMsg time.Time
 // verifier just got refreshed.
 type arrowAnim struct {
 	lastComputed time.Time
-	startTick    int  // tick at which the animation began; 0 if never animated
-	armed        bool // true once we've observed the verifier at least once (suppresses startup flash)
+	startTick    int     // tick at which the animation began; 0 if never animated
+	armed        bool    // true once we've observed the verifier at least once (suppresses startup flash)
+	lastDistance float64 // distance at the time of the last observation
+	inward       bool    // true if distance decreased (moving toward the goal)
 }
 
 // Model is the Bubble Tea model. It pulls snapshots directly from the daemon
@@ -88,7 +90,7 @@ func (m *Model) refreshAnims() {
 	for _, v := range m.snapshot.Verifiers {
 		a, seen := m.anims[v.Name]
 		if !seen {
-			m.anims[v.Name] = arrowAnim{lastComputed: v.ComputedAt, armed: true}
+			m.anims[v.Name] = arrowAnim{lastComputed: v.ComputedAt, lastDistance: v.Distance, armed: true}
 			continue
 		}
 		if v.ComputedAt.IsZero() || v.ComputedAt.Equal(a.lastComputed) {
@@ -98,21 +100,28 @@ func (m *Model) refreshAnims() {
 			lastComputed: v.ComputedAt,
 			startTick:    m.tick,
 			armed:        true,
+			lastDistance: v.Distance,
+			inward:       v.Distance < a.lastDistance,
 		}
 	}
 }
 
-// animFrame returns the 0-indexed frame of the active animation for a
-// verifier, or (-1, false) if no animation is currently playing. The frame
-// advances each tick and the animation ends after arrowAnimFrames ticks.
-func (m Model) animFrame(name string) (int, bool) {
+// animInfo returns the 0-indexed frame, whether the animation is active, and
+// whether the motion is inward (distance shrank) for a verifier.
+func (m Model) animInfo(name string) (frame int, active bool, inward bool) {
 	a, ok := m.anims[name]
 	if !ok || !a.armed || a.startTick == 0 {
-		return -1, false
+		return -1, false, false
 	}
-	frame := m.tick - a.startTick
+	frame = m.tick - a.startTick
 	if frame < 0 || frame >= arrowAnimFrames {
-		return -1, false
+		return -1, false, false
 	}
-	return frame, true
+	return frame, true, a.inward
+}
+
+// animFrame wraps animInfo for callers that only need frame and active state.
+func (m Model) animFrame(name string) (int, bool) {
+	frame, active, _ := m.animInfo(name)
+	return frame, active
 }

@@ -17,6 +17,9 @@ type State struct {
 	sessionBaseRef string
 	verifiers      map[string]ipc.VerifierStatus
 	order          []string
+	version        string
+	lastSocketAt   time.Time
+	lastMCPAt      time.Time
 }
 
 // NewState returns a zeroed State.
@@ -54,6 +57,27 @@ func (s *State) SessionBaseRef() string {
 	return s.sessionBaseRef
 }
 
+// SetVersion records the daemon binary version string for the header.
+func (s *State) SetVersion(v string) {
+	s.mu.Lock()
+	s.version = v
+	s.mu.Unlock()
+}
+
+// MarkSocketActivity timestamps the most recent socket request. If isMCP is
+// true (i.e. Request.Source == ipc.SourceMCP) the MCP-specific timestamp is
+// also bumped so the TUI header can distinguish hook/CLI traffic from agent
+// MCP traffic.
+func (s *State) MarkSocketActivity(isMCP bool) {
+	now := time.Now()
+	s.mu.Lock()
+	s.lastSocketAt = now
+	if isMCP {
+		s.lastMCPAt = now
+	}
+	s.mu.Unlock()
+}
+
 // UpsertVerifier registers or updates a verifier's status entry.
 func (s *State) UpsertVerifier(v ipc.VerifierStatus) {
 	s.mu.Lock()
@@ -84,7 +108,12 @@ func (s *State) MarkRunning(name string, running bool) {
 func (s *State) Snapshot() ipc.StatusReply {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := ipc.StatusReply{Goal: s.goal}
+	out := ipc.StatusReply{
+		Goal:         s.goal,
+		Version:      s.version,
+		LastSocketAt: s.lastSocketAt,
+		LastMCPAt:    s.lastMCPAt,
+	}
 	var sum float64
 	for _, name := range s.order {
 		v := s.verifiers[name]

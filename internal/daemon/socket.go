@@ -102,6 +102,7 @@ func (s *Server) handle(conn net.Conn) {
 		writeErr(conn, fmt.Errorf("bad request json: %w", err))
 		return
 	}
+	s.state.MarkSocketActivity(req.Source == ipc.SourceMCP)
 	resp := s.dispatch(req)
 	_ = json.NewEncoder(conn).Encode(resp)
 }

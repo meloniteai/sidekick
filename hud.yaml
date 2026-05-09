@@ -14,7 +14,7 @@ goal_source: prompt
 # changes are *not* dropped — once the window elapses, the queued batch
 # fires. Tune this up if your verifiers are LLM-backed and edits come fast.
 # Defaults to 2s when omitted.
-quiet_period: 2s
+quiet_period: 25s
 
 verifiers:
   - name: Architect

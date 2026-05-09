@@ -32,11 +32,18 @@ func SocketPath() (string, error) {
 	return filepath.Join(home, defaultSockRel), nil
 }
 
-// Request is a single command sent to the daemon.
+// Request is a single command sent to the daemon. Source is an optional
+// hint that lets the daemon distinguish MCP-originated traffic from CLI/hook
+// traffic so the TUI header can show separate "last socket" and "last MCP"
+// timestamps. Senders may leave it empty.
 type Request struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data,omitempty"`
+	Type   string          `json:"type"`
+	Source string          `json:"source,omitempty"`
+	Data   json.RawMessage `json:"data,omitempty"`
 }
+
+// Known Request.Source tags. The daemon treats anything else as non-MCP.
+const SourceMCP = "mcp"
 
 // Response wraps every reply.
 type Response struct {
@@ -84,6 +91,9 @@ type StatusReply struct {
 	Goal            string           `json:"goal"`
 	Verifiers       []VerifierStatus `json:"verifiers"`
 	OverallDistance float64          `json:"overall_distance"`
+	Version         string           `json:"version,omitempty"`
+	LastSocketAt    time.Time        `json:"last_socket_at"`
+	LastMCPAt       time.Time        `json:"last_mcp_at"`
 }
 
 // Send dials the daemon, writes one request, reads one response, and closes.

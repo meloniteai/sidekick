@@ -167,6 +167,52 @@ func TestRenderGridArrowDistanceZero(t *testing.T) {
 	}
 }
 
+// TestRenderHeaderFields confirms the framed header surfaces every metadata
+// field the TUI promises (version, session indicator, both timestamps,
+// verifier count, goal). It also pins the empty-state behaviour so the box
+// doesn't collapse before the daemon has seen any traffic.
+func TestRenderHeaderFields(t *testing.T) {
+	at := time.Date(2026, 5, 9, 12, 34, 56, 0, time.UTC)
+	m := Model{
+		width:  120,
+		height: 40,
+		snapshot: ipc.StatusReply{
+			Goal:         "ship the header",
+			Version:      "dev",
+			LastSocketAt: at,
+			LastMCPAt:    at.Add(-time.Second),
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "A", Direction: "N"},
+				{Name: "B", Direction: "E"},
+				{Name: "C", Direction: "S"},
+			},
+		},
+	}
+	out := m.renderHeader(80)
+	for _, want := range []string{
+		"version: ", "dev",
+		"session: ", "active",
+		"last socket: ", "12:34:56",
+		"last mcp: ", "12:34:55",
+		"verifiers: ", "3",
+		"goal: ", "ship the header",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("header missing %q in:\n%s", want, out)
+		}
+	}
+
+	// Zero-value timestamps must still render (em-dash placeholder), not
+	// blow up the layout.
+	empty := Model{width: 120, height: 40, snapshot: ipc.StatusReply{}}.renderHeader(80)
+	if !strings.Contains(empty, "—") {
+		t.Errorf("zero-time header should show em-dash placeholder; got:\n%s", empty)
+	}
+	if !strings.Contains(empty, "verifiers: 0") {
+		t.Errorf("empty header should report 0 verifiers; got:\n%s", empty)
+	}
+}
+
 func TestRenderSnakeNegativeTick(t *testing.T) {
 	// Must not panic and must remain modular: tick=-1 == tick=snakeTrack-1.
 	if renderSnake(-1) != renderSnake(snakeTrack-1) {

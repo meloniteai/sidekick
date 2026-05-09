@@ -92,6 +92,7 @@ func newStartCmd() *cobra.Command {
 
 			state := daemon.NewState()
 			state.SetSessionBaseRef(baseRef)
+			state.SetVersion(version)
 			runner := verifier.NewRunner(ctx, state, verifiers)
 			runner.SetQuietPeriod(quietPeriod)
 			fmt.Fprintf(os.Stderr, "[hud] quiet period: %s\n", runner.QuietPeriod())
