@@ -11,7 +11,7 @@ import (
 
 // tickInterval drives a periodic re-render so the TUI reflects async verifier
 // updates without explicit broadcast plumbing.
-const tickInterval = 200 * time.Millisecond
+const tickInterval = 133 * time.Millisecond
 
 // arrowAnimFrames is how many ticks the post-computation arrow animation
 // lasts on each verifier's compass plane. ~5 * 200ms ≈ 1s.
@@ -34,11 +34,12 @@ type arrowAnim struct {
 // Model is the Bubble Tea model. It pulls snapshots directly from the daemon
 // State (in-process), so there is no IPC overhead for the TUI itself.
 type Model struct {
-	state    *daemon.State
-	snapshot ipc.StatusReply
-	width    int
-	height   int
-	tick     int
+	state           *daemon.State
+	snapshot        ipc.StatusReply
+	width           int
+	height          int
+	tick            int
+	onManualTrigger func()
 	// anims is keyed by verifier name. We seed an entry on first observation
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
@@ -48,6 +49,14 @@ type Model struct {
 // New returns an initialized Model.
 func New(state *daemon.State) Model {
 	return Model{state: state, snapshot: state.Snapshot(), anims: map[string]arrowAnim{}}
+}
+
+// WithManualTrigger sets a callback invoked when the user presses 't' on the
+// main screen. It is called in the Bubble Tea Update goroutine, so it must be
+// safe to call concurrently with background verifier runs.
+func (m Model) WithManualTrigger(fn func()) Model {
+	m.onManualTrigger = fn
+	return m
 }
 
 // Init satisfies tea.Model.
@@ -65,6 +74,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "t":
+			if m.onManualTrigger != nil {
+				m.onManualTrigger()
+			}
 		}
 	case tickMsg:
 		m.snapshot = m.state.Snapshot()
@@ -106,22 +119,42 @@ func (m *Model) refreshAnims() {
 	}
 }
 
-// animInfo returns the 0-indexed frame, whether the animation is active, and
-// whether the motion is inward (distance shrank) for a verifier.
-func (m Model) animInfo(name string) (frame int, active bool, inward bool) {
+// calibPeriod is the total ping-pong cycle length (out + back) for the
+// calibrating animation. At 133ms per tick this gives ~1.33s per cycle.
+const calibPeriod = arrowAnimFrames * 2
+
+// animInfo returns animation state for a verifier.
+//
+// When a post-completion animation is active (ComputedAt just advanced),
+// active=true and frame/inward describe the one-shot sweep.
+//
+// When the verifier is running (calibrating=true) and no post-completion
+// animation is active, the arrows bounce in/out in a continuous ping-pong
+// loop so the user can see which axis is being re-measured. The calibrating
+// frame is also returned as frame/inward so callers can reuse the same
+// rendering path.
+func (m Model) animInfo(name string, running bool) (frame int, active bool, inward bool, calibrating bool) {
 	a, ok := m.anims[name]
-	if !ok || !a.armed || a.startTick == 0 {
-		return -1, false, false
+	// Post-completion one-shot animation: takes priority over calibration.
+	if ok && a.armed && a.startTick != 0 {
+		f := m.tick - a.startTick
+		if f >= 0 && f < arrowAnimFrames {
+			return f, true, a.inward, false
+		}
 	}
-	frame = m.tick - a.startTick
-	if frame < 0 || frame >= arrowAnimFrames {
-		return -1, false, false
+	// Calibrating ping-pong: shown while the verifier subprocess is running.
+	if running {
+		phase := m.tick % calibPeriod
+		if phase < arrowAnimFrames {
+			return phase, true, false, true
+		}
+		return calibPeriod - phase - 1, true, true, true
 	}
-	return frame, true, a.inward
+	return -1, false, false, false
 }
 
 // animFrame wraps animInfo for callers that only need frame and active state.
-func (m Model) animFrame(name string) (int, bool) {
-	frame, active, _ := m.animInfo(name)
+func (m Model) animFrame(name string, running bool) (int, bool) {
+	frame, active, _, _ := m.animInfo(name, running)
 	return frame, active
 }

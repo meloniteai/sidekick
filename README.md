@@ -30,9 +30,8 @@ the HUD re-evaluates, and the agent itself can read the result via the
   tool, driven by the bundled [`hud` skill](skills/hud/SKILL.md).
 - File-write hooks (`PostToolUse` on `Write|Edit|MultiEdit|NotebookEdit`)
   trigger a debounced batch run of every configured verifier.
-- Each verifier is just a command. It receives a one-line JSON session blob
-  on stdin (goal, changed files, recent agent messages) and writes
-  `{"distance": <0..1>, "reason": "..."}` on stdout.
+- Verifiers can be native LLM skill checks, binary pass/fail commands, or
+  custom commands that speak HUD's stdin/stdout JSON protocol.
 - The TUI re-renders the compass every 200 ms.
 - Agents call `hud_status` to read the snapshot — it never triggers
   recomputation, only file writes do.
@@ -42,8 +41,8 @@ the HUD re-evaluates, and the agent itself can read the result via the
 | Binary | Role | Lifetime |
 |---|---|---|
 | `hud start` | Long-running daemon + Bubble Tea TUI. Owns state, runs verifiers. Listens on `~/.hud/sock`. | foreground |
-| `hud hook <event>` | Spawned by Claude Code hooks. Reads CC's hook JSON on stdin, posts a normalized event to the daemon, exits. | one-shot |
-| `hud mcp` | Spawned by Claude Code as an MCP server. Proxies `hud_status` / `hud_explain` to the daemon. | per CC session |
+| `hud hook <event>` | Spawned by Claude Code or Codex hooks. Reads hook JSON on stdin, posts a normalized event to the daemon, exits. | one-shot |
+| `hud mcp` | Spawned by the agent client as an MCP server. Proxies `hud_status` / `hud_explain` to the daemon. | per agent session |
 
 ## Install
 
@@ -68,33 +67,79 @@ Then install the bundled skill so the agent knows when to call `hud_set_goal`,
 cp -R skills/hud ~/.claude/skills/
 ```
 
+## Wire up Codex
+
+Drop [`examples/codex-hooks.json`](examples/codex-hooks.json) into your
+project's `.codex/hooks.json`, and add the MCP server to `.codex/config.toml`:
+
+```toml
+[mcp_servers.hud]
+command = "hud"
+args = ["mcp"]
+```
+
+Codex may ask you to review and trust the hooks. The bundled hook config
+triggers HUD after `apply_patch` plus Claude-style write/edit tool names.
+
 ## Configure verifiers
 
 Drop a `hud.yaml` next to your code. The shipped example registers four
-`claude -p`-backed subagent verifiers:
+native agent verifiers that load bundled `SKILL.md` rubrics and run `claude -p`:
 
 ```yaml
 goal_source: prompt
 verifiers:
   - name: Architect
+    type: agent
     direction: N
-    command: ["./examples/verifiers/architect.sh"]
     timeout: 90s
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/architect/SKILL.md
   - name: Test
+    type: agent
     direction: E
-    command: ["./examples/verifiers/test.sh"]
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/test/SKILL.md
   - name: Security
+    type: agent
     direction: S
-    command: ["./examples/verifiers/security.sh"]
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/security/SKILL.md
   - name: Deployment
+    type: agent
     direction: W
-    command: ["./examples/verifiers/deployment.sh"]
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/deployment/SKILL.md
 ```
 
-Replace any of them with your own scripts — a verifier is just a command
-that prints `{"distance": <0..1>, "reason": "..."}` on stdout.
-[`examples/verifiers/coverage.sh`](examples/verifiers/coverage.sh) is a
-deterministic example backed by `go test -cover`.
+For simple pass/fail checks, use `type: binary`; exit code `0` maps to
+`distance = 0`, and any non-zero exit maps to `distance = 1`:
+
+```yaml
+  - name: Unit Tests
+    type: binary
+    direction: E
+    binary:
+      command: ["go", "test", "./..."]
+      pass_reason: "unit tests pass"
+      fail_reason: "unit tests failed"
+```
+
+For fully custom scoring, use `type: command` (or omit `type` for backward
+compatibility). [`examples/verifiers/coverage.sh`](examples/verifiers/coverage.sh)
+is a deterministic command verifier backed by `go test -cover`.
 
 ## Run
 
@@ -118,9 +163,9 @@ hud status                           # print JSON snapshot
 echo '{"tool_input":{"file_path":"src/auth.go"}}' | hud hook write
 ```
 
-## Verifier protocol
+## Verifier types
 
-A verifier is a command. It must:
+`command` verifiers are the protocol-level extension point. They must:
 
 1. Read one line of JSON on stdin. The shape is:
    ```json
@@ -139,8 +184,14 @@ A verifier is a command. It must:
 3. Exit zero. Any non-zero exit, missing JSON, or timeout (default 60s)
    pins the verifier at `distance = 1.0` with the failure reason.
 
-`hud` itself never calls a model API directly — it shells out. That keeps
-authentication and model choice with the user's existing tools.
+`llm` verifiers internalize the old `run.sh` wrapper: HUD loads the configured
+`SKILL.md`, appends the active goal, `SESSION_BASE_REF`, changed files, and the
+JSON output contract, then shells out to `claude` or `codex`. Authentication
+and model access still stay with the user's installed agent CLI.
+
+`binary` verifiers receive the same session JSON on stdin and
+`SESSION_BASE_REF` in the environment, but HUD scores them purely from exit
+code.
 
 ## Layout
 
@@ -161,7 +212,7 @@ hud/
 
 ## What's not here yet
 
-- Codex hook integration (verifier scripts can call `codex exec` today).
+- Codex hook integration (native `type: agent` verifiers can call `codex exec`).
 - Persistence across sessions.
 - Multi-project / multi-session daemon multiplexing.
 - 8-direction layout when more than 4 verifiers are configured.

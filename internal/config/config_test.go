@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/uriahlevy/hud/internal/verifier"
 )
 
 func writeTemp(t *testing.T, body string) string {
@@ -50,6 +52,85 @@ verifiers:
 	}
 	if vs[0].Timeout.Seconds() != 30 {
 		t.Errorf("timeout not parsed: %v", vs[0].Timeout)
+	}
+	if vs[0].Type != verifier.TypeCommand {
+		t.Errorf("default type = %q, want command", vs[0].Type)
+	}
+}
+
+func TestResolveTypedVerifiers(t *testing.T) {
+	p := writeTemp(t, `
+verifiers:
+  - name: Explicit Command
+    type: command
+    direction: N
+    command: ["./bin/check"]
+  - name: Architect
+    type: llm
+    direction: E
+    timeout: 90s
+    llm:
+      agent: codex
+      model: gpt-5.5
+      thinking: high
+      skill: ./skills/architect/SKILL.md
+  - name: Unit Tests
+    type: binary
+    direction: S
+    binary:
+      command: ["./scripts/test.sh"]
+      pass_reason: tests pass
+      fail_reason: tests failed
+`)
+	f, _, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs, err := f.Resolve(filepath.Dir(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 3 {
+		t.Fatalf("want 3, got %d", len(vs))
+	}
+	if vs[0].Type != verifier.TypeCommand || !filepath.IsAbs(vs[0].Command[0]) {
+		t.Fatalf("command verifier not resolved: %+v", vs[0])
+	}
+	if vs[1].Type != verifier.TypeAgent ||
+		vs[1].Agent.Agent != "codex" ||
+		vs[1].Agent.Model != "gpt-5.5" ||
+		vs[1].Agent.Thinking != "high" ||
+		!filepath.IsAbs(vs[1].Agent.Skill) {
+		t.Fatalf("agent verifier not resolved: %+v", vs[1])
+	}
+	if vs[2].Type != verifier.TypeBinary ||
+		!filepath.IsAbs(vs[2].Binary.Command[0]) ||
+		vs[2].Binary.PassReason != "tests pass" ||
+		vs[2].Binary.FailReason != "tests failed" {
+		t.Fatalf("binary verifier not resolved: %+v", vs[2])
+	}
+}
+
+func TestResolveTypedVerifierValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"bad_type", `verifiers: [{name: A, type: nope, direction: N, command: ["x"]}]`},
+		{"missing_agent_skill", `verifiers: [{name: A, type: agent, direction: N, llm: {agent: claude}}]`},
+		{"missing_binary_command", `verifiers: [{name: A, type: binary, direction: N, binary: {}}]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeTemp(t, tc.body)
+			f, _, err := Load(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.Resolve(filepath.Dir(p)); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
 	}
 }
 

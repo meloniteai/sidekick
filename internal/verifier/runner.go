@@ -120,6 +120,17 @@ func (r *Runner) scheduleLocked() {
 	r.timer = time.AfterFunc(delay, r.runBatch)
 }
 
+// TriggerImmediate schedules a batch to run immediately, bypassing the quiet
+// period. If a batch is already running or scheduled, this is a no-op.
+func (r *Runner) TriggerImmediate() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.timer != nil || r.running {
+		return
+	}
+	r.timer = time.AfterFunc(0, r.runBatch)
+}
+
 // RunNow runs all verifiers synchronously (used in tests).
 func (r *Runner) RunNow() { r.runBatch() }
 

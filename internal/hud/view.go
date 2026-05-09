@@ -22,6 +22,8 @@ var (
 	styleArrowOutTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("88"))
 	styleArrowInHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28"))
+	styleArrowCalHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)
+	styleArrowCalTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("54"))
 	styleHeaderBox   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("252"))
 	styleHeaderLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleSessionOn   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
@@ -105,7 +107,7 @@ func (m Model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.renderList())
 	b.WriteString("\n")
-	b.WriteString(styleReason.Render("press q to quit"))
+	b.WriteString(styleReason.Render("press q to quit  ·  press t to trigger"))
 	return b.String()
 }
 
@@ -203,13 +205,14 @@ func (m Model) renderGrid(w, h int) string {
 	// Orbs still win the cell — the animation visualizes the path toward the
 	// orb, not the orb itself.
 	type arrowCell struct {
-		glyph     rune
-		intensity int
-		inward    bool
+		glyph       rune
+		intensity   int
+		inward      bool
+		calibrating bool
 	}
 	arrows := map[[2]int]arrowCell{}
 	for _, v := range m.snapshot.Verifiers {
-		frame, active, inward := m.animInfo(v.Name)
+		frame, active, inward, calibrating := m.animInfo(v.Name, v.Running)
 		if !active || v.Distance <= 0 {
 			continue
 		}
@@ -242,7 +245,7 @@ func (m Model) renderGrid(w, h int) string {
 			if existing, exists := arrows[key]; exists && existing.intensity <= t {
 				continue
 			}
-			arrows[key] = arrowCell{glyph: glyph, intensity: t, inward: inward}
+			arrows[key] = arrowCell{glyph: glyph, intensity: t, inward: inward, calibrating: calibrating}
 		}
 	}
 
@@ -265,6 +268,10 @@ func (m Model) renderGrid(w, h int) string {
 			if a, ok := arrows[[2]int{c, r}]; ok {
 				var style lipgloss.Style
 				switch {
+				case a.calibrating && a.intensity == 0:
+					style = styleArrowCalHead
+				case a.calibrating:
+					style = styleArrowCalTrail
 				case a.inward && a.intensity == 0:
 					style = styleArrowInHead
 				case a.inward:
@@ -304,7 +311,7 @@ func (m Model) renderList() string {
 		head := fmt.Sprintf("[%s] %-12s %s  ", label, v.Name, v.Direction) +
 			orbStyle(v.Distance).Render(fmt.Sprintf("d=%.2f", v.Distance))
 		if v.Running {
-			head += "  " + styleRunning.Render("(running…)") + " " + renderSnake(m.tick)
+			head += "  " + styleRunning.Render("running") + " " + renderSnake(m.tick)
 		}
 		b.WriteString(head)
 		if v.Reason != "" {
@@ -316,27 +323,27 @@ func (m Model) renderList() string {
 	return b.String()
 }
 
-// snakeTrack is the bracketed marquee width; snakeBody is the length of the
-// bright segment that wraps from right edge back to left each tick. Together
-// they produce the rectangular "snake" loader common in bash UIs.
+// snakeTrack is the total number of positions in the inline snake marquee;
+// snakeBody is the number of lit body segments. The snake head advances one
+// position per tick, wrapping around.
 const (
 	snakeTrack = 8
 	snakeBody  = 3
 )
 
+// renderSnake renders a bracketed inline spinner: a snake of snakeBody lit
+// segments (█) travels along a snakeTrack-cell track, with empty positions
+// shown as░. The result is always "[" + snakeTrack cells + "]".
 func renderSnake(tick int) string {
 	head := ((tick % snakeTrack) + snakeTrack) % snakeTrack
+	var lit [snakeTrack]bool
+	for i := 0; i < snakeBody; i++ {
+		lit[(head-i+snakeTrack)%snakeTrack] = true
+	}
 	var sb strings.Builder
 	sb.WriteByte('[')
 	for i := 0; i < snakeTrack; i++ {
-		lit := false
-		for j := 0; j < snakeBody; j++ {
-			if (head-j+snakeTrack)%snakeTrack == i {
-				lit = true
-				break
-			}
-		}
-		if lit {
+		if lit[i] {
 			sb.WriteString(styleSnakeOn.Render("█"))
 		} else {
 			sb.WriteString(styleSnakeOff.Render("░"))

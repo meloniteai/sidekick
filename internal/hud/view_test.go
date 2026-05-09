@@ -124,7 +124,7 @@ func TestRenderGridArrowAnimation(t *testing.T) {
 	m.tick++
 	m.snapshot.Verifiers[0].ComputedAt = later
 	m.refreshAnims()
-	if frame, active := m.animFrame("Architect"); !active || frame != 0 {
+	if frame, active := m.animFrame("Architect", false); !active || frame != 0 {
 		t.Fatalf("expected frame 0 active after fresh ComputedAt, got frame=%d active=%v", frame, active)
 	}
 	mid := m.renderGrid(41, 21)
@@ -134,7 +134,7 @@ func TestRenderGridArrowAnimation(t *testing.T) {
 
 	// After arrowAnimFrames ticks, the arrow stops painting.
 	m.tick += arrowAnimFrames
-	if _, active := m.animFrame("Architect"); active {
+	if _, active := m.animFrame("Architect", false); active {
 		t.Fatalf("animation should be over after %d ticks", arrowAnimFrames)
 	}
 	done := m.renderGrid(41, 21)

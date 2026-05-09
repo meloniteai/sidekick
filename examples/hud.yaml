@@ -1,27 +1,47 @@
 # Example hud.yaml — drop into your project root and edit to taste.
 #
-# Each verifier is a command that reads a JSON session blob on stdin and
-# writes {"distance": <0..1>, "reason": "..."} on stdout. The bundled
-# `run.sh` wrapper takes a persona name, loads `skills/<persona>/SKILL.md`
-# as the rubric, and runs `claude -p` so each verifier scores cumulative
-# session work (via `git diff $SESSION_BASE_REF`) against the active goal.
-# Replace any of them with your own scripts (deterministic linters,
-# coverage gates, custom checks, etc.).
+# Verifiers can be:
+#   - type: llm     loads a SKILL.md rubric and runs claude/codex for you
+#   - type: binary  maps command exit code to distance 0 or 1
+#   - type: command custom stdin/stdout JSON verifier protocol
+#
+# LLM verifiers score cumulative session work via `git diff
+# $SESSION_BASE_REF` against the active goal.
 goal_source: prompt
 verifiers:
   - name: Architect
+    type: agent
     direction: N
-    command: ["./verifiers/run.sh", "architect"]
     timeout: 90s
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/architect/SKILL.md
   - name: Test
+    type: agent
     direction: E
-    command: ["./verifiers/run.sh", "test"]
     timeout: 90s
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/test/SKILL.md
   - name: Security
+    type: agent
     direction: S
-    command: ["./verifiers/run.sh", "security"]
     timeout: 90s
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/security/SKILL.md
   - name: Deployment
+    type: agent
     direction: W
-    command: ["./verifiers/run.sh", "deployment"]
     timeout: 90s
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/deployment/SKILL.md

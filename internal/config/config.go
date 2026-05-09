@@ -28,10 +28,28 @@ type File struct {
 
 // VerifierSpec mirrors verifier.Verifier with YAML tags.
 type VerifierSpec struct {
-	Name      string   `yaml:"name"`
-	Direction string   `yaml:"direction"`
-	Command   []string `yaml:"command"`
-	Timeout   string   `yaml:"timeout,omitempty"` // duration string, e.g. "60s"
+	Name      string             `yaml:"name"`
+	Type      string             `yaml:"type,omitempty"`
+	Direction string             `yaml:"direction"`
+	Command   []string           `yaml:"command,omitempty"`
+	Timeout   string             `yaml:"timeout,omitempty"` // duration string, e.g. "60s"
+	LLM       AgentVerifierSpec  `yaml:"llm,omitempty"` // yaml key kept as "llm" for backward compat
+	Binary    BinaryVerifierSpec `yaml:"binary,omitempty"`
+}
+
+// AgentVerifierSpec configures a native agent-backed verifier.
+type AgentVerifierSpec struct {
+	Agent    string `yaml:"agent,omitempty"`
+	Model    string `yaml:"model,omitempty"`
+	Thinking string `yaml:"thinking,omitempty"`
+	Skill    string `yaml:"skill,omitempty"`
+}
+
+// BinaryVerifierSpec configures a native exit-code verifier.
+type BinaryVerifierSpec struct {
+	Command    []string `yaml:"command"`
+	PassReason string   `yaml:"pass_reason,omitempty"`
+	FailReason string   `yaml:"fail_reason,omitempty"`
 }
 
 // validDirections accepts the 8 compass directions used by the layout.
@@ -80,7 +98,7 @@ func (f *File) ResolveQuietPeriod() (time.Duration, error) {
 }
 
 // Resolve converts the parsed file into runtime verifiers, resolving any
-// relative command paths against `configDir`.
+// relative local paths against `configDir`.
 func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 	if len(f.Verifiers) == 0 {
 		return nil, errors.New("no verifiers configured")
@@ -99,12 +117,12 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 		if !validDirections[dir] {
 			return nil, fmt.Errorf("verifier %s: invalid direction %q (want one of N/NE/E/SE/S/SW/W/NW)", vs.Name, vs.Direction)
 		}
-		if len(vs.Command) == 0 {
-			return nil, fmt.Errorf("verifier %s: command is required", vs.Name)
+		kind := strings.ToLower(vs.Type)
+		if kind == "llm" {
+			kind = verifier.TypeAgent // "llm" accepted as alias for backward compat
 		}
-		cmd := append([]string(nil), vs.Command...)
-		if strings.HasPrefix(cmd[0], "./") || strings.HasPrefix(cmd[0], "../") {
-			cmd[0] = filepath.Join(configDir, cmd[0])
+		if kind == "" {
+			kind = verifier.TypeCommand
 		}
 		var timeout time.Duration
 		if vs.Timeout != "" {
@@ -114,14 +132,62 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 			}
 			timeout = t
 		}
-		out = append(out, verifier.Verifier{
+		v := verifier.Verifier{
 			Name:      vs.Name,
 			Direction: dir,
-			Command:   cmd,
+			Type:      kind,
 			Timeout:   timeout,
-		})
+		}
+		switch kind {
+		case verifier.TypeCommand:
+			if len(vs.Command) == 0 {
+				return nil, fmt.Errorf("verifier %s: command is required", vs.Name)
+			}
+			v.Command = resolveCommand(configDir, vs.Command)
+		case verifier.TypeAgent:
+			if vs.LLM.Skill == "" {
+				return nil, fmt.Errorf("verifier %s: agent.skill is required", vs.Name)
+			}
+			agent := vs.LLM.Agent
+			if agent == "" {
+				agent = "claude"
+			}
+			v.Agent = verifier.AgentConfig{
+				Agent:    strings.ToLower(agent),
+				Model:    vs.LLM.Model,
+				Thinking: vs.LLM.Thinking,
+				Skill:    resolveLocalPath(configDir, vs.LLM.Skill),
+			}
+		case verifier.TypeBinary:
+			if len(vs.Binary.Command) == 0 {
+				return nil, fmt.Errorf("verifier %s: binary.command is required", vs.Name)
+			}
+			v.Binary = verifier.BinaryConfig{
+				Command:    resolveCommand(configDir, vs.Binary.Command),
+				PassReason: vs.Binary.PassReason,
+				FailReason: vs.Binary.FailReason,
+			}
+		default:
+			return nil, fmt.Errorf("verifier %s: invalid type %q (want command, agent, or binary)", vs.Name, vs.Type)
+		}
+		out = append(out, v)
 	}
 	return out, nil
+}
+
+func resolveCommand(configDir string, in []string) []string {
+	cmd := append([]string(nil), in...)
+	if len(cmd) > 0 {
+		cmd[0] = resolveLocalPath(configDir, cmd[0])
+	}
+	return cmd
+}
+
+func resolveLocalPath(configDir, p string) string {
+	if strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") {
+		return filepath.Join(configDir, p)
+	}
+	return p
 }
 
 // findUpwards searches for `name` starting at cwd and walking up to the
