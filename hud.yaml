@@ -1,0 +1,27 @@
+# Example hud.yaml — drop into your project root and edit to taste.
+#
+# Each verifier is a command that reads a JSON session blob on stdin and
+# writes {"distance": <0..1>, "reason": "..."} on stdout. The bundled
+# `run.sh` wrapper takes a persona name, loads `skills/<persona>/SKILL.md`
+# as the rubric, and runs `claude -p` so each verifier scores cumulative
+# session work (via `git diff $SESSION_BASE_REF`) against the active goal.
+# Replace any of them with your own scripts (deterministic linters,
+# coverage gates, custom checks, etc.).
+goal_source: prompt
+verifiers:
+  - name: Architect
+    direction: N
+    command: ["./verifiers/run.sh", "architect"]
+    timeout: 90s
+  - name: Test
+    direction: E
+    command: ["./verifiers/run.sh", "test"]
+    timeout: 90s
+  - name: Security
+    direction: S
+    command: ["./verifiers/run.sh", "security"]
+    timeout: 90s
+  - name: Deployment
+    direction: W
+    command: ["./verifiers/run.sh", "deployment"]
+    timeout: 90s

@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          { "type": "command", "command": "hud hook write" }
+        ]
+      }
+    ]
+  },
+  "mcpServers": {
+    "hud": {
+      "command": "hud",
+      "args": ["mcp"]
+    }
+  }
+}
