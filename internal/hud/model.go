@@ -22,6 +22,7 @@ type Model struct {
 	snapshot ipc.StatusReply
 	width    int
 	height   int
+	tick     int
 }
 
 // New returns an initialized Model.
@@ -47,6 +48,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tickMsg:
 		m.snapshot = m.state.Snapshot()
+		m.tick++
 		return m, tick()
 	}
 	return m, nil

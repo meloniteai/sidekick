@@ -13,6 +13,8 @@ var (
 	styleGoal    = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
 	styleAxis    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	styleRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	styleSnakeOn = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	styleSnakeOff = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	styleReason  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleGoalLbl = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 )
@@ -154,7 +156,7 @@ func (m Model) renderList() string {
 		label := fmt.Sprintf("%c", first(v.Name))
 		head := fmt.Sprintf("[%s] %-12s %s  d=%.2f", label, v.Name, v.Direction, v.Distance)
 		if v.Running {
-			head += "  " + styleRunning.Render("(running…)")
+			head += "  " + styleRunning.Render("(running…)") + " " + renderSnake(m.tick)
 		}
 		b.WriteString(head)
 		if v.Reason != "" {
@@ -164,6 +166,36 @@ func (m Model) renderList() string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// snakeTrack is the bracketed marquee width; snakeBody is the length of the
+// bright segment that wraps from right edge back to left each tick. Together
+// they produce the rectangular "snake" loader common in bash UIs.
+const (
+	snakeTrack = 8
+	snakeBody  = 3
+)
+
+func renderSnake(tick int) string {
+	head := ((tick % snakeTrack) + snakeTrack) % snakeTrack
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i := 0; i < snakeTrack; i++ {
+		lit := false
+		for j := 0; j < snakeBody; j++ {
+			if (head-j+snakeTrack)%snakeTrack == i {
+				lit = true
+				break
+			}
+		}
+		if lit {
+			sb.WriteString(styleSnakeOn.Render("█"))
+		} else {
+			sb.WriteString(styleSnakeOff.Render("░"))
+		}
+	}
+	sb.WriteByte(']')
+	return sb.String()
 }
 
 func first(s string) byte {
