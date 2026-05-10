@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/uriahlevy/hud/internal/ipc"
 )
 
 var (
@@ -24,6 +26,8 @@ var (
 	styleHeaderLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleSessionOn     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	styleWind          = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Bold(true)
+	styleDisabled      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleFooterKeys    = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238")).Bold(true).Padding(0, 1)
 )
 
 // directionArrow points outward along each compass axis (away from goal toward
@@ -79,6 +83,12 @@ func orbStyle(d float64) lipgloss.Style {
 
 // View satisfies tea.Model.
 func (m Model) View() string {
+	if m.status != nil {
+		return m.status.View()
+	}
+	if m.editor != nil {
+		return m.editor.View()
+	}
 	if m.width == 0 {
 		return "initializing..."
 	}
@@ -131,10 +141,16 @@ func (m Model) renderHeader(totalW int) string {
 	)
 
 	// Row 2 — telemetry: socket / mcp last-seen + verifier count.
+	enabled := 0
+	for _, v := range m.snapshot.Verifiers {
+		if !v.Disabled {
+			enabled++
+		}
+	}
 	rows = append(rows,
 		styleHeaderLabel.Render("last socket: ")+formatTimestamp(m.snapshot.LastSocketAt)+
 			"  "+styleHeaderLabel.Render("last mcp: ")+formatTimestamp(m.snapshot.LastMCPAt)+
-			"  "+styleHeaderLabel.Render("verifiers: ")+fmt.Sprintf("%d", len(m.snapshot.Verifiers)),
+			"  "+styleHeaderLabel.Render("verifiers: ")+fmt.Sprintf("%d/%d", enabled, len(m.snapshot.Verifiers)),
 	)
 
 	// Row 3 — goal summary, single line, truncated to fit.
@@ -146,9 +162,6 @@ func (m Model) renderHeader(totalW int) string {
 		goalRow += truncate(goal, contentW-len("goal: ")-2)
 	}
 	rows = append(rows, goalRow)
-
-	// Row 4 — keyboard shortcuts.
-	rows = append(rows, styleHeaderLabel.Render("keys: ")+"q quit  ·  t trigger  ·  esc stop")
 
 	return styleHeaderBox.Width(styleW).Render(strings.Join(rows, "\n"))
 }
@@ -193,6 +206,9 @@ func (m Model) renderGrid(w, h int) string {
 	}
 	var placements []placed
 	for _, v := range m.snapshot.Verifiers {
+		if v.Disabled {
+			continue
+		}
 		col, row, ok := project(v.Direction, v.Distance, w, h)
 		if !ok {
 			continue
@@ -251,6 +267,9 @@ func (m Model) renderGrid(w, h int) string {
 	}
 	arrows := map[[2]int]arrowCell{}
 	for _, v := range m.snapshot.Verifiers {
+		if v.Disabled {
+			continue
+		}
 		frame, active, inward, calibrating := m.animInfo(v.Name, v.Running)
 		if !active || v.Distance <= 0 {
 			continue
@@ -342,36 +361,171 @@ func (m Model) renderGrid(w, h int) string {
 
 func (m Model) listLineCount() int {
 	if len(m.snapshot.Verifiers) == 0 {
-		return 1
+		return 3
 	}
-	return len(m.snapshot.Verifiers)
+	return len(m.snapshot.Verifiers) + 2
 }
 
 func (m Model) renderList(maxWidth int) string {
 	if len(m.snapshot.Verifiers) == 0 {
-		return styleReason.Render(truncate("(no verifiers configured)", maxWidth))
+		return renderListHeader(maxWidth) + "\n" +
+			styleReason.Render(truncate("(no verifiers configured)", maxWidth)) + "\n" +
+			m.renderFooterHelp(maxWidth)
 	}
 	var b strings.Builder
+	b.WriteString(renderListHeader(maxWidth))
+	b.WriteString("\n")
 	for i, v := range m.snapshot.Verifiers {
-		label := fmt.Sprintf("%c", first(v.Name))
-		head := fmt.Sprintf("[%s] %-12s %s  ", label, v.Name, v.Direction) +
-			orbStyle(v.Distance).Render(fmt.Sprintf("d=%.2f", v.Distance))
-		if v.Running {
-			head += "  " + styleRunning.Render("running") + " " + renderDot(m.tick)
+		b.WriteString(m.renderListRow(i, v, maxWidth))
+		b.WriteString("\n")
+	}
+	b.WriteString(m.renderFooterHelp(maxWidth))
+	return b.String()
+}
+
+func (m Model) renderFooterHelp(maxWidth int) string {
+	text := "keys: up/down select | enter status | space toggle | r run one | t all | e edit | esc stop | q quit | 1-9/0 toggle"
+	if m.footerNotice != "" && m.tick < m.footerNoticeUntil {
+		text = m.footerNotice
+	}
+	innerW := maxWidth - styleFooterKeys.GetHorizontalPadding()
+	if innerW < 1 {
+		innerW = 1
+	}
+	return styleFooterKeys.Render(truncate(text, innerW))
+}
+
+func renderListHeader(maxWidth int) string {
+	header := fmt.Sprintf("%-3s %-12s %-3s %-7s %s", "key", "verifier", "dir", "type", "config")
+	if maxWidth > lipgloss.Width(header)+8 {
+		header += "  status  reason"
+	}
+	return styleHeaderLabel.Render(truncate(header, maxWidth))
+}
+
+func (m Model) renderListRow(i int, v ipc.VerifierStatus, maxWidth int) string {
+	cursor := " "
+	if i == m.selectedVerifier {
+		cursor = styleEditCursor.Render(">")
+	}
+	label := "[" + toggleLabel(i) + "]"
+	name := padCell(truncate(v.Name, 12), 12)
+	kind := padCell(truncate(verifierType(v), 7), 7)
+	if v.Disabled {
+		name = styleDisabled.Render(name)
+		kind = styleDisabled.Render(kind)
+	}
+
+	prefix := fmt.Sprintf("%s%-3s %s %-3s %s ", cursor, label, name, v.Direction, kind)
+	status := orbStyle(v.Distance).Render(fmt.Sprintf("d=%.2f", v.Distance))
+	if v.Disabled {
+		status = styleDisabled.Render("off")
+	} else if v.Running {
+		status = styleRunning.Render("running") + " " + renderDot(m.tick)
+	}
+
+	available := maxWidth - lipgloss.Width(prefix) - lipgloss.Width(status) - 2
+	if available <= 0 {
+		return truncate(prefix+status, maxWidth)
+	}
+
+	config := metadataSummary(v)
+	configWidth := lipgloss.Width(config)
+	configW := available
+	if v.Reason != "" && available > 10 {
+		configW = available - 8
+		if configW < 8 {
+			configW = 8
 		}
-		b.WriteString(head)
-		if v.Reason != "" {
-			remaining := maxWidth - lipgloss.Width(head) - 2
-			if remaining > 0 {
-				b.WriteString("  ")
-				b.WriteString(styleReason.Render(truncate(v.Reason, remaining)))
-			}
+		if configW > configWidth {
+			configW = configWidth
 		}
-		if i < len(m.snapshot.Verifiers)-1 {
-			b.WriteString("\n")
+		if configW > 80 {
+			configW = 80
+		}
+	} else if configW > 80 {
+		configW = 80
+	}
+
+	configCell := padCell(truncate(config, configW), configW)
+	if v.Disabled {
+		configCell = styleDisabled.Render(configCell)
+	} else {
+		configCell = styleReason.Render(configCell)
+	}
+
+	head := prefix + configCell + "  " + status
+	if v.Reason == "" {
+		return truncate(head, maxWidth)
+	}
+	remaining := maxWidth - lipgloss.Width(head) - 2
+	if remaining <= 0 {
+		return truncate(head, maxWidth)
+	}
+	return head + "  " + styleReason.Render(truncate(v.Reason, remaining))
+}
+
+func verifierType(v ipc.VerifierStatus) string {
+	switch v.Config.Type {
+	case "llm":
+		return "agent"
+	case "":
+		return "command"
+	default:
+		return v.Config.Type
+	}
+}
+
+func metadataSummary(v ipc.VerifierStatus) string {
+	cfg := v.Config
+	parts := []string{}
+	switch verifierType(v) {
+	case "agent":
+		parts = append(parts,
+			"agent="+defaultSetting(cfg.Agent),
+			"model="+defaultSetting(cfg.Model),
+			"thinking="+defaultSetting(cfg.Thinking),
+		)
+	case "binary":
+		if len(cfg.Command) > 0 {
+			parts = append(parts, "cmd="+strings.Join(cfg.Command, " "))
+		}
+		if cfg.PassReason != "" {
+			parts = append(parts, "pass="+cfg.PassReason)
+		}
+		if cfg.FailReason != "" {
+			parts = append(parts, "fail="+cfg.FailReason)
+		}
+	default:
+		if len(cfg.Command) > 0 {
+			parts = append(parts, "cmd="+strings.Join(cfg.Command, " "))
 		}
 	}
-	return b.String()
+	if cfg.Timeout != "" {
+		parts = append(parts, "timeout="+cfg.Timeout)
+	}
+	if len(parts) == 0 {
+		return "(no config fields)"
+	}
+	return strings.Join(parts, " ")
+}
+
+func defaultSetting(s string) string {
+	if s == "" {
+		return "default"
+	}
+	return s
+}
+
+func toggleLabel(i int) string {
+	switch {
+	case i >= 0 && i < 9:
+		return fmt.Sprintf("%d", i+1)
+	case i == 9:
+		return "0"
+	default:
+		return " "
+	}
 }
 
 // dotTrack is the number of positions in the ping-pong dot spinner. The dot
@@ -401,13 +555,6 @@ func renderDot(tick int) string {
 	return sb.String()
 }
 
-func first(s string) byte {
-	if s == "" {
-		return '?'
-	}
-	return s[0]
-}
-
 func truncate(s string, n int) string {
 	if n <= 0 {
 		return ""
@@ -426,4 +573,14 @@ func truncate(s string, n int) string {
 		b.WriteRune(r)
 	}
 	return b.String() + "…"
+}
+
+func padCell(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-lipgloss.Width(s))
 }

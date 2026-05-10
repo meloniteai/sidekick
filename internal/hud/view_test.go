@@ -47,8 +47,8 @@ func TestRenderListSnakeGating(t *testing.T) {
 		},
 	}
 	lines := strings.Split(strings.TrimRight(m.renderList(80), "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d lines, want 2: %q", len(lines), lines)
+	if len(lines) != 4 {
+		t.Fatalf("got %d lines, want 4: %q", len(lines), lines)
 	}
 	var running, idle string
 	for _, ln := range lines {
@@ -93,6 +93,11 @@ func TestRenderListTruncatesReasonToWidth(t *testing.T) {
 					Direction: "N",
 					Distance:  0.1,
 					Reason:    strings.Repeat("long visual reason ", 8),
+					Config: ipc.VerifierConfig{
+						Type:  "agent",
+						Agent: "claude",
+						Model: "haiku",
+					},
 				},
 			},
 		},
@@ -104,6 +109,134 @@ func TestRenderListTruncatesReasonToWidth(t *testing.T) {
 	}
 	if !strings.Contains(out, "…") {
 		t.Fatalf("expected truncated reason marker in %q", out)
+	}
+}
+
+func TestRenderListShowsVerifierMetadata(t *testing.T) {
+	m := Model{
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{
+					Name:      "Architect",
+					Direction: "N",
+					Distance:  0.1,
+					Config: ipc.VerifierConfig{
+						Type:     "agent",
+						Agent:    "claude",
+						Model:    "haiku",
+						Thinking: "low",
+						Timeout:  "90s",
+					},
+				},
+				{
+					Name:      "Unit Tests",
+					Direction: "S",
+					Distance:  0.2,
+					Config: ipc.VerifierConfig{
+						Type:       "binary",
+						Command:    []string{"./scripts/test.sh"},
+						PassReason: "tests pass",
+						FailReason: "tests failed",
+					},
+				},
+			},
+		},
+	}
+	out := m.renderList(180)
+	for _, want := range []string{
+		"key", "verifier", "type", "config",
+		"agent", "agent=claude", "model=haiku", "thinking=low", "timeout=90s",
+		"binary", "cmd=./scripts/test.sh", "pass=tests pass", "fail=tests failed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("metadata footer missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderListShowsDisabledVerifierToggle(t *testing.T) {
+	m := Model{
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.1},
+				{Name: "Test", Direction: "E", Distance: 0.2, Disabled: true, Reason: "disabled"},
+			},
+		},
+	}
+	out := m.renderList(80)
+	for _, want := range []string{"[1]", "Architect", "[2]", "Test", "off", "disabled"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("disabled footer row missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderListShowsBrowserActionsAndSelection(t *testing.T) {
+	m := Model{
+		selectedVerifier: 1,
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.1},
+				{Name: "Test", Direction: "E", Distance: 0.2},
+			},
+		},
+	}
+	out := m.renderList(180)
+	for _, want := range []string{
+		"key", "verifier", "dir", "type", "config",
+		"keys:", "enter status", "space toggle", "r run one", "t all", "e edit", "1-9/0 toggle",
+		">", "[2]", "Test",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("browser footer missing %q in:\n%s", want, out)
+		}
+	}
+	firstLine := strings.SplitN(out, "\n", 2)[0]
+	if strings.Contains(firstLine, "sel") {
+		t.Fatalf("table header should not include selection column:\n%s", out)
+	}
+}
+
+func TestRenderGridSkipsDisabledVerifier(t *testing.T) {
+	m := Model{
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.8, Disabled: true},
+			},
+		},
+	}
+	out := m.renderGrid(41, 21)
+	if strings.Contains(out, "architect") {
+		t.Fatalf("disabled verifier should not render on grid:\n%s", out)
+	}
+}
+
+func TestStatusWizardShowsFullVerifierStatus(t *testing.T) {
+	w := NewStatusWizard(ipc.VerifierStatus{
+		Name:       "Architect",
+		Direction:  "N",
+		Distance:   0.42,
+		Reason:     "full reason text",
+		ComputedAt: time.Date(2026, 5, 9, 12, 34, 56, 0, time.UTC),
+		Config: ipc.VerifierConfig{
+			Type:     "agent",
+			Agent:    "codex",
+			Model:    "gpt-5.5",
+			Thinking: "medium",
+			Skill:    "./skills/architect/SKILL.md",
+			Timeout:  "90s",
+		},
+	})
+	w.width = 100
+	w.height = 30
+	out := w.View()
+	for _, want := range []string{
+		"HUD verifier status", "Architect", "direction:", "N", "distance:", "0.42", "computed:", "2026-05-09T12:34:56Z",
+		"agent:", "codex", "model:", "gpt-5.5", "skill:", "./skills/architect/SKILL.md", "reason:", "full reason text",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("status wizard missing %q in:\n%s", want, out)
+		}
 	}
 }
 
@@ -235,7 +368,7 @@ func TestRenderHeaderFields(t *testing.T) {
 			Verifiers: []ipc.VerifierStatus{
 				{Name: "A", Direction: "N"},
 				{Name: "B", Direction: "E"},
-				{Name: "C", Direction: "S"},
+				{Name: "C", Direction: "S", Disabled: true},
 			},
 		},
 	}
@@ -245,13 +378,15 @@ func TestRenderHeaderFields(t *testing.T) {
 		"session: ", "active",
 		"last socket: ", "12:34:56",
 		"last mcp: ", "12:34:55",
-		"verifiers: ", "3",
+		"verifiers: ", "2/3",
 		"goal: ", "ship the header",
-		"keys: ", "q quit", "t trigger",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("header missing %q in:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "keys: ") {
+		t.Errorf("header should not render shortcut labels after moving them to the footer:\n%s", out)
 	}
 
 	// Zero-value timestamps must still render (em-dash placeholder), not

@@ -54,6 +54,7 @@ type Verifier struct {
 	Name      string
 	Direction string // N, NE, E, SE, S, SW, W, NW
 	Type      string
+	Disabled  bool
 	Command   []string
 	Timeout   time.Duration // 0 → 60s default
 	Agent     AgentConfig

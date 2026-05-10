@@ -36,7 +36,7 @@ func newMenubarCmd() *cobra.Command {
 			}
 			fmt.Fprintf(os.Stderr, "[hud] session base ref: %s\n", baseRef)
 
-			verifiers, quietPeriod, source, err := loadVerifiers(configPath)
+			verifiers, quietPeriod, source, _, err := loadVerifiers(configPath)
 			if err != nil {
 				return err
 			}

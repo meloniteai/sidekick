@@ -207,6 +207,153 @@ func TestKillBatchStopsRunningSubprocess(t *testing.T) {
 	}
 }
 
+func TestRunnerSkipsDisabledVerifiers(t *testing.T) {
+	state := daemon.NewState()
+	disabled := Verifier{
+		Name:      "Disabled",
+		Direction: "N",
+		Command:   []string{"sh", "-c", `printf '{"distance":0.1,"reason":"should not run"}\n'`},
+		Timeout:   2 * time.Second,
+	}
+	enabled := Verifier{
+		Name:      "Enabled",
+		Direction: "S",
+		Command:   []string{"sh", "-c", `printf '{"distance":0.2,"reason":"ok"}\n'`},
+		Timeout:   2 * time.Second,
+	}
+	r := NewRunner(context.Background(), state, []Verifier{disabled, enabled})
+	defer r.Stop()
+	state.SetVerifierDisabled("Disabled", true)
+
+	r.Trigger("a.go")
+	if !waitFor(2*time.Second, func() bool {
+		s, _ := state.Verifier("Enabled")
+		return !s.Running && s.Reason == "ok"
+	}) {
+		s, _ := state.Verifier("Enabled")
+		t.Fatalf("enabled verifier did not run; reason=%q running=%v", s.Reason, s.Running)
+	}
+	s, _ := state.Verifier("Disabled")
+	if !s.Disabled {
+		t.Fatal("disabled verifier lost disabled state")
+	}
+	if !s.ComputedAt.IsZero() {
+		t.Fatalf("disabled verifier should not be computed, got %s", s.ComputedAt)
+	}
+	if s.Reason != "disabled" {
+		t.Fatalf("disabled verifier reason: got %q, want disabled", s.Reason)
+	}
+}
+
+func TestTriggerVerifierImmediateRunsOnlySelectedVerifier(t *testing.T) {
+	state := daemon.NewState()
+	a := Verifier{
+		Name:      "Architect",
+		Direction: "N",
+		Command:   []string{"sh", "-c", `printf '{"distance":0.1,"reason":"architect"}\n'`},
+		Timeout:   2 * time.Second,
+	}
+	b := Verifier{
+		Name:      "Test",
+		Direction: "S",
+		Command:   []string{"sh", "-c", `printf '{"distance":0.2,"reason":"test"}\n'`},
+		Timeout:   2 * time.Second,
+	}
+	r := NewRunner(context.Background(), state, []Verifier{a, b})
+	defer r.Stop()
+
+	if ok := r.TriggerVerifierImmediate("Test"); !ok {
+		t.Fatal("TriggerVerifierImmediate should accept a known enabled verifier")
+	}
+	if !waitFor(2*time.Second, func() bool {
+		s, _ := state.Verifier("Test")
+		return !s.Running && s.Reason == "test"
+	}) {
+		s, _ := state.Verifier("Test")
+		t.Fatalf("selected verifier did not run; reason=%q running=%v", s.Reason, s.Running)
+	}
+	architect, _ := state.Verifier("Architect")
+	if architect.Reason != "awaiting first run" || !architect.ComputedAt.IsZero() {
+		t.Fatalf("unselected verifier should not run, got %+v", architect)
+	}
+	if ok := r.TriggerVerifierImmediate("Missing"); ok {
+		t.Fatal("unknown verifier should not be accepted")
+	}
+	state.SetVerifierDisabled("Test", true)
+	if ok := r.TriggerVerifierImmediate("Test"); ok {
+		t.Fatal("disabled verifier should not be accepted")
+	}
+}
+
+func TestNewRunnerSeedsVerifierConfig(t *testing.T) {
+	state := daemon.NewState()
+	verifiers := []Verifier{
+		{
+			Name:      "Architect",
+			Direction: "N",
+			Type:      TypeAgent,
+			Timeout:   90 * time.Second,
+			Agent: AgentConfig{
+				Agent:    "codex",
+				Model:    "gpt-5.5",
+				Thinking: "high",
+				Skill:    "./skills/architect/SKILL.md",
+			},
+		},
+		{
+			Name:      "Unit Tests",
+			Direction: "S",
+			Type:      TypeBinary,
+			Binary: BinaryConfig{
+				Command:    []string{"./scripts/test.sh"},
+				PassReason: "tests pass",
+				FailReason: "tests failed",
+			},
+		},
+	}
+	r := NewRunner(context.Background(), state, verifiers)
+	defer r.Stop()
+
+	agent, _ := state.Verifier("Architect")
+	if agent.Config.Type != TypeAgent ||
+		agent.Config.Agent != "codex" ||
+		agent.Config.Model != "gpt-5.5" ||
+		agent.Config.Thinking != "high" ||
+		agent.Config.Timeout != "1m30s" {
+		t.Fatalf("agent config not seeded: %+v", agent.Config)
+	}
+
+	binary, _ := state.Verifier("Unit Tests")
+	if binary.Config.Type != TypeBinary ||
+		len(binary.Config.Command) != 1 ||
+		binary.Config.Command[0] != "./scripts/test.sh" ||
+		binary.Config.PassReason != "tests pass" ||
+		binary.Config.FailReason != "tests failed" {
+		t.Fatalf("binary config not seeded: %+v", binary.Config)
+	}
+}
+
+func TestNewRunnerSeedsDisabledVerifier(t *testing.T) {
+	state := daemon.NewState()
+	r := NewRunner(context.Background(), state, []Verifier{
+		{
+			Name:      "Architect",
+			Direction: "N",
+			Disabled:  true,
+			Command:   []string{"sh", "-c", `printf '{"distance":0.2,"reason":"ok"}\n'`},
+		},
+	})
+	defer r.Stop()
+
+	status, ok := state.Verifier("Architect")
+	if !ok {
+		t.Fatal("verifier missing from state")
+	}
+	if !status.Disabled || status.Reason != "disabled" {
+		t.Fatalf("disabled verifier not seeded correctly: %+v", status)
+	}
+}
+
 // TestQuietPeriodSetsDefault locks the default and the override path.
 func TestQuietPeriodSetsDefault(t *testing.T) {
 	state := daemon.NewState()

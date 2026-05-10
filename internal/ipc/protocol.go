@@ -54,11 +54,11 @@ type Response struct {
 
 // Known request types.
 const (
-	TypeWrite   = "write"    // {file: string}                   -> {}
-	TypeGoal    = "goal"     // {goal: string}                   -> {}
-	TypeStatus  = "status"   // {}                               -> StatusData
-	TypeExplain = "explain"  // {verifier: string}               -> ExplainData
-	TypePing    = "ping"     // {}                               -> {pong: true}
+	TypeWrite   = "write"   // {file: string}                   -> {}
+	TypeGoal    = "goal"    // {goal: string}                   -> {}
+	TypeStatus  = "status"  // {}                               -> StatusData
+	TypeExplain = "explain" // {verifier: string}               -> ExplainData
+	TypePing    = "ping"    // {}                               -> {pong: true}
 )
 
 // WriteData is the payload for TypeWrite.
@@ -78,12 +78,28 @@ type ExplainData struct {
 
 // VerifierStatus is the per-verifier state surfaced to clients.
 type VerifierStatus struct {
-	Name       string    `json:"name"`
-	Direction  string    `json:"direction"`
-	Distance   float64   `json:"distance"`
-	Reason     string    `json:"reason"`
-	ComputedAt time.Time `json:"computed_at"`
-	Running    bool      `json:"running"`
+	Name       string         `json:"name"`
+	Direction  string         `json:"direction"`
+	Distance   float64        `json:"distance"`
+	Reason     string         `json:"reason"`
+	ComputedAt time.Time      `json:"computed_at"`
+	Running    bool           `json:"running"`
+	Disabled   bool           `json:"disabled,omitempty"`
+	Config     VerifierConfig `json:"config,omitempty"`
+}
+
+// VerifierConfig is the resolved hud.yaml metadata surfaced with verifier
+// status so clients can explain what is running without reparsing config.
+type VerifierConfig struct {
+	Type       string   `json:"type,omitempty"`
+	Command    []string `json:"command,omitempty"`
+	Timeout    string   `json:"timeout,omitempty"`
+	Agent      string   `json:"agent,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	Thinking   string   `json:"thinking,omitempty"`
+	Skill      string   `json:"skill,omitempty"`
+	PassReason string   `json:"pass_reason,omitempty"`
+	FailReason string   `json:"fail_reason,omitempty"`
 }
 
 // StatusReply is returned by TypeStatus.

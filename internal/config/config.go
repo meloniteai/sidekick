@@ -30,10 +30,11 @@ type File struct {
 type VerifierSpec struct {
 	Name      string             `yaml:"name"`
 	Type      string             `yaml:"type,omitempty"`
+	Disabled  bool               `yaml:"disabled,omitempty"`
 	Direction string             `yaml:"direction"`
 	Command   []string           `yaml:"command,omitempty"`
 	Timeout   string             `yaml:"timeout,omitempty"` // duration string, e.g. "60s"
-	LLM       AgentVerifierSpec  `yaml:"llm,omitempty"` // yaml key kept as "llm" for backward compat
+	LLM       AgentVerifierSpec  `yaml:"llm,omitempty"`     // yaml key kept as "llm" for backward compat
 	Binary    BinaryVerifierSpec `yaml:"binary,omitempty"`
 }
 
@@ -77,6 +78,55 @@ func Load(path string) (*File, string, error) {
 		return nil, path, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return &f, path, nil
+}
+
+// Save writes f back to path as hud.yaml.
+func Save(path string, f *File) error {
+	raw, err := yaml.Marshal(f)
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", path, err)
+	}
+	if err := writeFileAtomic(path, raw, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// SetVerifierDisabled persists a verifier's disabled flag in hud.yaml.
+func SetVerifierDisabled(path, name string, disabled bool) error {
+	f, path, err := Load(path)
+	if err != nil {
+		return err
+	}
+	for i := range f.Verifiers {
+		if f.Verifiers[i].Name == name {
+			f.Verifiers[i].Disabled = disabled
+			return Save(path, f)
+		}
+	}
+	return fmt.Errorf("verifier %q not found in %s", name, path)
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // ResolveQuietPeriod parses the optional root-level quiet_period field. A
@@ -136,6 +186,7 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 			Name:      vs.Name,
 			Direction: dir,
 			Type:      kind,
+			Disabled:  vs.Disabled,
 			Timeout:   timeout,
 		}
 		switch kind {
@@ -183,7 +234,9 @@ func resolveCommand(configDir string, in []string) []string {
 	return cmd
 }
 
-func resolveLocalPath(configDir, p string) string {
+// ResolveLocalPath resolves the local path forms accepted by hud.yaml against
+// configDir. Non-local command names are returned unchanged.
+func ResolveLocalPath(configDir, p string) string {
 	if strings.HasPrefix(p, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
 			p = filepath.Join(home, p[2:])
@@ -193,6 +246,10 @@ func resolveLocalPath(configDir, p string) string {
 		return filepath.Join(configDir, p)
 	}
 	return p
+}
+
+func resolveLocalPath(configDir, p string) string {
+	return ResolveLocalPath(configDir, p)
 }
 
 // findUpwards searches for `name` starting at cwd and walking up to the

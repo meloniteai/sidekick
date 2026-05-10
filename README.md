@@ -29,10 +29,12 @@ the HUD re-evaluates, and the agent itself can read the result via the
 - The active goal is set by the agent itself via the `hud_set_goal` MCP
   tool, driven by the bundled [`hud` skill](skills/hud/SKILL.md).
 - File-write hooks (`PostToolUse` on `Write|Edit|MultiEdit|NotebookEdit`)
-  trigger a debounced batch run of every configured verifier.
+  trigger a debounced batch run of enabled verifiers.
 - Verifiers can be native LLM skill checks, binary pass/fail commands, or
   custom commands that speak HUD's stdin/stdout JSON protocol.
 - The TUI re-renders the compass every 200 ms.
+- In the TUI footer, press the verifier's number key (`1`-`9`, `0` for the
+  tenth) to toggle that verifier on or off for future runs.
 - Agents call `hud_status` to read the snapshot — it never triggers
   recomputation, only file writes do.
 

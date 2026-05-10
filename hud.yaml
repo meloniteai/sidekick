@@ -1,55 +1,39 @@
-# Example hud.yaml — drop into your project root and edit to taste.
-#
-# Verifiers can be:
-#   - type: agent loads a SKILL.md rubric and runs claude/codex for you
-#   - type: binary  maps command exit code to distance 0 or 1
-#   - type: command custom stdin/stdout JSON verifier protocol
-#
-# LLM verifiers score cumulative session work via `git diff
-# $SESSION_BASE_REF` against the active goal.
 goal_source: prompt
-
-# quiet_period sets the minimum gap between verifier batch starts. Bursts of
-# file edits inside the window coalesce into a single run, and pending
-# changes are *not* dropped — once the window elapses, the queued batch
-# fires. Tune this up if your verifiers are LLM-backed and edits come fast.
-# Defaults to 2s when omitted.
 quiet_period: 25s
-
 verifiers:
-  - name: Architect
-    type: agent
-    direction: N
-    timeout: 90s
-    llm:
-      agent: claude
-      model: haiku
-      thinking: low
-      skill: ./skills/architect/SKILL.md
-  - name: Test
-    type: agent
-    direction: E
-    timeout: 90s
-    llm:
-      agent: claude
-      model: haiku
-      thinking: low
-      skill: ./skills/test/SKILL.md
-  - name: Security
-    type: agent
-    direction: S
-    timeout: 90s
-    llm:
-      agent: claude
-      model: haiku
-      thinking: low
-      skill: ./skills/security/SKILL.md
-  - name: Deployment
-    type: agent
-    direction: W
-    timeout: 90s
-    llm:
-      agent: claude
-      model: haiku
-      thinking: low
-      skill: ./skills/deployment/SKILL.md
+    - name: Architect
+      type: agent
+      direction: "N"
+      timeout: 180s
+      llm:
+        agent: claude
+        model: haiku
+        thinking: low
+        skill: ./skills/architect/SKILL.md
+    - name: Test
+      type: agent
+      direction: E
+      timeout: 90s
+      llm:
+        agent: claude
+        model: haiku
+        thinking: low
+        skill: ./skills/test/SKILL.md
+    - name: Security
+      type: agent
+      direction: S
+      timeout: 90s
+      llm:
+        agent: claude
+        model: haiku
+        thinking: low
+        skill: ./skills/security/SKILL.md
+    - name: Deployment
+      type: agent
+      direction: W
+      timeout: 90s
+      llm:
+        agent: claude
+        model: haiku
+        thinking: low
+        skill: ./skills/deployment/SKILL.md

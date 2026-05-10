@@ -63,6 +63,7 @@ func TestResolveTypedVerifiers(t *testing.T) {
 verifiers:
   - name: Explicit Command
     type: command
+    disabled: true
     direction: N
     command: ["./bin/check"]
   - name: Architect
@@ -93,7 +94,7 @@ verifiers:
 	if len(vs) != 3 {
 		t.Fatalf("want 3, got %d", len(vs))
 	}
-	if vs[0].Type != verifier.TypeCommand || !filepath.IsAbs(vs[0].Command[0]) {
+	if vs[0].Type != verifier.TypeCommand || !vs[0].Disabled || !filepath.IsAbs(vs[0].Command[0]) {
 		t.Fatalf("command verifier not resolved: %+v", vs[0])
 	}
 	if vs[1].Type != verifier.TypeAgent ||
@@ -108,6 +109,34 @@ verifiers:
 		vs[2].Binary.PassReason != "tests pass" ||
 		vs[2].Binary.FailReason != "tests failed" {
 		t.Fatalf("binary verifier not resolved: %+v", vs[2])
+	}
+}
+
+func TestSetVerifierDisabled(t *testing.T) {
+	p := writeTemp(t, `verifiers:
+  - name: A
+    direction: N
+    command: ["x"]
+  - name: B
+    disabled: true
+    direction: S
+    command: ["y"]
+`)
+	if err := SetVerifierDisabled(p, "A", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVerifierDisabled(p, "B", false); err != nil {
+		t.Fatal(err)
+	}
+	f, _, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.Verifiers[0].Disabled {
+		t.Fatalf("A disabled flag not saved: %+v", f.Verifiers[0])
+	}
+	if f.Verifiers[1].Disabled {
+		t.Fatalf("B disabled flag not cleared: %+v", f.Verifiers[1])
 	}
 }
 

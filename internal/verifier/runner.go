@@ -62,14 +62,61 @@ func NewRunner(parent context.Context, state *daemon.State, verifiers []Verifier
 		cancel:       cancel,
 	}
 	for _, v := range verifiers {
-		state.UpsertVerifier(ipc.VerifierStatus{
-			Name:      v.Name,
-			Direction: v.Direction,
-			Distance:  1.0, // assume far from goal until first run
-			Reason:    "awaiting first run",
-		})
+		state.UpsertVerifier(initialStatus(v))
 	}
 	return r
+}
+
+// ReplaceVerifiers updates the runner and state after hud.yaml is edited at
+// runtime. Same-named verifier status is preserved by daemon.State.
+func (r *Runner) ReplaceVerifiers(verifiers []Verifier) {
+	r.mu.Lock()
+	r.verifiers = append([]Verifier(nil), verifiers...)
+	r.mu.Unlock()
+
+	statuses := make([]ipc.VerifierStatus, 0, len(verifiers))
+	for _, v := range verifiers {
+		statuses = append(statuses, initialStatus(v))
+	}
+	r.state.ReplaceVerifiers(statuses)
+}
+
+func initialStatus(v Verifier) ipc.VerifierStatus {
+	status := ipc.VerifierStatus{
+		Name:      v.Name,
+		Direction: v.Direction,
+		Distance:  1.0, // assume far from goal until first run
+		Reason:    "awaiting first run",
+		Disabled:  v.Disabled,
+		Config:    verifierConfig(v),
+	}
+	if v.Disabled {
+		status.Reason = "disabled"
+	}
+	return status
+}
+
+func verifierConfig(v Verifier) ipc.VerifierConfig {
+	cfg := ipc.VerifierConfig{
+		Type: v.kind(),
+	}
+	if v.Timeout > 0 {
+		cfg.Timeout = v.Timeout.String()
+	}
+	switch v.kind() {
+	case TypeAgent:
+		cfg.Agent = resolveAgent(v.Agent.Agent)
+		cfg.Model = v.Agent.Model
+		cfg.Thinking = v.Agent.Thinking
+		cfg.Skill = v.Agent.Skill
+	case TypeBinary:
+		cfg.Command = append([]string(nil), v.Binary.Command...)
+		cfg.PassReason = v.Binary.PassReason
+		cfg.FailReason = v.Binary.FailReason
+	case TypeCommand:
+		cfg.Command = append([]string(nil), v.Command...)
+	}
+	return cfg
 }
 
 // SetQuietPeriod overrides the minimum gap between batch starts. Pass 0 to
@@ -146,7 +193,7 @@ func (r *Runner) scheduleLocked() {
 			delay = 0
 		}
 	}
-	r.timer = time.AfterFunc(delay, r.runBatch)
+	r.timer = time.AfterFunc(delay, func() { r.runBatch("") })
 }
 
 // TriggerImmediate schedules a batch to run immediately, bypassing the quiet
@@ -157,14 +204,41 @@ func (r *Runner) TriggerImmediate() {
 	if r.timer != nil || r.running {
 		return
 	}
-	r.timer = time.AfterFunc(0, r.runBatch)
+	r.timer = time.AfterFunc(0, func() { r.runBatch("") })
+}
+
+// TriggerVerifierImmediate schedules a single verifier to run immediately,
+// bypassing the quiet period. It returns false when the verifier is unknown,
+// disabled, or another batch is already scheduled/running.
+func (r *Runner) TriggerVerifierImmediate(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.timer != nil || r.running {
+		return false
+	}
+	found := false
+	for _, v := range r.verifiers {
+		if v.Name == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	if cur, ok := r.state.Verifier(name); ok && cur.Disabled {
+		return false
+	}
+	r.timer = time.AfterFunc(0, func() { r.runBatch(name) })
+	return true
 }
 
 // RunNow runs all verifiers synchronously (used in tests).
-func (r *Runner) RunNow() { r.runBatch() }
+func (r *Runner) RunNow() { r.runBatch("") }
 
-func (r *Runner) runBatch() {
+func (r *Runner) runBatch(only string) {
 	r.mu.Lock()
+	verifiers := append([]Verifier(nil), r.verifiers...)
 	files := make([]string, 0, len(r.changedFiles))
 	for f := range r.changedFiles {
 		files = append(files, f)
@@ -186,13 +260,27 @@ func (r *Runner) runBatch() {
 	}
 
 	var wg sync.WaitGroup
-	for _, v := range r.verifiers {
+	for _, v := range verifiers {
+		if only != "" && v.Name != only {
+			continue
+		}
 		wg.Add(1)
 		go func(v Verifier) {
 			defer wg.Done()
+			if cur, ok := r.state.Verifier(v.Name); ok && cur.Disabled {
+				return
+			}
 			r.state.MarkRunning(v.Name, true)
 			res, err := v.Verify(batchCtx, session)
-			cur, _ := r.state.Verifier(v.Name)
+			cur, ok := r.state.Verifier(v.Name)
+			if !ok {
+				return
+			}
+			if cur.Disabled {
+				cur.Running = false
+				r.state.UpsertVerifier(cur)
+				return
+			}
 			cur.Running = false
 			cur.ComputedAt = time.Now()
 			if err != nil {

@@ -88,6 +88,29 @@ func (s *State) UpsertVerifier(v ipc.VerifierStatus) {
 	s.verifiers[v.Name] = v
 }
 
+// ReplaceVerifiers swaps the configured verifier set while preserving runtime
+// status for same-named verifiers. This is used when hud.yaml is edited from
+// the TUI and reloaded without restarting HUD.
+func (s *State) ReplaceVerifiers(verifiers []ipc.VerifierStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := make(map[string]ipc.VerifierStatus, len(verifiers))
+	order := make([]string, 0, len(verifiers))
+	for _, v := range verifiers {
+		if prev, ok := s.verifiers[v.Name]; ok {
+			v.Distance = prev.Distance
+			v.Reason = prev.Reason
+			v.ComputedAt = prev.ComputedAt
+			v.Running = prev.Running
+			v.Disabled = prev.Disabled
+		}
+		next[v.Name] = v
+		order = append(order, v.Name)
+	}
+	s.verifiers = next
+	s.order = order
+}
+
 // MarkRunning toggles the per-verifier "running" flag, useful for TUI feedback.
 func (s *State) MarkRunning(name string, running bool) {
 	s.mu.Lock()
@@ -96,11 +119,55 @@ func (s *State) MarkRunning(name string, running bool) {
 	if !ok {
 		return
 	}
+	if v.Disabled && running {
+		return
+	}
 	v.Running = running
 	if !running {
 		v.ComputedAt = time.Now()
 	}
 	s.verifiers[name] = v
+}
+
+// SetVerifierDisabled controls whether a verifier participates in rendering
+// and future runner batches. The row remains in State so users can re-enable
+// it from the footer without restarting HUD.
+func (s *State) SetVerifierDisabled(name string, disabled bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.verifiers[name]
+	if !ok {
+		return false
+	}
+	v.Disabled = disabled
+	if disabled {
+		v.Running = false
+		v.Reason = "disabled"
+	} else if v.Reason == "disabled" {
+		v.Reason = "awaiting next run"
+	}
+	s.verifiers[name] = v
+	return true
+}
+
+// ToggleVerifierDisabled flips a verifier's disabled state and returns the
+// resulting value. ok is false when no verifier by that name exists.
+func (s *State) ToggleVerifierDisabled(name string) (disabled bool, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.verifiers[name]
+	if !ok {
+		return false, false
+	}
+	v.Disabled = !v.Disabled
+	if v.Disabled {
+		v.Running = false
+		v.Reason = "disabled"
+	} else if v.Reason == "disabled" {
+		v.Reason = "awaiting next run"
+	}
+	s.verifiers[name] = v
+	return v.Disabled, true
 }
 
 // Snapshot returns a stable, ordered copy of the current state for read-only
@@ -115,13 +182,17 @@ func (s *State) Snapshot() ipc.StatusReply {
 		LastMCPAt:    s.lastMCPAt,
 	}
 	var sum float64
+	var enabled int
 	for _, name := range s.order {
 		v := s.verifiers[name]
 		out.Verifiers = append(out.Verifiers, v)
-		sum += v.Distance
+		if !v.Disabled {
+			sum += v.Distance
+			enabled++
+		}
 	}
-	if n := len(s.order); n > 0 {
-		out.OverallDistance = sum / float64(n)
+	if enabled > 0 {
+		out.OverallDistance = sum / float64(enabled)
 	}
 	return out
 }

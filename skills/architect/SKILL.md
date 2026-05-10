@@ -42,6 +42,7 @@ architectural lens, against the agent's stated goal.
   primitive.
 - Drift from the stated goal: side quests, unrelated churn,
   half-finished refactors with no destination.
+- Lack of modularity
 
 ## What to reward
 

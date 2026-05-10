@@ -64,7 +64,8 @@ func Run(ctx context.Context, version string) error {
 			mcp.WithDescription(
 				"Set the active session goal that all HUD verifiers evaluate against. "+
 					"Call this at the start of a task and whenever the goal materially shifts "+
-					"(e.g. user pivots, sub-task begins). Calling this triggers a fresh verifier run."),
+					"(e.g. user pivots, sub-task begins). This only updates the goal; "+
+					"file-write hooks trigger verifier recomputation."),
 			mcp.WithString("goal",
 				mcp.Required(),
 				mcp.Description("One short sentence describing what the agent is currently trying to achieve."),

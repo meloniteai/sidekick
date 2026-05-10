@@ -23,7 +23,7 @@ import (
 )
 
 // runnerHandler is the production EventHandler: writes trigger debounced
-// verifier runs; goal updates flow into the State and kick a fresh run.
+// verifier runs; goal updates only flow into State.
 type runnerHandler struct {
 	state  *daemon.State
 	runner *verifier.Runner
@@ -31,7 +31,6 @@ type runnerHandler struct {
 
 func (h *runnerHandler) OnGoal(goal string) {
 	h.state.SetGoal(goal)
-	h.runner.Trigger("")
 }
 func (h *runnerHandler) OnWrite(file string) {
 	h.runner.Trigger(file)
@@ -70,7 +69,7 @@ func newStartCmd() *cobra.Command {
 			}
 			fmt.Fprintf(os.Stderr, "[hud] session base ref: %s\n", baseRef)
 
-			available, quietPeriod, source, err := loadVerifiers(configPath)
+			available, quietPeriod, source, loadedConfigPath, err := loadVerifiers(configPath)
 			if err != nil {
 				return err
 			}
@@ -117,10 +116,41 @@ func newStartCmd() *cobra.Command {
 				state.SetGoal("manual trigger, goal unknown")
 				runner.TriggerImmediate()
 			}
+			reloadConfig := func() error {
+				if loadedConfigPath == "" {
+					return nil
+				}
+				next, quiet, _, _, err := loadVerifiers(loadedConfigPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[hud] reload config failed: %v\n", err)
+					return err
+				}
+				runner.ReplaceVerifiers(next)
+				runner.SetQuietPeriod(quiet)
+				fmt.Fprintf(os.Stderr, "[hud] reloaded %d verifiers from %s\n", len(next), loadedConfigPath)
+				return nil
+			}
 			p := tea.NewProgram(
 				hudtui.New(state).
 					WithManualTrigger(manualTrigger).
-					WithStopAll(runner.KillBatch),
+					WithTriggerVerifier(func(name string) {
+						if ok := runner.TriggerVerifierImmediate(name); ok {
+							fmt.Fprintf(os.Stderr, "[hud] verifier %s triggered\n", name)
+						}
+					}).
+					WithToggleVerifier(func(name string) {
+						disabled, ok := state.ToggleVerifierDisabled(name)
+						if !ok || loadedConfigPath == "" {
+							return
+						}
+						if err := config.SetVerifierDisabled(loadedConfigPath, name, disabled); err != nil {
+							fmt.Fprintf(os.Stderr, "[hud] persist verifier toggle failed: %v\n", err)
+							return
+						}
+					}).
+					WithStopAll(runner.KillBatch).
+					WithConfigEditor(loadedConfigPath).
+					WithConfigSaved(reloadConfig),
 				tea.WithAltScreen(),
 			)
 			if _, err := p.Run(); err != nil {
@@ -201,21 +231,21 @@ func captureSessionBaseRef() (string, error) {
 // from hud.yaml, falling back to the built-in demo set (and runtime default
 // quiet period) when no config exists. The returned string is a short
 // description of the source for logging.
-func loadVerifiers(configPath string) ([]verifier.Verifier, time.Duration, string, error) {
+func loadVerifiers(configPath string) ([]verifier.Verifier, time.Duration, string, string, error) {
 	f, path, err := config.Load(configPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return demoVerifiers(), 0, "demo (no hud.yaml found)", nil
+		return demoVerifiers(), 0, "demo (no hud.yaml found)", "", nil
 	}
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", "", err
 	}
 	vs, err := f.Resolve(filepath.Dir(path))
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", "", err
 	}
 	quiet, err := f.ResolveQuietPeriod()
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", "", err
 	}
-	return vs, quiet, fmt.Sprintf("%d from %s", len(vs), path), nil
+	return vs, quiet, fmt.Sprintf("%d from %s", len(vs), path), path, nil
 }
