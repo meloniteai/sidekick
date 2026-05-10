@@ -19,5 +19,6 @@ func New() *cobra.Command {
 	root.AddCommand(newStatusCmd())
 	root.AddCommand(newMcpCmd())
 	root.AddCommand(newMenubarCmd())
+	root.AddCommand(newVerifierCmd())
 	return root
 }

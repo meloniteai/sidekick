@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/uriahlevy/hud/internal/ipc"
 )
 
 func TestVerifyEchoScript(t *testing.T) {
@@ -23,6 +25,20 @@ func TestVerifyEchoScript(t *testing.T) {
 	}
 	if r.Distance != 0.42 || r.Reason != "ok" {
 		t.Fatalf("got %+v", r)
+	}
+}
+
+func TestVerifyCommandReceivesVerifierEnv(t *testing.T) {
+	v := Verifier{
+		Name:    "Env",
+		Command: []string{"sh", "-c", `cat >/dev/null; printf '{"distance": 0.0, "reason": "%s/%s"}\n' "$SESSION_BASE_REF" "$HUD_VERIFIER"`},
+	}
+	r, err := v.Verify(context.Background(), Session{SessionBaseRef: "abc123"})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if r.Reason != "abc123/1" {
+		t.Fatalf("command verifier env not passed, got %+v", r)
 	}
 }
 
@@ -169,6 +185,9 @@ func TestParseAgentResult(t *testing.T) {
 	if r.Distance != 0.2 || r.Reason != "ok" {
 		t.Fatalf("claude parse got %+v", r)
 	}
+	if r.Status != ipc.StatusOK {
+		t.Fatalf("expected status=ok, got %q", r.Status)
+	}
 	codex := "done\n{\"distance\":9,\"reason\":\"clamped\"}\n"
 	r, err = parseAgentResult("Architect", "codex", codex)
 	if err != nil {
@@ -176,6 +195,107 @@ func TestParseAgentResult(t *testing.T) {
 	}
 	if r.Distance != 1 || r.Reason != "clamped" {
 		t.Fatalf("codex parse got %+v", r)
+	}
+}
+
+// TestParseAgentResultUnparseable verifies that when the agent's output
+// contains no extractable distance object, we return Status=unknown
+// instead of fabricating distance=0.5. Preserving the prior distance is
+// the runner's job; the parser just signals the unparseable state.
+func TestParseAgentResultUnparseable(t *testing.T) {
+	output := "I cannot help with that.\n"
+	r, err := parseAgentResult("Architect", "claude", output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != ipc.StatusUnknown {
+		t.Fatalf("expected status=unknown, got %q (full %+v)", r.Status, r)
+	}
+}
+
+// TestParserBraceAware exercises the regression class that drove the
+// regex rewrite: distance objects whose reason field contains braces or
+// quoted braces. Old regex `\{[^{}]*"distance"[^{}]*\}` would skip these
+// and silently bucket the run as "could not parse" → 0.5. The new
+// brace+string-aware scanner must accept them.
+func TestParserBraceAware(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want float64
+	}{
+		{
+			name: "nested-object-in-reason-via-string",
+			in:   `prelude\n{"distance": 0.3, "reason": "failed at {x:1}"}`,
+			want: 0.3,
+		},
+		{
+			name: "trailing-log-after-json",
+			in:   `{"distance": 0.4, "reason": "ok"}\n[debug] cleanup`,
+			want: 0.4,
+		},
+		{
+			name: "multiple-objects-take-last",
+			in:   `{"distance": 0.9, "reason": "stale"}\n{"distance": 0.1, "reason": "fresh"}`,
+			want: 0.1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			obj := findLastDistanceObject(strings.ReplaceAll(tc.in, `\n`, "\n"))
+			if obj == "" {
+				t.Fatalf("scanner returned empty for %q", tc.in)
+			}
+			r, err := parseAgentResult("X", "codex", strings.ReplaceAll(tc.in, `\n`, "\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.Distance != tc.want {
+				t.Fatalf("distance got %v want %v (extracted %q)", r.Distance, tc.want, obj)
+			}
+		})
+	}
+}
+
+// TestVerifyAgentUsageHarvest checks that token+cost telemetry from the
+// Claude --output-format=json envelope is propagated into Result.Usage.
+func TestVerifyAgentUsageHarvest(t *testing.T) {
+	stdout := `{"result":"{\"distance\":0.2,\"reason\":\"ok\"}","total_cost_usd":0.0042,"duration_ms":1234,"model":"claude-haiku-4-5","usage":{"input_tokens":150,"output_tokens":42,"cache_read_input_tokens":1000}}`
+	r, err := parseAgentResult("Architect", "claude", stdout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Usage == nil {
+		t.Fatal("expected usage populated, got nil")
+	}
+	if r.Usage.CostUSD != 0.0042 || r.Usage.InputTokens != 150 || r.Usage.OutputTokens != 42 || r.Usage.CacheReads != 1000 {
+		t.Fatalf("usage mismatched: %+v", *r.Usage)
+	}
+	if r.Usage.Model != "claude-haiku-4-5" {
+		t.Fatalf("model got %q", r.Usage.Model)
+	}
+}
+
+// TestRenderCustomCommandTemplating exercises agent: custom argv
+// rendering with template substitution and verifies that args without
+// templates pass through unmodified.
+func TestRenderCustomCommandTemplating(t *testing.T) {
+	c := AgentConfig{
+		Agent:    "custom",
+		Model:    "gemini-1.5-flash",
+		Thinking: "low",
+		Skill:    "/tmp/skill.md",
+		Custom: CustomAgent{
+			Command: []string{"my-llm", "--model={{.Model}}", "--effort={{.Thinking}}", "-"},
+		},
+	}
+	got, err := agentCommand(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"my-llm", "--model=gemini-1.5-flash", "--effort=low", "-"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
 	}
 }
 

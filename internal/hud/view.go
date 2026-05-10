@@ -28,6 +28,12 @@ var (
 	styleWind          = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Bold(true)
 	styleDisabled      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	styleFooterKeys    = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238")).Bold(true).Padding(0, 1)
+	styleErrorBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	styleUnknownBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true)
+	styleStaleBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	stylePendingBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleRemoteBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	styleCostBadge     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 )
 
 // directionArrow points outward along each compass axis (away from goal toward
@@ -140,17 +146,28 @@ func (m Model) renderHeader(totalW int) string {
 			"  "+styleHeaderLabel.Render("session: ")+styleSessionOn.Render("active"),
 	)
 
-	// Row 2 — telemetry: socket / mcp last-seen + verifier count.
+	// Row 2 — telemetry: socket / mcp last-seen + verifier count + cumulative cost.
 	enabled := 0
+	var totalCostUSD float64
+	var totalTokens int
 	for _, v := range m.snapshot.Verifiers {
 		if !v.Disabled {
 			enabled++
 		}
+		if v.LastUsage != nil {
+			totalCostUSD += v.LastUsage.CostUSD
+			totalTokens += v.LastUsage.InputTokens + v.LastUsage.OutputTokens
+		}
+	}
+	costSummary := ""
+	if totalCostUSD > 0 || totalTokens > 0 {
+		costSummary = "  " + styleHeaderLabel.Render("agent run: ") + styleCostBadge.Render(formatCost(totalCostUSD, totalTokens))
 	}
 	rows = append(rows,
 		styleHeaderLabel.Render("last socket: ")+formatTimestamp(m.snapshot.LastSocketAt)+
 			"  "+styleHeaderLabel.Render("last mcp: ")+formatTimestamp(m.snapshot.LastMCPAt)+
-			"  "+styleHeaderLabel.Render("verifiers: ")+fmt.Sprintf("%d/%d", enabled, len(m.snapshot.Verifiers)),
+			"  "+styleHeaderLabel.Render("verifiers: ")+fmt.Sprintf("%d/%d", enabled, len(m.snapshot.Verifiers))+
+			costSummary,
 	)
 
 	// Row 3 — goal summary, single line, truncated to fit.
@@ -417,11 +434,12 @@ func (m Model) renderListRow(i int, v ipc.VerifierStatus, maxWidth int) string {
 	}
 
 	prefix := fmt.Sprintf("%s%-3s %s %-3s %s ", cursor, label, name, v.Direction, kind)
-	status := orbStyle(v.Distance).Render(fmt.Sprintf("d=%.2f", v.Distance))
-	if v.Disabled {
-		status = styleDisabled.Render("off")
-	} else if v.Running {
+	status := renderStatusBadge(v)
+	if v.Running {
 		status = styleRunning.Render("running") + " " + renderDot(m.tick)
+	}
+	if !v.Disabled && !v.Running && len(v.History) > 1 {
+		status = renderSparkline(v.History) + " " + status
 	}
 
 	available := maxWidth - lipgloss.Width(prefix) - lipgloss.Width(status) - 2
@@ -479,6 +497,9 @@ func verifierType(v ipc.VerifierStatus) string {
 func metadataSummary(v ipc.VerifierStatus) string {
 	cfg := v.Config
 	parts := []string{}
+	if cfg.Source == "remote" {
+		parts = append(parts, styleRemoteBadge.Render("remote"))
+	}
 	switch verifierType(v) {
 	case "agent":
 		parts = append(parts,
@@ -504,10 +525,105 @@ func metadataSummary(v ipc.VerifierStatus) string {
 	if cfg.Timeout != "" {
 		parts = append(parts, "timeout="+cfg.Timeout)
 	}
+	if perms := permissionsSummary(cfg.Permissions); perms != "" {
+		parts = append(parts, perms)
+	}
+	if v.LastUsage != nil && v.LastUsage.CostUSD > 0 {
+		parts = append(parts, styleCostBadge.Render(formatCost(v.LastUsage.CostUSD, v.LastUsage.InputTokens+v.LastUsage.OutputTokens)))
+	}
 	if len(parts) == 0 {
 		return "(no config fields)"
 	}
 	return strings.Join(parts, " ")
+}
+
+// permissionsSummary renders the advisory permissions block as a compact
+// chip, e.g. "fs=read-only net=off". Empty when the user did not declare
+// permissions — silence is informative (no opinion stated).
+func permissionsSummary(p ipc.VerifierPermissions) string {
+	parts := []string{}
+	if p.Filesystem != "" {
+		parts = append(parts, "fs="+p.Filesystem)
+	}
+	if p.Network {
+		parts = append(parts, "net=on")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ")
+}
+
+// renderStatusBadge picks the right style for the verifier's outcome
+// state. Distinct rendering for ok/error/unknown/stale/disabled/pending
+// is the whole point of the Status enum — collapsing them onto a magic
+// distance value was the v0 footgun this fixes.
+func renderStatusBadge(v ipc.VerifierStatus) string {
+	switch {
+	case v.Disabled:
+		return styleDisabled.Render("off")
+	case v.Status == ipc.StatusError:
+		return styleErrorBadge.Render("err  d=" + fmt.Sprintf("%.2f", v.Distance))
+	case v.Status == ipc.StatusUnknown:
+		return styleUnknownBadge.Render("?    d=" + fmt.Sprintf("%.2f", v.Distance))
+	case v.Status == ipc.StatusStale:
+		return styleStaleBadge.Render("stale d=" + fmt.Sprintf("%.2f", v.Distance))
+	case v.Status == ipc.StatusPending:
+		return stylePendingBadge.Render("—   ")
+	default:
+		return orbStyle(v.Distance).Render(fmt.Sprintf("d=%.2f", v.Distance))
+	}
+}
+
+// renderSparkline draws a tiny inline trend of the last few distances.
+// Each block height encodes (1 - distance) so a verifier moving toward
+// the goal climbs visually. Status taints are merged into the colour.
+const sparklineWidth = 8
+
+var sparkBlocks = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+
+func renderSparkline(history []ipc.HistoryPoint) string {
+	if len(history) == 0 {
+		return ""
+	}
+	pts := history
+	if len(pts) > sparklineWidth {
+		pts = pts[len(pts)-sparklineWidth:]
+	}
+	var b strings.Builder
+	for _, p := range pts {
+		// (1 - distance) so "near goal" => tall block, "far" => short.
+		level := 1.0 - p.Distance
+		if level < 0 {
+			level = 0
+		}
+		if level > 1 {
+			level = 1
+		}
+		idx := int(level * float64(len(sparkBlocks)-1))
+		ch := string(sparkBlocks[idx])
+		switch p.Status {
+		case ipc.StatusError:
+			b.WriteString(styleErrorBadge.Render(ch))
+		case ipc.StatusUnknown:
+			b.WriteString(styleUnknownBadge.Render(ch))
+		default:
+			b.WriteString(orbStyle(p.Distance).Render(ch))
+		}
+	}
+	return b.String()
+}
+
+// formatCost renders a cost-and-tokens chip. Below $0.01 we show the raw
+// token count instead of "$0.00" so users can still see *something*.
+func formatCost(cost float64, tokens int) string {
+	if cost >= 0.01 {
+		return fmt.Sprintf("$%.3f / %d tok", cost, tokens)
+	}
+	if tokens > 0 {
+		return fmt.Sprintf("%d tok", tokens)
+	}
+	return ""
 }
 
 func defaultSetting(s string) string {

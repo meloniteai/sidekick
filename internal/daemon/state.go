@@ -90,7 +90,8 @@ func (s *State) UpsertVerifier(v ipc.VerifierStatus) {
 
 // ReplaceVerifiers swaps the configured verifier set while preserving runtime
 // status for same-named verifiers. This is used when hud.yaml is edited from
-// the TUI and reloaded without restarting HUD.
+// the TUI and reloaded without restarting HUD. Preserved scores are marked
+// stale so clients can render them as not-yet-revalidated.
 func (s *State) ReplaceVerifiers(verifiers []ipc.VerifierStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -103,6 +104,17 @@ func (s *State) ReplaceVerifiers(verifiers []ipc.VerifierStatus) {
 			v.ComputedAt = prev.ComputedAt
 			v.Running = prev.Running
 			v.Disabled = prev.Disabled
+			v.History = prev.History
+			v.LastUsage = prev.LastUsage
+			// Preserved score predates the new config; mark stale unless the
+			// verifier was explicitly disabled.
+			if prev.Disabled {
+				v.Status = ipc.StatusDisabled
+			} else if prev.Status == ipc.StatusPending || prev.Status == "" {
+				v.Status = ipc.StatusPending
+			} else {
+				v.Status = ipc.StatusStale
+			}
 		}
 		next[v.Name] = v
 		order = append(order, v.Name)
@@ -139,13 +151,7 @@ func (s *State) SetVerifierDisabled(name string, disabled bool) bool {
 	if !ok {
 		return false
 	}
-	v.Disabled = disabled
-	if disabled {
-		v.Running = false
-		v.Reason = "disabled"
-	} else if v.Reason == "disabled" {
-		v.Reason = "awaiting next run"
-	}
+	applyDisable(&v, disabled)
 	s.verifiers[name] = v
 	return true
 }
@@ -159,15 +165,28 @@ func (s *State) ToggleVerifierDisabled(name string) (disabled bool, ok bool) {
 	if !ok {
 		return false, false
 	}
-	v.Disabled = !v.Disabled
-	if v.Disabled {
-		v.Running = false
-		v.Reason = "disabled"
-	} else if v.Reason == "disabled" {
-		v.Reason = "awaiting next run"
-	}
+	applyDisable(&v, !v.Disabled)
 	s.verifiers[name] = v
 	return v.Disabled, true
+}
+
+// applyDisable centralises the bookkeeping for the disabled flag: it must
+// flip Disabled, refresh Status (so clients can disambiguate from a real
+// score) and clean up the user-facing reason text.
+func applyDisable(v *ipc.VerifierStatus, disabled bool) {
+	v.Disabled = disabled
+	if disabled {
+		v.Running = false
+		v.Reason = "disabled"
+		v.Status = ipc.StatusDisabled
+		return
+	}
+	if v.Reason == "disabled" {
+		v.Reason = "awaiting next run"
+	}
+	if v.Status == ipc.StatusDisabled {
+		v.Status = ipc.StatusPending
+	}
 }
 
 // Snapshot returns a stable, ordered copy of the current state for read-only

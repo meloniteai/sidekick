@@ -42,10 +42,13 @@ the HUD re-evaluates, and the agent itself can read the result via the
 
 | Binary | Role | Lifetime |
 |---|---|---|
-| `hud start` | Long-running daemon + Bubble Tea TUI. Owns state, runs verifiers. Listens on `~/.hud/sock`. | foreground |
+| `hud start` | Long-running daemon + Bubble Tea TUI. Owns state, runs verifiers. Listens on a repo-scoped socket under `~/.hud/sockets/<fingerprint>.sock` so multiple projects can run side-by-side. | foreground |
 | `hud menubar` | macOS menu bar daemon UI. Owns the same state, runner, hooks, and MCP socket as `hud start`, but renders only as a compact status-menu item. | foreground |
 | `hud hook <event>` | Spawned by Claude Code or Codex hooks. Reads hook JSON on stdin, posts a normalized event to the daemon, exits. | one-shot |
 | `hud mcp` | Spawned by the agent client as an MCP server. Proxies `hud_status` / `hud_explain` to the daemon. | per agent session |
+| `hud verifier add <url>` | Fetches a remote SKILL.md or verifier script, pins it by sha256, and registers it in `hud.yaml`. | one-shot |
+| `hud verifier trust ...` | Manages `~/.hud/trust.json` — the trust-on-first-use ledger for remote verifiers. | one-shot |
+| `hud verifier list` | Prints the verifiers configured in `hud.yaml` with source provenance. | one-shot |
 
 ## Install
 
@@ -191,42 +194,125 @@ and reason rows, manual trigger, stop current run, and quit.
    }
    ```
 2. Print exactly one JSON object on stdout (additional log lines on
-   preceding lines are tolerated):
+   preceding lines OR trailing lines are tolerated — HUD scans the
+   stream for the last balanced object containing `"distance"`):
    ```json
-   {"distance": 0.42, "reason": "one short sentence"}
+   {"distance": 0.42, "reason": "one short sentence", "status": "ok"}
    ```
+   `status` is optional. Set it to `"unknown"` if your verifier ran but
+   could not score this run (tooling missing, no diff to evaluate). HUD
+   preserves the previous distance instead of fabricating one, and the
+   row renders with a distinct `?` badge so agents can disambiguate.
 3. Exit zero. Any non-zero exit, missing JSON, or timeout (default 60s)
-   pins the verifier at `distance = 1.0` with the failure reason.
+   pins the verifier at `distance = 1.0` with `status = "error"` and the
+   failure reason.
 
-`llm` verifiers internalize the old `run.sh` wrapper: HUD loads the configured
-`SKILL.md`, appends the active goal, `SESSION_BASE_REF`, changed files, and the
-JSON output contract, then shells out to `claude` or `codex`. Authentication
-and model access still stay with the user's installed agent CLI.
+### Score anchors
+
+The runtime injects a 5-point rubric (0.00 / 0.25 / 0.50 / 0.75 / 1.00)
+into agent verifier prompts so scores stay comparable across runs and
+across verifiers. Free-floating decimals like 0.37 drift between runs
+and become noise; the anchors give the agent a discrete scale to
+calibrate against. See [`CONTRIBUTING-VERIFIERS.md`](CONTRIBUTING-VERIFIERS.md)
+for the per-dimension calibration each bundled skill uses.
+
+`agent` verifiers internalize the old `run.sh` wrapper: HUD loads the
+configured `SKILL.md`, appends the active goal, `SESSION_BASE_REF`,
+changed files, and the JSON output contract (with score anchors), then
+shells out to `claude` or `codex`. Authentication and model access
+still stay with the user's installed agent CLI.
+
+Set `agent: custom` to plug in any other LLM CLI via a templated argv:
+
+```yaml
+- name: GeminiArchitect
+  type: agent
+  direction: N
+  llm:
+    agent: custom
+    model: gemini-1.5-flash
+    thinking: low
+    skill: ./skills/architect/SKILL.md
+    custom:
+      command: ["my-llm", "--model={{.Model}}", "--effort={{.Thinking}}", "-"]
+```
 
 `binary` verifiers receive the same session JSON on stdin and
-`SESSION_BASE_REF` in the environment, but HUD scores them purely from exit
-code.
+`SESSION_BASE_REF` in the environment, but HUD scores them purely from
+exit code.
+
+## Remote (community) verifiers
+
+Verifiers can be loaded from any HTTPS URL with a sha256 pin. Install
+one with:
+
+```bash
+hud verifier add https://raw.githubusercontent.com/you/yours/v1/perf.sh \
+  --name Performance --direction NE
+```
+
+This downloads the file, prints a 20-line preview, prompts for
+confirmation, computes the sha256, writes a `source:` block into
+`hud.yaml`, and records the approved hash in `~/.hud/trust.json`. On
+subsequent loads, HUD verifies the hash from the on-disk cache before
+running the script — drift fails loud.
+
+To pin a verifier by hand without going through `add`:
+
+```yaml
+# hud.yaml
+verifiers:
+  - name: Performance
+    type: command
+    direction: NE
+    source:
+      url: https://raw.githubusercontent.com/you/yours/v1/perf.sh
+      sha256: <64 hex chars>
+    permissions:
+      filesystem: read-only
+      network: false
+```
+
+Then approve the hash before `hud start` will execute it:
+
+```bash
+hud verifier trust Performance
+```
+
+See [`CONTRIBUTING-VERIFIERS.md`](CONTRIBUTING-VERIFIERS.md) for the
+full protocol and [`examples/community/`](examples/community/) for
+reference verifiers (docs-drift, lint, bench, migration-safety).
 
 ## Layout
 
 ```
 hud/
 ├── main.go                       cobra entrypoint
-├── cmd/                          subcommands: start, hook, goal, status, mcp
+├── cmd/                          subcommands: start, hook, goal, status, mcp, menubar, verifier
 ├── internal/
 │   ├── daemon/                   socket server + shared State
-│   ├── hud/                      Bubble Tea TUI (compass + list)
-│   ├── verifier/                 subprocess runner, debouncer
+│   ├── hud/                      Bubble Tea TUI (compass + list + sparkline)
+│   ├── verifier/                 subprocess runner, debouncer, history
 │   ├── mcp/                      stdio MCP server (mark3labs/mcp-go)
 │   ├── ipc/                      JSON-line socket protocol shared by all binaries
 │   ├── transcript/               tails CC's session JSONL for context
-│   └── config/                   hud.yaml loader
-└── examples/                     hud.yaml, claude-settings.json, verifier scripts
+│   ├── fetch/                    content-addressed remote artefact cache
+│   ├── trust/                    trust-on-first-use ledger (~/.hud/trust.json)
+│   └── config/                   hud.yaml loader (validates at load, fetches remote sources)
+├── skills/                       bundled SKILL.md rubrics: architect, test, security, deployment, hud
+└── examples/
+    ├── hud.yaml                  reference config
+    ├── claude-settings.json      Claude Code hook + MCP wiring
+    ├── codex-hooks.json          Codex hook wiring
+    ├── verifiers/                in-tree command verifiers (coverage.sh, run.sh)
+    └── community/                vetted community verifier templates
 ```
 
 ## What's not here yet
 
 - Codex hook integration (native `type: agent` verifiers can call `codex exec`).
-- Persistence across sessions.
-- Multi-project / multi-session daemon multiplexing.
+- Persistence across sessions (history is in-memory only).
 - 8-direction layout when more than 4 verifiers are configured.
+- Enforced (vs advisory) per-verifier sandboxing — `permissions:` blocks
+  are surfaced in the TUI today; future versions will map them onto
+  platform sandboxes.

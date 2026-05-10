@@ -37,3 +37,46 @@ verifiers:
         model: haiku
         thinking: low
         skill: ./skills/deployment/SKILL.md
+    - name: Dummy
+      type: command
+      direction: NE
+      timeout: 5s
+      command: ["./verifiers/dummy.sh"]
+    - name: DocsDrift
+      type: command
+      direction: SE
+      timeout: 30s
+      command: ["./examples/community/docs-drift.sh"]
+      permissions:
+        filesystem: read-only
+        network: false
+    - name: Lint
+      type: binary
+      direction: SW
+      timeout: 120s
+      binary:
+        command: ["./examples/community/lint.sh"]
+        pass_reason: lint passed
+      permissions:
+        filesystem: read-only
+        network: false
+    - name: Bench
+      type: command
+      direction: NW
+      timeout: 300s
+      command: ["./examples/community/bench.sh"]
+      permissions:
+        filesystem: read-write
+        network: false
+    - name: MigrationSafety
+      type: agent
+      direction: NE
+      timeout: 180s
+      llm:
+        agent: claude
+        model: haiku
+        thinking: low
+        skill: ./examples/community/migration-safety/SKILL.md
+      permissions:
+        filesystem: read-only
+        network: false

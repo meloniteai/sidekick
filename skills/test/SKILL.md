@@ -50,6 +50,23 @@ lens, against the agent's stated goal.
   alongside the fix.
 - Removing or consolidating brittle tests as part of the change.
 
+## Score anchors (test dimension)
+
+Use the runtime anchors (0.00 / 0.25 / 0.50 / 0.75 / 1.00). Test-specific
+calibration:
+
+- 0.00 — Every behaviour change in the diff has a test that would fail
+  if the behaviour regressed. Test posture is unchanged or improved.
+- 0.25 — Most behaviour changes have meaningful tests; one minor path
+  uncovered but not load-bearing for the goal.
+- 0.50 — A real coverage gap at a load-bearing seam, or main change is
+  tested but with mocks that wouldn't catch the actual failure mode.
+  Agent should add a real test before declaring done.
+- 0.75 — Significant new behaviour shipped with no test, or tests are
+  so loose they could not fail. Existing suite may be red.
+- 1.00 — Production code touched without any test, or the test suite
+  is broken (red) and the goal explicitly required passing tests.
+
 The reason you return should be the single most load-bearing
 observation about the test posture — the thing that should change the
 agent's next decision — not a summary.
