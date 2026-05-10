@@ -2,11 +2,33 @@
 package daemon
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/uriahlevy/hud/internal/ipc"
 )
+
+// EventLevel categorises an entry in the in-memory event log. Renderers use
+// it to colour rows; callers use it to label severity.
+type EventLevel string
+
+const (
+	EventInfo  EventLevel = "info"
+	EventError EventLevel = "error"
+)
+
+// EventEntry is one row in the event log surfaced by the TUI's toggleable
+// log panel. Stored in-memory only; persistence is out of scope for now.
+type EventEntry struct {
+	At    time.Time
+	Level EventLevel
+	Msg   string
+}
+
+// eventBufferCap bounds the per-session log so a long-running daemon does
+// not grow without bound. Oldest entries fall off the front.
+const eventBufferCap = 500
 
 // State is the in-memory snapshot of an active session. It is the single
 // source of truth that the TUI renders, the MCP server reads, and the
@@ -20,6 +42,7 @@ type State struct {
 	version        string
 	lastSocketAt   time.Time
 	lastMCPAt      time.Time
+	events         []EventEntry
 }
 
 // NewState returns a zeroed State.
@@ -222,4 +245,27 @@ func (s *State) Verifier(name string) (ipc.VerifierStatus, bool) {
 	defer s.mu.RUnlock()
 	v, ok := s.verifiers[name]
 	return v, ok
+}
+
+// LogEvent appends a timestamped entry to the in-memory event log. Callsites
+// that previously wrote to os.Stderr during the TUI session use this so the
+// alt-screen isn't corrupted by stray writes; the TUI's `l` panel renders
+// the buffer instead.
+func (s *State) LogEvent(level EventLevel, format string, args ...any) {
+	entry := EventEntry{At: time.Now(), Level: level, Msg: fmt.Sprintf(format, args...)}
+	s.mu.Lock()
+	s.events = append(s.events, entry)
+	if len(s.events) > eventBufferCap {
+		s.events = s.events[len(s.events)-eventBufferCap:]
+	}
+	s.mu.Unlock()
+}
+
+// Events returns a copy of the event log buffer in arrival order.
+func (s *State) Events() []EventEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]EventEntry, len(s.events))
+	copy(out, s.events)
+	return out
 }

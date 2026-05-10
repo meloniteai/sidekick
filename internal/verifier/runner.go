@@ -2,7 +2,6 @@ package verifier
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -321,7 +320,7 @@ func (r *Runner) runBatch(only string) {
 				cur.Reason = "error: " + err.Error()
 				cur.Distance = 1.0
 				cur.Status = ipc.StatusError
-				fmt.Fprintf(os.Stderr, "[hud] verifier %s failed: %v\n", v.Name, err)
+				r.state.LogEvent(daemon.EventError, "verifier %s failed: %v", v.Name, err)
 			case res.Status == ipc.StatusUnknown:
 				// Verifier ran but couldn't score. Preserve the prior distance
 				// so the compass doesn't lie; just surface the reason+status.

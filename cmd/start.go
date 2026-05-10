@@ -122,12 +122,12 @@ func newStartCmd() *cobra.Command {
 				}
 				next, quiet, _, _, err := loadVerifiers(loadedConfigPath)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "[hud] reload config failed: %v\n", err)
+					state.LogEvent(daemon.EventError, "reload config failed: %v", err)
 					return err
 				}
 				runner.ReplaceVerifiers(next)
 				runner.SetQuietPeriod(quiet)
-				fmt.Fprintf(os.Stderr, "[hud] reloaded %d verifiers from %s\n", len(next), loadedConfigPath)
+				state.LogEvent(daemon.EventInfo, "reloaded %d verifiers from %s", len(next), loadedConfigPath)
 				return nil
 			}
 			p := tea.NewProgram(
@@ -135,7 +135,7 @@ func newStartCmd() *cobra.Command {
 					WithManualTrigger(manualTrigger).
 					WithTriggerVerifier(func(name string) {
 						if ok := runner.TriggerVerifierImmediate(name); ok {
-							fmt.Fprintf(os.Stderr, "[hud] verifier %s triggered\n", name)
+							state.LogEvent(daemon.EventInfo, "verifier %s triggered", name)
 						}
 					}).
 					WithToggleVerifier(func(name string) {
@@ -144,7 +144,7 @@ func newStartCmd() *cobra.Command {
 							return
 						}
 						if err := config.SetVerifierDisabled(loadedConfigPath, name, disabled); err != nil {
-							fmt.Fprintf(os.Stderr, "[hud] persist verifier toggle failed: %v\n", err)
+							state.LogEvent(daemon.EventError, "persist verifier toggle failed: %v", err)
 							return
 						}
 					}).

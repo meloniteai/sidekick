@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/uriahlevy/hud/internal/daemon"
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
@@ -102,7 +103,29 @@ func (m Model) View() string {
 	headerLines := strings.Count(header, "\n") + 1
 	listLines := m.listLineCount()
 
-	gridW := m.width - styleGrid.GetHorizontalFrameSize()
+	totalW := m.width - styleGrid.GetHorizontalFrameSize()
+	gridW := totalW
+	logW := 0
+	if m.showEventLog {
+		// Split the available width between compass and log panel. The log
+		// gets ~a third, capped so it stays scannable on wide terminals and
+		// doesn't squeeze the compass on narrow ones.
+		logW = m.width / 3
+		if logW < 36 {
+			logW = 36
+		}
+		if logW > 60 {
+			logW = 60
+		}
+		if gridW-logW-2 < 24 {
+			// Terminal too narrow to host both side-by-side; suppress the
+			// panel for this frame rather than shrink the compass into a
+			// useless smudge.
+			logW = 0
+		} else {
+			gridW = gridW - logW - 2
+		}
+	}
 	gridH := m.height - headerLines - 3 - listLines
 	if gridH < 9 {
 		gridH = 9
@@ -117,7 +140,12 @@ func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n")
-	b.WriteString(styleGrid.Render(m.renderGrid(gridW, gridH)))
+	compass := styleGrid.Render(m.renderGrid(gridW, gridH))
+	if logW > 0 {
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, compass, "  ", m.renderEventLog(logW, gridH)))
+	} else {
+		b.WriteString(compass)
+	}
 	b.WriteString("\n\n")
 	b.WriteString(m.renderList(m.width))
 	return b.String()
@@ -401,7 +429,7 @@ func (m Model) renderList(maxWidth int) string {
 }
 
 func (m Model) renderFooterHelp(maxWidth int) string {
-	text := "keys: up/down select | enter status | space toggle | r run one | t all | n new | e edit | esc stop | q quit | 1-9/0 toggle"
+	text := "keys: up/down select | enter status | space toggle | r run one | t all | n new | e edit | l log | esc stop | q quit | 1-9/0 toggle"
 	if m.footerNotice != "" && m.tick < m.footerNoticeUntil {
 		text = m.footerNotice
 	}
@@ -410,6 +438,68 @@ func (m Model) renderFooterHelp(maxWidth int) string {
 		innerW = 1
 	}
 	return styleFooterKeys.Render(truncate(text, innerW))
+}
+
+// renderEventLog draws the toggleable side panel listing recent timestamped
+// events (info + error) captured into State by the runner and callbacks.
+// The box renders at the same height as the compass grid so the two visually
+// align when shown side-by-side.
+func (m Model) renderEventLog(width, contentH int) string {
+	innerW := width - styleGrid.GetHorizontalFrameSize()
+	if innerW < 12 {
+		innerW = 12
+	}
+	if contentH < 3 {
+		contentH = 3
+	}
+
+	rows := []string{
+		padCell(styleHeader.Render("event log"), innerW),
+		padCell(styleAxis.Render(strings.Repeat("─", innerW)), innerW),
+	}
+	bodyCap := contentH - len(rows)
+	if bodyCap < 0 {
+		bodyCap = 0
+	}
+
+	if len(m.events) == 0 {
+		if bodyCap > 0 {
+			rows = append(rows, padCell(styleReason.Render("(no events yet)"), innerW))
+		}
+	} else {
+		events := m.events
+		if len(events) > bodyCap {
+			events = events[len(events)-bodyCap:]
+		}
+		for _, e := range events {
+			rows = append(rows, renderEventRow(e, innerW))
+		}
+	}
+
+	for len(rows) < contentH {
+		rows = append(rows, padCell("", innerW))
+	}
+
+	return styleGrid.Render(strings.Join(rows, "\n"))
+}
+
+func renderEventRow(e daemon.EventEntry, width int) string {
+	ts := e.At.Format("15:04:05")
+	var level string
+	switch e.Level {
+	case daemon.EventError:
+		level = styleErrorBadge.Render("ERR")
+	case daemon.EventInfo:
+		level = styleRemoteBadge.Render("INF")
+	default:
+		level = styleReason.Render(strings.ToUpper(string(e.Level)))
+	}
+	prefix := styleHeaderLabel.Render(ts) + " " + level + " "
+	msgW := width - lipgloss.Width(prefix)
+	if msgW < 4 {
+		return padCell(prefix, width)
+	}
+	return padCell(prefix+truncate(e.Msg, msgW), width)
 }
 
 func renderListHeader(maxWidth int) string {

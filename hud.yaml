@@ -40,34 +40,35 @@ verifiers:
     - name: Dummy
       type: command
       direction: NE
+      command:
+        - ./verifiers/dummy.sh
       timeout: 5s
-      command: ["./verifiers/dummy.sh"]
     - name: DocsDrift
       type: command
       direction: SE
+      command:
+        - ./examples/community/docs-drift.sh
       timeout: 30s
-      command: ["./examples/community/docs-drift.sh"]
       permissions:
         filesystem: read-only
-        network: false
     - name: Lint
       type: binary
       direction: SW
       timeout: 120s
       binary:
-        command: ["./examples/community/lint.sh"]
+        command:
+            - ./examples/community/lint.sh
         pass_reason: lint passed
       permissions:
         filesystem: read-only
-        network: false
     - name: Bench
       type: command
       direction: NW
+      command:
+        - ./examples/community/bench.sh
       timeout: 300s
-      command: ["./examples/community/bench.sh"]
       permissions:
         filesystem: read-write
-        network: false
     - name: MigrationSafety
       type: agent
       direction: NE
@@ -79,4 +80,3 @@ verifiers:
         skill: ./examples/community/migration-safety/SKILL.md
       permissions:
         filesystem: read-only
-        network: false

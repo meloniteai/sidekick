@@ -414,6 +414,17 @@ llm:
 
 func TestModelCreateWizardReloadsActiveVerifierTracking(t *testing.T) {
 	cfg, _ := writeEditorFixture(t)
+	// The wizard saves a Smoke verifier pointing at ./verifiers/smoke.sh; the
+	// onConfigSaved callback then calls Resolve, which validates that local
+	// scripts referenced by config exist on disk. Stage the script so the
+	// post-save reload mirrors a real user setting up files before saving.
+	smokeScript := filepath.Join(filepath.Dir(cfg), "verifiers", "smoke.sh")
+	if err := os.MkdirAll(filepath.Dir(smokeScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(smokeScript, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	f, path, err := config.Load(cfg)
 	if err != nil {
 		t.Fatal(err)

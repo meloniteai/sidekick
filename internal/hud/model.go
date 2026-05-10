@@ -40,6 +40,8 @@ type arrowAnim struct {
 type Model struct {
 	state             *daemon.State
 	snapshot          ipc.StatusReply
+	events            []daemon.EventEntry
+	showEventLog      bool
 	width             int
 	height            int
 	tick              int
@@ -62,7 +64,7 @@ type Model struct {
 
 // New returns an initialized Model.
 func New(state *daemon.State) Model {
-	return Model{state: state, snapshot: state.Snapshot(), anims: map[string]arrowAnim{}}
+	return Model{state: state, snapshot: state.Snapshot(), events: state.Events(), anims: map[string]arrowAnim{}}
 }
 
 // WithManualTrigger sets a callback invoked when the user presses 't' on the
@@ -130,6 +132,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tickMsg:
 		m.snapshot = m.state.Snapshot()
+		m.events = m.state.Events()
 		m.clampSelectedVerifier()
 		m.refreshStatusWizard()
 		m.tick++
@@ -216,6 +219,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				status.height = m.height
 				m.status = &status
 			}
+		case "l":
+			m.showEventLog = !m.showEventLog
 		default:
 			if idx, ok := toggleKeyIndex(msg.String()); ok && idx < len(m.snapshot.Verifiers) {
 				m.toggleVerifierByName(m.snapshot.Verifiers[idx].Name)

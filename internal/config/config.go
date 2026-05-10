@@ -184,6 +184,69 @@ func (f *File) ResolveQuietPeriod() (time.Duration, error) {
 	return d, nil
 }
 
+// ValidateStructural runs Resolve's field-level checks (required fields,
+// duplicate names, valid direction/timeout/type, agent/command/binary
+// minima) without touching the filesystem, trust store, or fetch cache.
+// Used by the in-TUI create wizard, where a user may legitimately reference
+// a skill or script they are about to create — the existence check still
+// fires at `hud start` load time via Resolve.
+func (f *File) ValidateStructural() error {
+	if len(f.Verifiers) == 0 {
+		return errors.New("no verifiers configured")
+	}
+	seen := map[string]bool{}
+	for i, vs := range f.Verifiers {
+		if vs.Name == "" {
+			return fmt.Errorf("verifier #%d: missing name", i+1)
+		}
+		if seen[vs.Name] {
+			return fmt.Errorf("duplicate verifier name %q", vs.Name)
+		}
+		seen[vs.Name] = true
+		if !validDirections[strings.ToUpper(vs.Direction)] {
+			return fmt.Errorf("verifier %s: invalid direction %q (want one of N/NE/E/SE/S/SW/W/NW)", vs.Name, vs.Direction)
+		}
+		if vs.Timeout != "" {
+			if _, err := time.ParseDuration(vs.Timeout); err != nil {
+				return fmt.Errorf("verifier %s: bad timeout %q: %w", vs.Name, vs.Timeout, err)
+			}
+		}
+		hasRemote := vs.Source != nil && vs.Source.URL != ""
+		if hasRemote && vs.Source.SHA256 == "" {
+			return fmt.Errorf("verifier %s: remote source requires sha256 pin (got url=%q without sha256)", vs.Name, vs.Source.URL)
+		}
+		kind := strings.ToLower(vs.Type)
+		if kind == "llm" {
+			kind = verifier.TypeAgent
+		}
+		if kind == "" {
+			kind = verifier.TypeCommand
+		}
+		switch kind {
+		case verifier.TypeCommand:
+			if len(vs.Command) == 0 && !hasRemote {
+				return fmt.Errorf("verifier %s: command is required", vs.Name)
+			}
+		case verifier.TypeAgent:
+			if !hasRemote && strings.TrimSpace(vs.LLM.Skill) == "" {
+				return fmt.Errorf("verifier %s: agent.skill is required", vs.Name)
+			}
+			if strings.EqualFold(vs.LLM.Agent, "custom") {
+				if vs.LLM.Custom == nil || len(vs.LLM.Custom.Command) == 0 {
+					return fmt.Errorf("verifier %s: llm.custom.command is required when agent: custom", vs.Name)
+				}
+			}
+		case verifier.TypeBinary:
+			if len(vs.Binary.Command) == 0 && !hasRemote {
+				return fmt.Errorf("verifier %s: binary.command is required", vs.Name)
+			}
+		default:
+			return fmt.Errorf("verifier %s: unknown type %q", vs.Name, vs.Type)
+		}
+	}
+	return nil
+}
+
 // Resolve converts the parsed file into runtime verifiers, resolving any
 // relative local paths against `configDir`. It returns an error listing
 // every untrusted remote verifier so the user can address them all in one

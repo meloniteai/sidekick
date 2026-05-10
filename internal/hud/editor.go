@@ -484,8 +484,11 @@ func (w *EditWizard) applyCreateConfig() error {
 func (w *EditWizard) validateNewVerifier() error {
 	next := w.file
 	next.Verifiers = append(append([]config.VerifierSpec(nil), w.file.Verifiers...), w.draft)
-	_, err := next.Resolve(w.configDir)
-	return err
+	// Structural validation only: a brand-new verifier may legitimately
+	// point at a skill file the wizard is about to write or a command
+	// script the user will create afterwards. Filesystem existence checks
+	// still run at `hud start` load time.
+	return next.ValidateStructural()
 }
 
 func (w *EditWizard) saveNewVerifier(writeSkill bool) error {
