@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,22 @@ func writeTemp(t *testing.T, body string) string {
 	return p
 }
 
+// touchLocalArtifact creates an empty file under dir so that Resolve's
+// local-script existence check passes. Tests that exercise resolution
+// shape (path joining, type coercion) without intending to test the
+// "missing-script" error path should call this with the same paths
+// that appear in the YAML.
+func touchLocalArtifact(t *testing.T, dir, rel string) {
+	t.Helper()
+	full := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestResolveValid(t *testing.T) {
 	p := writeTemp(t, `
 goal_source: prompt
@@ -31,6 +48,7 @@ verifiers:
     direction: E
     command: ["echo", "hi"]
 `)
+	touchLocalArtifact(t, filepath.Dir(p), "bin/architect")
 	f, _, err := Load(p)
 	if err != nil {
 		t.Fatal(err)
@@ -83,11 +101,15 @@ verifiers:
       pass_reason: tests pass
       fail_reason: tests failed
 `)
+	dir := filepath.Dir(p)
+	touchLocalArtifact(t, dir, "bin/check")
+	touchLocalArtifact(t, dir, "skills/architect/SKILL.md")
+	touchLocalArtifact(t, dir, "scripts/test.sh")
 	f, _, err := Load(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	vs, err := f.Resolve(filepath.Dir(p))
+	vs, err := f.Resolve(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,6 +208,118 @@ func TestLoadMissing(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := Load(filepath.Join(dir, "nope.yaml")); err == nil {
 		t.Fatal("expected missing file error")
+	}
+}
+
+// TestRejectRemoteWithoutSHA enforces the trust model: any source: URL
+// without a sha256 pin must be rejected at config load. Drift caught
+// late is drift caught wrong.
+func TestRejectRemoteWithoutSHA(t *testing.T) {
+	p := writeTemp(t, `verifiers:
+  - name: Bad
+    type: command
+    direction: N
+    source:
+      url: https://example.com/mine.sh
+`)
+	f, _, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Resolve(filepath.Dir(p)); err == nil {
+		t.Fatal("expected sha256-required error")
+	}
+}
+
+// TestUntrustedRemoteRejected ensures a remote verifier whose sha256 is
+// pinned but absent from trust.json blocks daemon startup with a
+// human-readable instruction. We isolate trust via $HUD_TRUST_FILE so
+// the test does not depend on the user's real ~/.hud directory.
+func TestUntrustedRemoteRejected(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HUD_TRUST_FILE", filepath.Join(dir, "trust.json"))
+
+	p := writeTemp(t, `verifiers:
+  - name: Remote
+    type: command
+    direction: NE
+    source:
+      url: https://example.com/x.sh
+      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  - name: Local
+    type: command
+    direction: N
+    command: ["echo", "hi"]
+`)
+	f, _, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.Resolve(filepath.Dir(p))
+	if err == nil {
+		t.Fatal("expected untrusted-remote error")
+	}
+	if !strings.Contains(err.Error(), "Remote") || !strings.Contains(err.Error(), "trust") {
+		t.Fatalf("error should name verifier and trust command; got: %v", err)
+	}
+}
+
+// TestPermissionsValidated rejects an unknown filesystem mode at config
+// load. Typos that pass through become "no opinion declared" silently,
+// which defeats the whole point of advisory permissions.
+func TestPermissionsValidated(t *testing.T) {
+	p := writeTemp(t, `verifiers:
+  - name: A
+    type: command
+    direction: N
+    command: ["echo"]
+    permissions:
+      filesystem: nope
+`)
+	f, _, _ := Load(p)
+	if _, err := f.Resolve(filepath.Dir(p)); err == nil {
+		t.Fatal("expected permissions validation error")
+	}
+}
+
+// TestSkillFileExistenceChecked verifies that an agent verifier whose
+// skill path doesn't exist fails at Resolve, not 30 seconds in when
+// the first edit lands.
+func TestSkillFileExistenceChecked(t *testing.T) {
+	p := writeTemp(t, `verifiers:
+  - name: Architect
+    type: agent
+    direction: N
+    llm:
+      agent: claude
+      skill: ./skills/missing/SKILL.md
+`)
+	f, _, _ := Load(p)
+	_, err := f.Resolve(filepath.Dir(p))
+	if err == nil {
+		t.Fatal("expected missing-skill error")
+	}
+	if !strings.Contains(err.Error(), "skill") {
+		t.Fatalf("error should mention skill: %v", err)
+	}
+}
+
+// TestCustomAgentRequiresCommand asserts the new agent: custom path
+// validates llm.custom.command at config load.
+func TestCustomAgentRequiresCommand(t *testing.T) {
+	p := writeTemp(t, `verifiers:
+  - name: Custom
+    type: agent
+    direction: N
+    llm:
+      agent: custom
+      skill: ./skills/x.md
+`)
+	dir := filepath.Dir(p)
+	touchLocalArtifact(t, dir, "skills/x.md")
+	f, _, _ := Load(p)
+	if _, err := f.Resolve(dir); err == nil {
+		t.Fatal("expected custom-command-required error")
 	}
 }
 

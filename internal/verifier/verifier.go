@@ -17,9 +17,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
+	"text/template"
 	"time"
+
+	"github.com/uriahlevy/hud/internal/ipc"
 )
 
 // Session is the context piped to verifier subprocesses on stdin.
@@ -37,9 +39,30 @@ type Session struct {
 }
 
 // Result is what a verifier subprocess prints on stdout.
+//
+// Status is optional in the on-the-wire JSON; the runner promotes a missing
+// value to ipc.StatusOK on success. Verifiers that genuinely cannot score
+// (e.g. tooling missing, no diff to evaluate) should return Status="unknown"
+// rather than fabricating a distance — the runner then preserves the
+// previous distance instead of pretending the score moved.
 type Result struct {
-	Distance float64 `json:"distance"`
-	Reason   string  `json:"reason"`
+	Distance float64    `json:"distance"`
+	Reason   string     `json:"reason"`
+	Status   string     `json:"status,omitempty"`
+	Usage    *UsageInfo `json:"-"`
+}
+
+// UsageInfo carries per-run token / cost telemetry surfaced to the daemon.
+// Populated by agent verifiers that scrape it from the underlying CLI;
+// nil for command/binary verifiers.
+type UsageInfo struct {
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	CacheReads   int
+	CacheWrites  int
+	CostUSD      float64
+	DurationMS   int64
 }
 
 // Verifier type names.
@@ -51,14 +74,31 @@ const (
 
 // Verifier is a single configured verifier.
 type Verifier struct {
-	Name      string
-	Direction string // N, NE, E, SE, S, SW, W, NW
-	Type      string
-	Disabled  bool
-	Command   []string
-	Timeout   time.Duration // 0 → 60s default
-	Agent     AgentConfig
-	Binary    BinaryConfig
+	Name        string
+	Direction   string // N, NE, E, SE, S, SW, W, NW
+	Type        string
+	Disabled    bool
+	Command     []string
+	Timeout     time.Duration // 0 → 60s default
+	Agent       AgentConfig
+	Binary      BinaryConfig
+	Permissions Permissions
+
+	// Source provenance — populated when the verifier was loaded from a
+	// remote URL via `hud verifier add` (or an inline `source:` block in
+	// hud.yaml). "local" / "" means an in-tree script.
+	Source    string // "local" | "remote"
+	SourceURL string
+	SHA256    string
+}
+
+// Permissions is the advisory permission declaration carried with each
+// verifier. v0.1 surfaces these in the TUI on first run for trust-on-first-use;
+// future versions may map them onto sandbox-exec / landlock for enforcement.
+type Permissions struct {
+	Network    bool
+	Filesystem string // "read-only" | "read-write" | "none"
+	Env        []string
 }
 
 // AgentConfig configures a native agent-backed verifier.
@@ -67,6 +107,16 @@ type AgentConfig struct {
 	Model    string
 	Thinking string
 	Skill    string
+	Custom   CustomAgent
+}
+
+// CustomAgent configures a user-supplied agent CLI invoked via templated
+// argv. The command is text/template-substituted with {{.Model}},
+// {{.Thinking}}, and {{.Skill}} per element before exec; stdin is fed
+// the assembled prompt body when StdinFmt is "" or "prompt".
+type CustomAgent struct {
+	Command  []string
+	StdinFmt string
 }
 
 // BinaryConfig configures a native pass/fail verifier.
@@ -115,7 +165,7 @@ func (v Verifier) verifyCommand(ctx context.Context, s Session) (Result, error) 
 	}
 	defer cancel()
 
-	stdout, stderr, err := runSubprocess(subCtx, v.Command, stdinJSON, nil)
+	stdout, stderr, err := runSubprocess(subCtx, v.Command, stdinJSON, verifierEnv(s))
 	if err != nil {
 		return Result{}, fmt.Errorf("verifier %s exited with error: %w (stderr: %s)",
 			v.Name, err, strings.TrimSpace(stderr))
@@ -141,15 +191,24 @@ func (v Verifier) verifyAgent(ctx context.Context, s Session) (Result, error) {
 	}
 	defer cancel()
 
-	stdout, stderr, err := runSubprocess(subCtx, cmd, []byte(prompt), []string{
-		"SESSION_BASE_REF=" + s.SessionBaseRef,
-		"HUD_VERIFIER=1", // prevents HUD hooks from overriding the main session goal
-	})
+	start := time.Now()
+	stdout, stderr, err := runSubprocess(subCtx, cmd, []byte(prompt), verifierEnv(s))
+	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
 		return Result{}, fmt.Errorf("agent verifier %s exited with error: %w (stderr: %s)",
 			v.Name, err, strings.TrimSpace(stderr))
 	}
-	return parseAgentResult(v.Name, resolveAgent(v.Agent.Agent), stdout)
+	res, err := parseAgentResult(v.Name, resolveAgent(v.Agent.Agent), stdout)
+	if err != nil {
+		return res, err
+	}
+	if res.Usage != nil {
+		res.Usage.DurationMS = elapsed
+		if res.Usage.Model == "" {
+			res.Usage.Model = v.Agent.Model
+		}
+	}
+	return res, nil
 }
 
 func (v Verifier) verifyBinary(ctx context.Context, s Session) (Result, error) {
@@ -162,15 +221,13 @@ func (v Verifier) verifyBinary(ctx context.Context, s Session) (Result, error) {
 	}
 	defer cancel()
 
-	stdout, stderr, err := runSubprocess(subCtx, v.Binary.Command, stdinJSON, []string{
-		"SESSION_BASE_REF=" + s.SessionBaseRef,
-	})
+	stdout, stderr, err := runSubprocess(subCtx, v.Binary.Command, stdinJSON, verifierEnv(s))
 	if err == nil {
 		reason := v.Binary.PassReason
 		if reason == "" {
 			reason = "passed"
 		}
-		return Result{Distance: 0, Reason: reason}, nil
+		return Result{Distance: 0, Reason: reason, Status: ipc.StatusOK}, nil
 	}
 	reason := v.Binary.FailReason
 	if reason == "" {
@@ -182,7 +239,7 @@ func (v Verifier) verifyBinary(ctx context.Context, s Session) (Result, error) {
 			reason = err.Error()
 		}
 	}
-	return Result{Distance: 1, Reason: reason}, nil
+	return Result{Distance: 1, Reason: reason, Status: ipc.StatusOK}, nil
 }
 
 func (v Verifier) prepare(ctx context.Context, s Session) ([]byte, context.Context, context.CancelFunc, error) {
@@ -210,6 +267,11 @@ func runSubprocess(ctx context.Context, argv []string, stdin []byte, extraEnv []
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	// WaitDelay bounds the post-cancellation drain. Without it, cmd.Wait
+	// can hang indefinitely if the child dies but the I/O-copying goroutines
+	// Go starts for cmd.Stdin/Stdout/Stderr stay blocked on pipes the kernel
+	// hasn't yet torn down. KillBatch + flaky tests on macOS observed this.
+	cmd.WaitDelay = 500 * time.Millisecond
 
 	if err := cmd.Run(); err != nil {
 		return stdout.String(), stderr.String(), err
@@ -217,40 +279,101 @@ func runSubprocess(ctx context.Context, argv []string, stdin []byte, extraEnv []
 	return stdout.String(), stderr.String(), nil
 }
 
+func verifierEnv(s Session) []string {
+	return []string{
+		"SESSION_BASE_REF=" + s.SessionBaseRef,
+		"HUD_VERIFIER=1", // prevents HUD hooks from overriding the main session goal
+	}
+}
+
 func parseCommandResult(name, stdout string) (Result, error) {
-	line := lastNonEmptyLine(stdout)
-	if line == "" {
+	// Fast path: verifier emits a single JSON line as its last non-empty line.
+	if line := lastNonEmptyLine(stdout); line != "" {
+		var r Result
+		if err := json.Unmarshal([]byte(line), &r); err == nil {
+			return promoteOK(clampResult(r)), nil
+		}
+	}
+	// Robust path: scan for any top-level JSON object containing a "distance"
+	// field. Tolerates trailing log lines and JSON output mixed with prose.
+	if obj := findLastDistanceObject(stdout); obj != "" {
+		var r Result
+		if err := json.Unmarshal([]byte(obj), &r); err == nil {
+			return promoteOK(clampResult(r)), nil
+		}
+	}
+	if strings.TrimSpace(stdout) == "" {
 		return Result{}, fmt.Errorf("verifier %s produced no stdout", name)
 	}
-	var r Result
-	if err := json.Unmarshal([]byte(line), &r); err != nil {
-		return Result{}, fmt.Errorf("verifier %s bad json (%q): %w", name, line, err)
-	}
-	return clampResult(r), nil
+	return Result{}, fmt.Errorf("verifier %s bad json: %q", name, lastNonEmptyLine(stdout))
 }
 
 func parseAgentResult(name, agent, stdout string) (Result, error) {
 	result := stdout
+	var usage *UsageInfo
 	if strings.EqualFold(agent, "claude") {
+		// Claude --output-format=json wraps the model's output in an envelope
+		// alongside usage telemetry. We unwrap to read the actual response,
+		// and harvest token counts as a side-effect for cost reporting.
 		var envelope struct {
-			Result string `json:"result"`
+			Result       string  `json:"result"`
+			TotalCostUSD float64 `json:"total_cost_usd"`
+			DurationMS   int64   `json:"duration_ms"`
+			NumTurns     int     `json:"num_turns"`
+			SessionID    string  `json:"session_id"`
+			Usage        struct {
+				InputTokens              int    `json:"input_tokens"`
+				OutputTokens             int    `json:"output_tokens"`
+				CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
+				CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+				ServiceTier              string `json:"service_tier"`
+			} `json:"usage"`
+			Model string `json:"model"`
 		}
 		if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &envelope); err == nil && envelope.Result != "" {
 			result = envelope.Result
+			usage = &UsageInfo{
+				Model:        envelope.Model,
+				InputTokens:  envelope.Usage.InputTokens,
+				OutputTokens: envelope.Usage.OutputTokens,
+				CacheReads:   envelope.Usage.CacheReadInputTokens,
+				CacheWrites:  envelope.Usage.CacheCreationInputTokens,
+				CostUSD:      envelope.TotalCostUSD,
+				DurationMS:   envelope.DurationMS,
+			}
 		}
 	}
-	obj := lastDistanceObject(result)
+	obj := findLastDistanceObject(result)
 	if obj == "" {
-		obj = lastDistanceObject(stdout)
+		obj = findLastDistanceObject(stdout)
 	}
 	if obj == "" {
-		return Result{Distance: 0.5, Reason: fmt.Sprintf("%s could not parse agent output", name)}, nil
+		return Result{
+			Status: ipc.StatusUnknown,
+			Reason: fmt.Sprintf("%s could not parse agent output", name),
+			Usage:  usage,
+		}, nil
 	}
 	var r Result
 	if err := json.Unmarshal([]byte(obj), &r); err != nil {
-		return Result{Distance: 0.5, Reason: fmt.Sprintf("%s could not parse agent output", name)}, nil
+		return Result{
+			Status: ipc.StatusUnknown,
+			Reason: fmt.Sprintf("%s could not parse agent output", name),
+			Usage:  usage,
+		}, nil
 	}
-	return clampResult(r), nil
+	r.Usage = usage
+	return promoteOK(clampResult(r)), nil
+}
+
+// promoteOK fills in a missing Status field. Verifiers may explicitly set
+// Status="unknown" to signal "I ran but cannot score this run" (e.g. tooling
+// missing); leave any non-empty value alone.
+func promoteOK(r Result) Result {
+	if r.Status == "" {
+		r.Status = ipc.StatusOK
+	}
+	return r
 }
 
 func clampResult(r Result) Result {
@@ -273,14 +396,62 @@ func lastNonEmptyLine(s string) string {
 	return ""
 }
 
-var distanceObjectPattern = regexp.MustCompile(`\{[^{}]*"distance"[^{}]*\}`)
-
-func lastDistanceObject(s string) string {
-	matches := distanceObjectPattern.FindAllString(s, -1)
-	if len(matches) == 0 {
-		return ""
+// findLastDistanceObject scans s left-to-right for top-level JSON object
+// literals and returns the last one that contains a "distance" key. The
+// scanner is brace-aware and string-aware, so braces inside JSON strings
+// (e.g. inside reason text) do not break extraction. Returns "" if none.
+//
+// This replaces the prior regex `\{[^{}]*"distance"[^{}]*\}` which silently
+// dropped any object containing nested braces or quoted text containing
+// braces — a class of false negatives that bucketed valid output as
+// "could-not-parse" and forced agents into a fabricated 0.5 score.
+func findLastDistanceObject(s string) string {
+	const distanceKey = `"distance"`
+	var best string
+	depth := 0
+	start := -1
+	inString := false
+	escape := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if escape {
+			escape = false
+			continue
+		}
+		if inString {
+			switch c {
+			case '\\':
+				escape = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth == 0 {
+				continue
+			}
+			depth--
+			if depth == 0 && start >= 0 {
+				candidate := s[start : i+1]
+				// Cheap pre-check: look for the literal key. Won't false-match
+				// inside strings because we tracked them above.
+				if strings.Contains(candidate, distanceKey) {
+					best = candidate
+				}
+				start = -1
+			}
+		}
 	}
-	return matches[len(matches)-1]
+	return best
 }
 
 // BuildAgentPrompt builds the native agent verifier prompt.
@@ -323,10 +494,38 @@ other text on that line:
 
 {"distance": <number 0.0..1.0>, "reason": "<one short sentence>"}
 
-- 0.0 = the goal is fully satisfied through the cumulative session work.
-- 1.0 = it is maximally unsatisfied.
-- The reason is the single most load-bearing observation — what should
-  change the agent's next decision — not a summary.
+### Score anchors (use these — don't invent your own scale)
+
+Quantize to one of these five anchor points unless you have strong
+evidence for a value in between. Anchored scoring keeps the compass
+comparable across runs and across verifiers — drifting freely on a
+0..1 scale produces noise the agent cannot act on.
+
+- 0.00 — Goal fully satisfied for your dimension; nothing meaningful
+  to improve from your perspective.
+- 0.25 — Minor friction. The shape is right; small polish remaining.
+  Agent should keep moving toward the goal, not pivot.
+- 0.50 — A real concern. The cumulative work is on the right track
+  but has a specific weakness the agent should address before the
+  next milestone.
+- 0.75 — Blocking issue. The current trajectory will produce a result
+  that fails your dimension; the agent should change plan now.
+- 1.00 — Goal contradicted, or no diff to evaluate. The session has
+  not made progress (or has regressed) on your dimension.
+
+If you genuinely cannot evaluate (tooling missing, no diff at all,
+prerequisite step not yet done), output:
+
+{"distance": 0.0, "reason": "<why>", "status": "unknown"}
+
+The "status":"unknown" tag tells HUD to keep the prior distance and
+flag the row as not-yet-evaluable, instead of fabricating a score.
+
+### Reason field
+
+The reason is the single most load-bearing observation — what should
+change the agent's next decision — not a summary of what changed.
+
 - No commentary after the JSON line.
 `, body, name, goal, base, files), nil
 }
@@ -350,6 +549,12 @@ func skillBody(path string) (string, error) {
 
 func agentCommand(c AgentConfig) ([]string, error) {
 	agent := resolveAgent(c.Agent)
+	if agent == "custom" {
+		if len(c.Custom.Command) == 0 {
+			return nil, errors.New("agent: custom requires llm.custom.command")
+		}
+		return renderCustomCommand(c)
+	}
 	switch agent {
 	case "claude":
 		args := []string{
@@ -400,4 +605,36 @@ func resolveAgent(agent string) string {
 		return "claude"
 	}
 	return agent
+}
+
+// renderCustomCommand substitutes {{.Model}}, {{.Thinking}}, {{.Skill}}
+// into each element of the user-supplied argv via text/template.
+// Substitution happens per-arg so users can write argv pieces like
+// "--model={{.Model}}" without worrying about quoting.
+func renderCustomCommand(c AgentConfig) ([]string, error) {
+	data := struct {
+		Model    string
+		Thinking string
+		Skill    string
+	}{Model: c.Model, Thinking: c.Thinking, Skill: c.Skill}
+
+	out := make([]string, 0, len(c.Custom.Command))
+	for i, raw := range c.Custom.Command {
+		// Skip parsing for args that don't contain a template — saves
+		// allocations and avoids surprising failures on stray braces.
+		if !strings.Contains(raw, "{{") {
+			out = append(out, raw)
+			continue
+		}
+		t, err := template.New(fmt.Sprintf("arg%d", i)).Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("custom agent argv[%d] template: %w", i, err)
+		}
+		var b strings.Builder
+		if err := t.Execute(&b, data); err != nil {
+			return nil, fmt.Errorf("custom agent argv[%d] execute: %w", i, err)
+		}
+		out = append(out, b.String())
+	}
+	return out, nil
 }

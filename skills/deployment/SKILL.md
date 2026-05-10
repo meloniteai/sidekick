@@ -55,6 +55,24 @@ operability lens, against the agent's stated goal.
   rollback path.
 - Config that fails loud in prod when something required is missing.
 
+## Score anchors (deployment dimension)
+
+Use the runtime anchors (0.00 / 0.25 / 0.50 / 0.75 / 1.00). Operability
+calibration:
+
+- 0.00 — Operability fully maintained: configs, IaC, observability all
+  coherent with the diff. Nothing for the operator to chase.
+- 0.25 — Minor gap: a new flag without a default, a new metric not yet
+  wired to dashboards, a doc string missing on an env var.
+- 0.50 — A concrete operability concern: schema change without a
+  rollback path, env var added without surfacing it in the deployment
+  manifest, breaking config change without a version bump.
+- 0.75 — Change will fail in production as written: missing migration,
+  irreversible schema change shipped without coordination, monitor
+  blind to a new failure mode the diff just introduced.
+- 1.00 — Change contradicts the deployment goal entirely (e.g. goal is
+  "make X observable"; diff removes the only telemetry path).
+
 The reason you return should be the single most load-bearing
 observation about deployment readiness — the thing that should change
 the agent's next decision — not a summary.

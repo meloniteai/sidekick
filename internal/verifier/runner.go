@@ -16,6 +16,24 @@ import (
 // pull from CC's JSONL transcript and forward to verifier subprocesses.
 const transcriptTurns = 12
 
+// historyDepth is how many recent results we retain per verifier in memory.
+// Sized for a sparkline footer and "is this verifier flaky" trend reads via
+// hud_explain. Lost on daemon restart — persistence is a v0.2 concern.
+const historyDepth = 32
+
+// appendHistory adds p to the tail of the ring buffer, evicting the oldest
+// entry when capacity is reached. Returns a fresh slice so callers don't
+// need to worry about aliasing the daemon State map.
+func appendHistory(prev []ipc.HistoryPoint, p ipc.HistoryPoint) []ipc.HistoryPoint {
+	if len(prev) < historyDepth {
+		return append(append([]ipc.HistoryPoint(nil), prev...), p)
+	}
+	out := make([]ipc.HistoryPoint, historyDepth)
+	copy(out, prev[len(prev)-historyDepth+1:])
+	out[historyDepth-1] = p
+	return out
+}
+
 // DefaultQuietPeriod is the minimum gap between batch starts when the user
 // hasn't configured one. Bursts of writes inside the window are coalesced;
 // once the window elapses the queued batch fires, so no change is dropped.
@@ -87,18 +105,28 @@ func initialStatus(v Verifier) ipc.VerifierStatus {
 		Direction: v.Direction,
 		Distance:  1.0, // assume far from goal until first run
 		Reason:    "awaiting first run",
+		Status:    ipc.StatusPending,
 		Disabled:  v.Disabled,
 		Config:    verifierConfig(v),
 	}
 	if v.Disabled {
 		status.Reason = "disabled"
+		status.Status = ipc.StatusDisabled
 	}
 	return status
 }
 
 func verifierConfig(v Verifier) ipc.VerifierConfig {
 	cfg := ipc.VerifierConfig{
-		Type: v.kind(),
+		Type:      v.kind(),
+		Source:    v.Source,
+		SourceURL: v.SourceURL,
+		SHA256:    v.SHA256,
+		Permissions: ipc.VerifierPermissions{
+			Network:    v.Permissions.Network,
+			Filesystem: v.Permissions.Filesystem,
+			Env:        append([]string(nil), v.Permissions.Env...),
+		},
 	}
 	if v.Timeout > 0 {
 		cfg.Timeout = v.Timeout.String()
@@ -283,20 +311,46 @@ func (r *Runner) runBatch(only string) {
 			}
 			cur.Running = false
 			cur.ComputedAt = time.Now()
-			if err != nil {
-				if batchCtx.Err() != nil {
-					// User-initiated stop: keep the previously displayed
-					// distance and just label the row so the kill is visible.
-					cur.Reason = "stopped"
-				} else {
-					cur.Reason = "error: " + err.Error()
-					cur.Distance = 1.0
-					fmt.Fprintf(os.Stderr, "[hud] verifier %s failed: %v\n", v.Name, err)
-				}
-			} else {
+			switch {
+			case err != nil && batchCtx.Err() != nil:
+				// User-initiated stop: keep the previously displayed distance
+				// and just label the row so the kill is visible.
+				cur.Reason = "stopped"
+				// Status unchanged.
+			case err != nil:
+				cur.Reason = "error: " + err.Error()
+				cur.Distance = 1.0
+				cur.Status = ipc.StatusError
+				fmt.Fprintf(os.Stderr, "[hud] verifier %s failed: %v\n", v.Name, err)
+			case res.Status == ipc.StatusUnknown:
+				// Verifier ran but couldn't score. Preserve the prior distance
+				// so the compass doesn't lie; just surface the reason+status.
+				cur.Reason = res.Reason
+				cur.Status = ipc.StatusUnknown
+			default:
 				cur.Distance = res.Distance
 				cur.Reason = res.Reason
+				cur.Status = res.Status
+				if cur.Status == "" {
+					cur.Status = ipc.StatusOK
+				}
 			}
+			if res.Usage != nil {
+				cur.LastUsage = &ipc.AgentUsage{
+					Model:        res.Usage.Model,
+					InputTokens:  res.Usage.InputTokens,
+					OutputTokens: res.Usage.OutputTokens,
+					CacheReads:   res.Usage.CacheReads,
+					CacheWrites:  res.Usage.CacheWrites,
+					CostUSD:      res.Usage.CostUSD,
+					DurationMS:   res.Usage.DurationMS,
+				}
+			}
+			cur.History = appendHistory(cur.History, ipc.HistoryPoint{
+				Distance:   cur.Distance,
+				Status:     cur.Status,
+				ComputedAt: cur.ComputedAt,
+			})
 			r.state.UpsertVerifier(cur)
 		}(v)
 	}

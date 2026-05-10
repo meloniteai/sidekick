@@ -12,6 +12,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/uriahlevy/hud/internal/fetch"
+	"github.com/uriahlevy/hud/internal/trust"
 	"github.com/uriahlevy/hud/internal/verifier"
 )
 
@@ -28,22 +30,57 @@ type File struct {
 
 // VerifierSpec mirrors verifier.Verifier with YAML tags.
 type VerifierSpec struct {
-	Name      string             `yaml:"name"`
-	Type      string             `yaml:"type,omitempty"`
-	Disabled  bool               `yaml:"disabled,omitempty"`
-	Direction string             `yaml:"direction"`
-	Command   []string           `yaml:"command,omitempty"`
-	Timeout   string             `yaml:"timeout,omitempty"` // duration string, e.g. "60s"
-	LLM       AgentVerifierSpec  `yaml:"llm,omitempty"`     // yaml key kept as "llm" for backward compat
-	Binary    BinaryVerifierSpec `yaml:"binary,omitempty"`
+	Name        string             `yaml:"name"`
+	Type        string             `yaml:"type,omitempty"`
+	Disabled    bool               `yaml:"disabled,omitempty"`
+	Direction   string             `yaml:"direction"`
+	Command     []string           `yaml:"command,omitempty"`
+	Timeout     string             `yaml:"timeout,omitempty"` // duration string, e.g. "60s"
+	LLM         AgentVerifierSpec  `yaml:"llm,omitempty"`     // yaml key kept as "llm" for backward compat
+	Binary      BinaryVerifierSpec `yaml:"binary,omitempty"`
+	Permissions *PermissionsSpec   `yaml:"permissions,omitempty"`
+	Source      *SourceSpec        `yaml:"source,omitempty"`
+}
+
+// PermissionsSpec is the YAML shape of the advisory permission block.
+// All fields are optional; missing values are treated conservatively
+// (filesystem defaults to "read-only", env defaults to nil = "minimal").
+type PermissionsSpec struct {
+	Network    bool     `yaml:"network,omitempty"`
+	Filesystem string   `yaml:"filesystem,omitempty"`
+	Env        []string `yaml:"env,omitempty"`
+}
+
+// SourceSpec describes where a verifier's script or skill was fetched from.
+// Populated automatically by `hud verifier add`; can also be authored by
+// hand for self-documenting hud.yaml files. The sha256 is mandatory for
+// remote sources — HUD refuses to load a remote script whose hash drifts.
+type SourceSpec struct {
+	URL    string `yaml:"url,omitempty"`
+	Ref    string `yaml:"ref,omitempty"`
+	SHA256 string `yaml:"sha256,omitempty"`
 }
 
 // AgentVerifierSpec configures a native agent-backed verifier.
 type AgentVerifierSpec struct {
-	Agent    string `yaml:"agent,omitempty"`
-	Model    string `yaml:"model,omitempty"`
-	Thinking string `yaml:"thinking,omitempty"`
-	Skill    string `yaml:"skill,omitempty"`
+	Agent    string            `yaml:"agent,omitempty"`
+	Model    string            `yaml:"model,omitempty"`
+	Thinking string            `yaml:"thinking,omitempty"`
+	Skill    string            `yaml:"skill,omitempty"`
+	Custom   *CustomAgentSpec  `yaml:"custom,omitempty"`
+}
+
+// CustomAgentSpec configures a non-built-in agent CLI. The command array
+// is template-substituted with {{.Model}}, {{.Thinking}}, and {{.Skill}}
+// before exec; stdin is fed the assembled prompt body.
+//
+// This is the v0.1 pluggability story: Claude and Codex are supported
+// natively, anything else lands here. Future versions may consume more
+// structured agent metadata (input format, response envelope shape) so
+// the parser can extract usage telemetry from custom agents too.
+type CustomAgentSpec struct {
+	Command  []string `yaml:"command"`
+	StdinFmt string   `yaml:"stdin,omitempty"` // "prompt" (default) | "none"
 }
 
 // BinaryVerifierSpec configures a native exit-code verifier.
@@ -148,11 +185,18 @@ func (f *File) ResolveQuietPeriod() (time.Duration, error) {
 }
 
 // Resolve converts the parsed file into runtime verifiers, resolving any
-// relative local paths against `configDir`.
+// relative local paths against `configDir`. It returns an error listing
+// every untrusted remote verifier so the user can address them all in one
+// pass instead of fixing them one at a time.
 func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 	if len(f.Verifiers) == 0 {
 		return nil, errors.New("no verifiers configured")
 	}
+	store, _ := trust.New("")
+	if store != nil {
+		_ = store.Load() // missing file is fine; treat as empty store
+	}
+	var untrusted []string
 	out := make([]verifier.Verifier, 0, len(f.Verifiers))
 	seen := map[string]bool{}
 	for i, vs := range f.Verifiers {
@@ -189,41 +233,226 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 			Disabled:  vs.Disabled,
 			Timeout:   timeout,
 		}
+		// remoteArtefact is the cached local path of a fetched skill or
+		// script when the verifier has source.url set. Empty for purely
+		// local verifiers. Used below to override skill / command paths
+		// before further validation.
+		var remoteArtefact string
+		if vs.Source != nil && vs.Source.URL != "" {
+			if vs.Source.SHA256 == "" {
+				return nil, fmt.Errorf("verifier %s: remote source requires sha256 pin (got url=%q without sha256)", vs.Name, vs.Source.URL)
+			}
+			// Trust gate runs before fetch: an unapproved hash should
+			// neither hit the network nor populate the cache. We collect
+			// every untrusted name into `untrusted` below and surface
+			// them all together at the end of Resolve.
+			if store == nil || !store.IsApproved(vs.Source.SHA256) {
+				untrusted = append(untrusted,
+					fmt.Sprintf("  - %s  (sha256 %s)\n      from %s", vs.Name, shortHash(vs.Source.SHA256), vs.Source.URL))
+				// Skip materialising this verifier; trust error is fatal.
+				continue
+			}
+			ext := remoteExt(kind, vs)
+			path, err := fetch.Resolve(fetch.Pin{
+				URL:    vs.Source.URL,
+				SHA256: vs.Source.SHA256,
+				Ext:    ext,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("verifier %s: %w", vs.Name, err)
+			}
+			remoteArtefact = path
+		}
+
 		switch kind {
 		case verifier.TypeCommand:
-			if len(vs.Command) == 0 {
+			if len(vs.Command) == 0 && remoteArtefact == "" {
 				return nil, fmt.Errorf("verifier %s: command is required", vs.Name)
 			}
-			v.Command = resolveCommand(configDir, vs.Command)
-		case verifier.TypeAgent:
-			if vs.LLM.Skill == "" {
-				return nil, fmt.Errorf("verifier %s: agent.skill is required", vs.Name)
+			cmd := append([]string(nil), vs.Command...)
+			if remoteArtefact != "" {
+				if len(cmd) == 0 {
+					cmd = []string{remoteArtefact}
+				} else {
+					cmd[0] = remoteArtefact
+				}
+				v.Command = cmd
+				// Skip looksLikeLocalScript existence check — fetch.Resolve
+				// already established the file is on disk.
+			} else {
+				rawCmd := cmd[0]
+				v.Command = resolveCommand(configDir, cmd)
+				if err := checkLocalScript(vs.Name, rawCmd, v.Command[0]); err != nil {
+					return nil, err
+				}
 			}
+		case verifier.TypeAgent:
 			agent := vs.LLM.Agent
 			if agent == "" {
 				agent = "claude"
 			}
-			v.Agent = verifier.AgentConfig{
+			var skill string
+			if remoteArtefact != "" {
+				skill = remoteArtefact
+			} else {
+				if vs.LLM.Skill == "" {
+					return nil, fmt.Errorf("verifier %s: agent.skill is required", vs.Name)
+				}
+				skill = resolveLocalPath(configDir, vs.LLM.Skill)
+				if err := checkSkillFile(vs.Name, skill); err != nil {
+					return nil, err
+				}
+			}
+			ac := verifier.AgentConfig{
 				Agent:    strings.ToLower(agent),
 				Model:    vs.LLM.Model,
 				Thinking: vs.LLM.Thinking,
-				Skill:    resolveLocalPath(configDir, vs.LLM.Skill),
+				Skill:    skill,
 			}
+			if strings.EqualFold(agent, "custom") {
+				if vs.LLM.Custom == nil || len(vs.LLM.Custom.Command) == 0 {
+					return nil, fmt.Errorf("verifier %s: llm.custom.command is required when agent: custom", vs.Name)
+				}
+				ac.Custom = verifier.CustomAgent{
+					Command:  append([]string(nil), vs.LLM.Custom.Command...),
+					StdinFmt: vs.LLM.Custom.StdinFmt,
+				}
+			}
+			v.Agent = ac
 		case verifier.TypeBinary:
-			if len(vs.Binary.Command) == 0 {
+			if len(vs.Binary.Command) == 0 && remoteArtefact == "" {
 				return nil, fmt.Errorf("verifier %s: binary.command is required", vs.Name)
 			}
-			v.Binary = verifier.BinaryConfig{
-				Command:    resolveCommand(configDir, vs.Binary.Command),
-				PassReason: vs.Binary.PassReason,
-				FailReason: vs.Binary.FailReason,
+			cmd := append([]string(nil), vs.Binary.Command...)
+			if remoteArtefact != "" {
+				if len(cmd) == 0 {
+					cmd = []string{remoteArtefact}
+				} else {
+					cmd[0] = remoteArtefact
+				}
+				v.Binary = verifier.BinaryConfig{
+					Command:    cmd,
+					PassReason: vs.Binary.PassReason,
+					FailReason: vs.Binary.FailReason,
+				}
+			} else {
+				rawCmd := cmd[0]
+				resolved := resolveCommand(configDir, cmd)
+				if err := checkLocalScript(vs.Name, rawCmd, resolved[0]); err != nil {
+					return nil, err
+				}
+				v.Binary = verifier.BinaryConfig{
+					Command:    resolved,
+					PassReason: vs.Binary.PassReason,
+					FailReason: vs.Binary.FailReason,
+				}
 			}
 		default:
 			return nil, fmt.Errorf("verifier %s: invalid type %q (want command, agent, or binary)", vs.Name, vs.Type)
 		}
+		if vs.Permissions != nil {
+			fs := strings.ToLower(strings.TrimSpace(vs.Permissions.Filesystem))
+			switch fs {
+			case "", "read-only", "read-write", "none":
+			default:
+				return nil, fmt.Errorf("verifier %s: permissions.filesystem %q (want one of read-only, read-write, none)", vs.Name, vs.Permissions.Filesystem)
+			}
+			v.Permissions = verifier.Permissions{
+				Network:    vs.Permissions.Network,
+				Filesystem: fs,
+				Env:        append([]string(nil), vs.Permissions.Env...),
+			}
+		}
+		if remoteArtefact != "" {
+			v.Source = "remote"
+			v.SourceURL = vs.Source.URL
+			v.SHA256 = vs.Source.SHA256
+		} else {
+			v.Source = "local"
+		}
 		out = append(out, v)
 	}
+	if len(untrusted) > 0 {
+		return nil, fmt.Errorf("the following remote verifiers are not yet trusted:\n%s\n\nrun `hud verifier trust <name>` to inspect and approve, or `hud verifier trust --all` to approve every pending verifier in this config",
+			joinLines(untrusted))
+	}
 	return out, nil
+}
+
+func shortHash(s string) string {
+	if len(s) > 12 {
+		return s[:12] + "…"
+	}
+	return s
+}
+
+func joinLines(xs []string) string {
+	out := ""
+	for i, x := range xs {
+		if i > 0 {
+			out += "\n"
+		}
+		out += x
+	}
+	return out
+}
+
+// remoteExt picks an extension hint for the cache filename based on the
+// verifier kind. The extension is purely cosmetic — fetch is content-
+// addressed by sha256 — but it makes `~/.hud/cache/` browsable.
+func remoteExt(kind string, vs VerifierSpec) string {
+	switch kind {
+	case verifier.TypeAgent:
+		return ".md"
+	case verifier.TypeBinary, verifier.TypeCommand:
+		return ".sh"
+	}
+	return ""
+}
+
+// checkSkillFile verifies the configured skill path exists and is readable.
+// Catching the missing-skill case at config load — instead of 30 seconds in
+// when the first edit lands — is one of the cheapest UX wins for new users.
+func checkSkillFile(verifierName, path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("verifier %s: agent.skill %q not readable: %w", verifierName, path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("verifier %s: agent.skill %q is a directory, not a file", verifierName, path)
+	}
+	return nil
+}
+
+// checkLocalScript verifies that a script the user clearly intended to be
+// in-tree (path written as ./foo, ../foo, ~/foo, or /abs/foo) actually
+// exists. Bare names like "go", "bash", "echo" are PATH lookups at runtime
+// and intentionally not validated here — they're the standard way users
+// shell out to system tools, and validating them would reject any host
+// that uses a different executable name.
+//
+// raw is the original string from hud.yaml; resolved is the cwd-relative
+// or home-relative form after resolveLocalPath.
+func checkLocalScript(verifierName, raw, resolved string) error {
+	if !looksLikeLocalScript(raw) {
+		return nil
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("verifier %s: command %q not found: %w", verifierName, resolved, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("verifier %s: command %q is a directory, not an executable", verifierName, resolved)
+	}
+	return nil
+}
+
+func looksLikeLocalScript(p string) bool {
+	switch {
+	case strings.HasPrefix(p, "./"), strings.HasPrefix(p, "../"), strings.HasPrefix(p, "~/"), strings.HasPrefix(p, "/"):
+		return true
+	}
+	return false
 }
 
 func resolveCommand(configDir string, in []string) []string {
