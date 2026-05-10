@@ -204,6 +204,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			editor.width = m.width
 			editor.height = m.height
 			m.editor = &editor
+		case "n":
+			editor := NewCreateWizard(m.configPath)
+			editor.width = m.width
+			editor.height = m.height
+			m.editor = &editor
 		case "enter":
 			if v, ok := m.selectedStatus(); ok {
 				status := NewStatusWizard(v)

@@ -7,7 +7,7 @@ verifiers:
       timeout: 180s
       llm:
         agent: claude
-        model: haiku
+        model: sonnet
         thinking: low
         skill: ./skills/architect/SKILL.md
     - name: Test

@@ -384,7 +384,7 @@ func (m Model) renderList(maxWidth int) string {
 }
 
 func (m Model) renderFooterHelp(maxWidth int) string {
-	text := "keys: up/down select | enter status | space toggle | r run one | t all | e edit | esc stop | q quit | 1-9/0 toggle"
+	text := "keys: up/down select | enter status | space toggle | r run one | t all | n new | e edit | esc stop | q quit | 1-9/0 toggle"
 	if m.footerNotice != "" && m.tick < m.footerNoticeUntil {
 		text = m.footerNotice
 	}
