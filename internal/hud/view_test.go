@@ -131,12 +131,25 @@ func TestRenderListShowsVerifierMetadata(t *testing.T) {
 				{
 					Name:      "Unit Tests",
 					Direction: "S",
-					Distance:  0.2,
+					Distance:  0,
+					Status:    ipc.StatusOK,
 					Config: ipc.VerifierConfig{
 						Type:       "binary",
 						Command:    []string{"./scripts/test.sh"},
 						PassReason: "tests pass",
 						FailReason: "tests failed",
+					},
+				},
+				{
+					Name:      "Lint",
+					Direction: "SW",
+					Distance:  1,
+					Status:    ipc.StatusOK,
+					Config: ipc.VerifierConfig{
+						Type:       "binary",
+						Command:    []string{"./scripts/lint.sh"},
+						PassReason: "lint passed",
+						FailReason: "lint failed",
 					},
 				},
 			},
@@ -146,10 +159,16 @@ func TestRenderListShowsVerifierMetadata(t *testing.T) {
 	for _, want := range []string{
 		"key", "verifier", "type", "config",
 		"agent", "agent=claude", "model=haiku", "thinking=low", "timeout=90s",
-		"binary", "cmd=./scripts/test.sh", "pass=tests pass", "fail=tests failed",
+		"binary", "cmd=./scripts/test.sh", "pass=tests pass",
+		"cmd=./scripts/lint.sh", "fail=lint failed",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("metadata footer missing %q in:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"fail=tests failed", "pass=lint passed"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("metadata footer unexpectedly contained %q in:\n%s", unwanted, out)
 		}
 	}
 }

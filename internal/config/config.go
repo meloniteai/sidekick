@@ -63,11 +63,11 @@ type SourceSpec struct {
 
 // AgentVerifierSpec configures a native agent-backed verifier.
 type AgentVerifierSpec struct {
-	Agent    string            `yaml:"agent,omitempty"`
-	Model    string            `yaml:"model,omitempty"`
-	Thinking string            `yaml:"thinking,omitempty"`
-	Skill    string            `yaml:"skill,omitempty"`
-	Custom   *CustomAgentSpec  `yaml:"custom,omitempty"`
+	Agent    string           `yaml:"agent,omitempty"`
+	Model    string           `yaml:"model,omitempty"`
+	Thinking string           `yaml:"thinking,omitempty"`
+	Skill    string           `yaml:"skill,omitempty"`
+	Custom   *CustomAgentSpec `yaml:"custom,omitempty"`
 }
 
 // CustomAgentSpec configures a non-built-in agent CLI. The command array

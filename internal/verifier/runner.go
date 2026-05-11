@@ -316,6 +316,7 @@ func (r *Runner) runBatch(only string) {
 				// and just label the row so the kill is visible.
 				cur.Reason = "stopped"
 				// Status unchanged.
+				r.state.LogEvent(daemon.EventInfo, "verifier %s stopped", v.Name)
 			case err != nil:
 				cur.Reason = "error: " + err.Error()
 				cur.Distance = 1.0
@@ -326,6 +327,7 @@ func (r *Runner) runBatch(only string) {
 				// so the compass doesn't lie; just surface the reason+status.
 				cur.Reason = res.Reason
 				cur.Status = ipc.StatusUnknown
+				r.state.LogEvent(daemon.EventInfo, "verifier %s unknown: %s", v.Name, res.Reason)
 			default:
 				cur.Distance = res.Distance
 				cur.Reason = res.Reason
@@ -333,6 +335,7 @@ func (r *Runner) runBatch(only string) {
 				if cur.Status == "" {
 					cur.Status = ipc.StatusOK
 				}
+				r.state.LogEvent(daemon.EventInfo, "verifier %s %s d=%.2f", v.Name, cur.Status, cur.Distance)
 			}
 			if res.Usage != nil {
 				cur.LastUsage = &ipc.AgentUsage{

@@ -115,6 +115,7 @@ func newStartCmd() *cobra.Command {
 			manualTrigger := func() {
 				state.SetGoal("manual trigger, goal unknown")
 				runner.TriggerImmediate()
+				state.LogEvent(daemon.EventInfo, "all verifiers triggered")
 			}
 			reloadConfig := func() error {
 				if loadedConfigPath == "" {

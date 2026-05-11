@@ -3,7 +3,9 @@
 // in what the agent has actually been saying — not just file diffs.
 //
 // CC writes one JSONL file per session under
-//   $HOME/.claude/projects/<project-key>/<session-id>.jsonl
+//
+//	$HOME/.claude/projects/<project-key>/<session-id>.jsonl
+//
 // where <project-key> is the cwd with separators replaced by dashes.
 package transcript
 

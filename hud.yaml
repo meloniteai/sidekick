@@ -43,14 +43,6 @@ verifiers:
       command:
         - ./verifiers/dummy.sh
       timeout: 5s
-    - name: DocsDrift
-      type: command
-      direction: SE
-      command:
-        - ./examples/community/docs-drift.sh
-      timeout: 30s
-      permissions:
-        filesystem: read-only
     - name: Lint
       type: binary
       direction: SW
@@ -69,14 +61,3 @@ verifiers:
       timeout: 300s
       permissions:
         filesystem: read-write
-    - name: MigrationSafety
-      type: agent
-      direction: NE
-      timeout: 180s
-      llm:
-        agent: claude
-        model: haiku
-        thinking: low
-        skill: ./examples/community/migration-safety/SKILL.md
-      permissions:
-        filesystem: read-only

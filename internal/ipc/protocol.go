@@ -168,19 +168,19 @@ type AgentUsage struct {
 // VerifierConfig is the resolved hud.yaml metadata surfaced with verifier
 // status so clients can explain what is running without reparsing config.
 type VerifierConfig struct {
-	Type        string             `json:"type,omitempty"`
-	Command     []string           `json:"command,omitempty"`
-	Timeout     string             `json:"timeout,omitempty"`
-	Agent       string             `json:"agent,omitempty"`
-	Model       string             `json:"model,omitempty"`
-	Thinking    string             `json:"thinking,omitempty"`
-	Skill       string             `json:"skill,omitempty"`
-	PassReason  string             `json:"pass_reason,omitempty"`
-	FailReason  string             `json:"fail_reason,omitempty"`
+	Type        string              `json:"type,omitempty"`
+	Command     []string            `json:"command,omitempty"`
+	Timeout     string              `json:"timeout,omitempty"`
+	Agent       string              `json:"agent,omitempty"`
+	Model       string              `json:"model,omitempty"`
+	Thinking    string              `json:"thinking,omitempty"`
+	Skill       string              `json:"skill,omitempty"`
+	PassReason  string              `json:"pass_reason,omitempty"`
+	FailReason  string              `json:"fail_reason,omitempty"`
 	Permissions VerifierPermissions `json:"permissions,omitempty"`
-	Source      string             `json:"source,omitempty"` // "local" | "remote"
-	SourceURL   string             `json:"source_url,omitempty"`
-	SHA256      string             `json:"sha256,omitempty"`
+	Source      string              `json:"source,omitempty"` // "local" | "remote"
+	SourceURL   string              `json:"source_url,omitempty"`
+	SHA256      string              `json:"sha256,omitempty"`
 }
 
 // VerifierPermissions is an advisory declaration of what a verifier intends

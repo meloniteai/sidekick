@@ -15,8 +15,8 @@ func TestProjectOrigin(t *testing.T) {
 
 func TestProjectCardinals(t *testing.T) {
 	cases := []struct {
-		dir          string
-		dCol, dRow   int // expected delta from center
+		dir        string
+		dCol, dRow int // expected delta from center
 	}{
 		{"E", +1, 0},
 		{"W", -1, 0},

@@ -467,13 +467,19 @@ func (m Model) renderEventLog(width, contentH int) string {
 			rows = append(rows, padCell(styleReason.Render("(no events yet)"), innerW))
 		}
 	} else {
-		events := m.events
-		if len(events) > bodyCap {
-			events = events[len(events)-bodyCap:]
+		// Walk newest-first so the latest event always wins room — it gets
+		// truncated with "…" rather than dropped when it doesn't fully fit.
+		var bodyRows []string
+		remaining := bodyCap
+		for i := len(m.events) - 1; i >= 0 && remaining > 0; i-- {
+			evRows := renderEventRow(m.events[i], innerW, remaining)
+			if len(evRows) == 0 {
+				continue
+			}
+			bodyRows = append(evRows, bodyRows...)
+			remaining -= len(evRows)
 		}
-		for _, e := range events {
-			rows = append(rows, renderEventRow(e, innerW))
-		}
+		rows = append(rows, bodyRows...)
 	}
 
 	for len(rows) < contentH {
@@ -483,7 +489,12 @@ func (m Model) renderEventLog(width, contentH int) string {
 	return styleGrid.Render(strings.Join(rows, "\n"))
 }
 
-func renderEventRow(e daemon.EventEntry, width int) string {
+// renderEventRow wraps the message across multiple rows up to maxLines.
+// Continuation lines are indented under the prefix; an overrun ends in "…".
+func renderEventRow(e daemon.EventEntry, width, maxLines int) []string {
+	if maxLines <= 0 {
+		return nil
+	}
 	ts := e.At.Format("15:04:05")
 	var level string
 	switch e.Level {
@@ -495,11 +506,76 @@ func renderEventRow(e daemon.EventEntry, width int) string {
 		level = styleReason.Render(strings.ToUpper(string(e.Level)))
 	}
 	prefix := styleHeaderLabel.Render(ts) + " " + level + " "
-	msgW := width - lipgloss.Width(prefix)
+	prefixW := lipgloss.Width(prefix)
+	msgW := width - prefixW
 	if msgW < 4 {
-		return padCell(prefix, width)
+		return []string{padCell(prefix, width)}
 	}
-	return padCell(prefix+truncate(e.Msg, msgW), width)
+
+	lines := wrapVisualLines(e.Msg, msgW)
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines[len(lines)-1] = ellipsisTail(strings.TrimRight(lines[len(lines)-1], " "), msgW)
+	}
+
+	indent := strings.Repeat(" ", prefixW)
+	out := make([]string, 0, len(lines))
+	for i, line := range lines {
+		if i == 0 {
+			out = append(out, padCell(prefix+line, width))
+		} else {
+			out = append(out, padCell(indent+line, width))
+		}
+	}
+	return out
+}
+
+func wrapVisualLines(s string, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	var rows []string
+	for _, line := range strings.Split(s, "\n") {
+		if line == "" {
+			rows = append(rows, "")
+			continue
+		}
+		for lipgloss.Width(line) > width {
+			head, tail := splitVisual(line, width)
+			rows = append(rows, head)
+			line = tail
+		}
+		rows = append(rows, line)
+	}
+	return rows
+}
+
+// ellipsisTail differs from truncate: it always appends "…" even when s
+// already fits, to mark that more content was cut off after this line.
+func ellipsisTail(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if width == 1 {
+		return "…"
+	}
+	if lipgloss.Width(s)+1 <= width {
+		return s + "…"
+	}
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		w := lipgloss.Width(string(r))
+		if used+w+1 > width {
+			break
+		}
+		b.WriteRune(r)
+		used += w
+	}
+	return b.String() + "…"
 }
 
 func renderListHeader(maxWidth int) string {
@@ -601,11 +677,13 @@ func metadataSummary(v ipc.VerifierStatus) string {
 		if len(cfg.Command) > 0 {
 			parts = append(parts, "cmd="+strings.Join(cfg.Command, " "))
 		}
-		if cfg.PassReason != "" {
-			parts = append(parts, "pass="+cfg.PassReason)
-		}
-		if cfg.FailReason != "" {
-			parts = append(parts, "fail="+cfg.FailReason)
+		if v.Status == ipc.StatusOK {
+			if v.Distance == 0 && cfg.PassReason != "" {
+				parts = append(parts, "pass="+cfg.PassReason)
+			}
+			if v.Distance > 0 && cfg.FailReason != "" {
+				parts = append(parts, "fail="+cfg.FailReason)
+			}
 		}
 	default:
 		if len(cfg.Command) > 0 {
