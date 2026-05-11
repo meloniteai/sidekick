@@ -16,8 +16,8 @@ import (
 const transcriptTurns = 12
 
 // historyDepth is how many recent results we retain per verifier in memory.
-// Sized for a sparkline footer and "is this verifier flaky" trend reads via
-// hud_explain. Lost on daemon restart — persistence is a v0.2 concern.
+// Sized for "is this verifier flaky" trend reads via hud_explain. Lost on
+// daemon restart — persistence is a v0.2 concern.
 const historyDepth = 32
 
 // appendHistory adds p to the tail of the ring buffer, evicting the oldest

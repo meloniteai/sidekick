@@ -2,6 +2,7 @@ package hud
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -15,8 +16,11 @@ var (
 	styleHeader        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	styleGrid          = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	styleGoal          = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	styleGoalDot       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	styleAxis          = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleRing          = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 	styleRunning       = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	styleVerifierLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("211")).Bold(true)
 	styleReason        = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleGoalLbl       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	styleArrowOutHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
@@ -69,6 +73,20 @@ const arrowTrailLen = 2
 
 // goalGlyph is the target the orbs converge on at the grid center.
 const goalGlyph = "◎"
+
+const (
+	ringCell = iota + 1
+	axisCell
+)
+
+var verifierMarkerGlyphs = []rune{'▲', '◆', '■', '✚', '△', '◇', '□', '▽'}
+
+func verifierMarkerGlyph(index int) rune {
+	if index < 0 {
+		index = 0
+	}
+	return verifierMarkerGlyphs[index%len(verifierMarkerGlyphs)]
+}
 
 // orbStyle returns the foreground style for a verifier orb at distance d
 // (0 = on the goal circle, 1 = maximally far). The bucketed gradient lets
@@ -222,35 +240,43 @@ func formatTimestamp(t time.Time) string {
 }
 
 func (m Model) renderGrid(w, h int) string {
+	if w <= 0 || h <= 0 {
+		return ""
+	}
 	cells := make([][]rune, h)
+	kinds := make([][]int, h)
 	for r := range cells {
 		cells[r] = make([]rune, w)
+		kinds[r] = make([]int, w)
 		for c := range cells[r] {
 			cells[r][c] = ' '
 		}
 	}
 	cx, cy := w/2, h/2
+
+	drawDistanceRings(cells, kinds, w, h, cx, cy)
+
 	// axis lines (subtle bearing reference)
 	for c := 0; c < w; c++ {
 		cells[cy][c] = '·'
+		kinds[cy][c] = axisCell
 	}
 	for r := 0; r < h; r++ {
 		cells[r][cx] = '·'
+		kinds[r][cx] = axisCell
 	}
 
-	// One orb per verifier, projected to (direction, distance). project() reads
-	// v.Distance from the live snapshot, so the orb position reflects the most
-	// recent verifier run (which the file-write hook triggers). The orb is
-	// rendered as the full verifier name in lowercase, centered horizontally
-	// on the projected cell so the user can identify it without consulting
-	// the list below.
-	type placed struct {
+	// One compact marker per verifier is projected from Direction + Distance.
+	// The nearby label is offset and clamped inward so perimeter bearings stay
+	// readable even when a verifier is at maximum distance.
+	type placedGlyph struct {
 		col, row int
 		glyph    rune
 		distance float64
+		marker   bool
 	}
-	var placements []placed
-	for _, v := range m.snapshot.Verifiers {
+	var placements []placedGlyph
+	for i, v := range m.snapshot.Verifiers {
 		if v.Disabled {
 			continue
 		}
@@ -262,20 +288,20 @@ func (m Model) renderGrid(w, h int) string {
 		if name == "" {
 			name = "?"
 		}
+		placements = append(placements, placedGlyph{col: col, row: row, glyph: verifierMarkerGlyph(i), distance: v.Distance, marker: true})
+
+		name = truncate(name, labelMaxWidth(w))
+		if name == "" {
+			continue
+		}
 		runes := []rune(name)
-		startCol := col - len(runes)/2
-		if startCol+len(runes) > w {
-			startCol = w - len(runes)
-		}
-		if startCol < 0 {
-			startCol = 0
-		}
+		startCol, labelRow := labelPosition(col, row, v.Direction, len(runes), w, h)
 		for i, ch := range runes {
 			c := startCol + i
-			if c < 0 || c >= w {
+			if c < 0 || c >= w || labelRow < 0 || labelRow >= h {
 				continue
 			}
-			placements = append(placements, placed{c, row, ch, v.Distance})
+			placements = append(placements, placedGlyph{col: c, row: labelRow, glyph: ch, distance: v.Distance})
 		}
 	}
 
@@ -302,8 +328,8 @@ func (m Model) renderGrid(w, h int) string {
 
 	// arrowAt indexes the active animation frame's head + trail by cell. The
 	// head is intensity 0 (bright); each trailing cell increases intensity.
-	// Orbs still win the cell — the animation visualizes the path toward the
-	// orb, not the orb itself.
+	// Markers still win the cell — the animation visualizes the path toward
+	// the verifier, not the verifier itself.
 	type arrowCell struct {
 		glyph       rune
 		intensity   int
@@ -355,17 +381,21 @@ func (m Model) renderGrid(w, h int) string {
 	var sb strings.Builder
 	for r := 0; r < h; r++ {
 		for c := 0; c < w; c++ {
-			// Orbs draw on top of the goal circle and axes — a verifier with
-			// distance 0 is meant to overlap the goal, signalling convergence.
-			placedHere := false
+			// Verifier markers are the top layer. A distance-0 marker is meant
+			// to sit exactly on the reticle, signalling convergence.
+			markerHere := false
 			for _, p := range placements {
-				if p.col == c && p.row == r {
+				if p.marker && p.col == c && p.row == r {
 					sb.WriteString(orbStyle(p.distance).Render(string(p.glyph)))
-					placedHere = true
+					markerHere = true
 					break
 				}
 			}
-			if placedHere {
+			if markerHere {
+				continue
+			}
+			if c == cx && r == cy {
+				sb.WriteString(styleGoal.Render(goalGlyph))
 				continue
 			}
 			if a, ok := arrows[[2]int{c, r}]; ok {
@@ -380,20 +410,38 @@ func (m Model) renderGrid(w, h int) string {
 				default:
 					style = styleArrowOutTrail
 				}
-				sb.WriteString(style.Render(string(a.glyph)))
+				glyph := a.glyph
+				if a.intensity > 0 {
+					glyph = '•'
+				}
+				sb.WriteString(style.Render(string(glyph)))
 				continue
 			}
-			if c == cx && r == cy {
-				sb.WriteString(styleGoal.Render(goalGlyph))
+			labelHere := false
+			for _, p := range placements {
+				if !p.marker && p.col == c && p.row == r {
+					sb.WriteString(styleVerifierLabel.Render(string(p.glyph)))
+					labelHere = true
+					break
+				}
+			}
+			if labelHere {
+				continue
+			}
+			if glyph, ok := reticleGlyph(c, r, cx, cy, w, h); ok {
+				sb.WriteString(styleGoalDot.Render(string(glyph)))
 				continue
 			}
 			if wch, ok := windCells[[2]int{c, r}]; ok {
 				sb.WriteString(styleWind.Render(string(wch)))
 				continue
 			}
-			if cells[r][c] == '·' {
+			switch kinds[r][c] {
+			case axisCell:
 				sb.WriteString(styleAxis.Render("·"))
-			} else {
+			case ringCell:
+				sb.WriteString(styleRing.Render("·"))
+			default:
 				sb.WriteRune(cells[r][c])
 			}
 		}
@@ -402,6 +450,134 @@ func (m Model) renderGrid(w, h int) string {
 		}
 	}
 	return sb.String()
+}
+
+func drawDistanceRings(cells [][]rune, kinds [][]int, w, h, cx, cy int) {
+	if w < 17 || h < 9 {
+		return
+	}
+	maxRX := cx - 1
+	maxRY := cy - 1
+	if maxRX <= 0 || maxRY <= 0 {
+		return
+	}
+	for _, band := range []float64{0.25, 0.50, 0.75} {
+		rx := int(math.Round(float64(maxRX) * band))
+		ry := int(math.Round(float64(maxRY) * band))
+		if rx < 1 || ry < 1 {
+			continue
+		}
+		samples := ringSampleCount(rx, ry)
+		for i := 0; i < samples; i++ {
+			theta := 2 * math.Pi * float64(i) / float64(samples)
+			col := cx + int(math.Round(math.Cos(theta)*float64(rx)))
+			row := cy - int(math.Round(math.Sin(theta)*float64(ry)))
+			if col <= 0 || col >= w-1 || row <= 0 || row >= h-1 {
+				continue
+			}
+			cells[row][col] = '·'
+			kinds[row][col] = ringCell
+		}
+	}
+}
+
+func ringSampleCount(rx, ry int) int {
+	// Ramanujan's first approximation is plenty for deciding how many terminal
+	// cells to sample along a faint ring outline.
+	a := float64(rx)
+	b := float64(ry)
+	circumference := math.Pi * (3*(a+b) - math.Sqrt((3*a+b)*(a+3*b)))
+	samples := int(math.Ceil(circumference * 2))
+	if samples < 16 {
+		return 16
+	}
+	return samples
+}
+
+func reticleGlyph(c, r, cx, cy, w, h int) (rune, bool) {
+	if c == cx && r == cy {
+		return []rune(goalGlyph)[0], true
+	}
+	if w < 9 || h < 5 {
+		return 0, false
+	}
+	if (c == cx && absInt(r-cy) == 1) || (r == cy && absInt(c-cx) == 2) {
+		return '•', true
+	}
+	return 0, false
+}
+
+func labelMaxWidth(w int) int {
+	if w <= 4 {
+		return w
+	}
+	maxW := w - 4
+	if maxW > 18 {
+		return 18
+	}
+	return maxW
+}
+
+func labelPosition(col, row int, direction string, labelLen, w, h int) (int, int) {
+	labelPad := 1
+	if w < 8 || h < 5 {
+		labelPad = 0
+	}
+
+	startCol := col - labelLen/2
+	labelRow := row + 1
+	switch direction {
+	case "N":
+		labelRow = row + 1
+	case "S":
+		labelRow = row - 1
+	case "E":
+		startCol = col - labelLen - 2
+		labelRow = row + 1
+	case "W":
+		startCol = col + 2
+		labelRow = row + 1
+	case "NE":
+		startCol = col - labelLen - 1
+		labelRow = row + 1
+	case "NW":
+		startCol = col + 1
+		labelRow = row + 1
+	case "SE":
+		startCol = col - labelLen - 1
+		labelRow = row - 1
+	case "SW":
+		startCol = col + 1
+		labelRow = row - 1
+	}
+
+	maxStart := w - labelLen - labelPad
+	if maxStart < labelPad {
+		maxStart = labelPad
+	}
+	startCol = clampInt(startCol, labelPad, maxStart)
+	labelRow = clampInt(labelRow, labelPad, h-1-labelPad)
+	return startCol, labelRow
+}
+
+func clampInt(v, lo, hi int) int {
+	if hi < lo {
+		return lo
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func (m Model) listLineCount() int {
@@ -579,74 +755,103 @@ func ellipsisTail(s string, width int) string {
 }
 
 func renderListHeader(maxWidth int) string {
-	header := fmt.Sprintf("%-3s %-12s %-3s %-7s %s", "key", "verifier", "dir", "type", "config")
-	if maxWidth > lipgloss.Width(header)+8 {
-		header += "  status  reason"
+	layout := listLayoutFor(maxWidth)
+	header := listCursorPad +
+		tableCell("key", layout.keyW) + listColumnGap +
+		tableCell("verifier", layout.nameW) + listColumnGap +
+		tableCell("dir", layout.dirW) + listColumnGap +
+		tableCell("type", layout.typeW) + listColumnGap +
+		tableCell("status", layout.statusW)
+	if layout.reasonW > 0 {
+		header += listColumnGap + tableCell("reason", layout.reasonW)
 	}
 	return styleHeaderLabel.Render(truncate(header, maxWidth))
 }
 
 func (m Model) renderListRow(i int, v ipc.VerifierStatus, maxWidth int) string {
+	layout := listLayoutFor(maxWidth)
 	cursor := " "
 	if i == m.selectedVerifier {
 		cursor = styleEditCursor.Render(">")
 	}
 	label := "[" + toggleLabel(i) + "]"
-	name := padCell(truncate(v.Name, 12), 12)
-	kind := padCell(truncate(verifierType(v), 7), 7)
+	name := styledTableCell(v.Name, layout.nameW, lipgloss.NewStyle())
+	kind := styledTableCell(verifierType(v), layout.typeW, lipgloss.NewStyle())
 	if v.Disabled {
-		name = styleDisabled.Render(name)
-		kind = styleDisabled.Render(kind)
+		name = styledTableCell(v.Name, layout.nameW, styleDisabled)
+		kind = styledTableCell(verifierType(v), layout.typeW, styleDisabled)
 	}
 
-	prefix := fmt.Sprintf("%s%-3s %s %-3s %s ", cursor, label, name, v.Direction, kind)
-	status := renderStatusBadge(v)
-	if v.Running {
-		status = styleRunning.Render("running") + " " + renderDot(m.tick)
-	}
-	if !v.Disabled && !v.Running && len(v.History) > 1 {
-		status = renderSparkline(v.History) + " " + status
-	}
+	status := renderStatusCell(v, layout.statusW, m.tick)
 
-	available := maxWidth - lipgloss.Width(prefix) - lipgloss.Width(status) - 2
-	if available <= 0 {
-		return truncate(prefix+status, maxWidth)
-	}
-
-	config := metadataSummary(v)
-	configWidth := lipgloss.Width(config)
-	configW := available
-	if v.Reason != "" && available > 10 {
-		configW = available - 8
-		if configW < 8 {
-			configW = 8
+	row := cursor +
+		tableCell(label, layout.keyW) + listColumnGap +
+		name + listColumnGap +
+		tableCell(v.Direction, layout.dirW) + listColumnGap +
+		kind + listColumnGap +
+		status
+	if layout.reasonW > 0 {
+		reason := styledTableCell(v.Reason, layout.reasonW, styleReason)
+		if v.Disabled {
+			reason = styledTableCell(v.Reason, layout.reasonW, styleDisabled)
 		}
-		if configW > configWidth {
-			configW = configWidth
-		}
-		if configW > 80 {
-			configW = 80
-		}
-	} else if configW > 80 {
-		configW = 80
+		row += listColumnGap + reason
+	}
+	return truncate(row, maxWidth)
+}
+
+const (
+	listCursorPad = " "
+	listColumnGap = "  "
+)
+
+type listLayout struct {
+	keyW    int
+	nameW   int
+	dirW    int
+	typeW   int
+	statusW int
+	reasonW int
+}
+
+func listLayoutFor(maxWidth int) listLayout {
+	layout := listLayout{
+		keyW:    3,
+		nameW:   12,
+		dirW:    3,
+		typeW:   7,
+		statusW: 15,
+	}
+	fixed := lipgloss.Width(listCursorPad) +
+		layout.keyW + layout.nameW + layout.dirW + layout.typeW + layout.statusW +
+		5*lipgloss.Width(listColumnGap)
+	layout.reasonW = maxWidth - fixed
+	if layout.reasonW >= 3 {
+		return layout
 	}
 
-	configCell := padCell(truncate(config, configW), configW)
-	if v.Disabled {
-		configCell = styleDisabled.Render(configCell)
-	} else {
-		configCell = styleReason.Render(configCell)
+	need := 3 - layout.reasonW
+	if shrink := minInt(need, layout.nameW-4); shrink > 0 {
+		layout.nameW -= shrink
+		need -= shrink
 	}
+	if shrink := minInt(need, layout.statusW-6); shrink > 0 {
+		layout.statusW -= shrink
+		need -= shrink
+	}
+	layout.reasonW = 3 - need
+	if layout.reasonW < 0 {
+		layout.reasonW = 0
+	}
+	return layout
+}
 
-	head := prefix + configCell + "  " + status
-	if v.Reason == "" {
-		return truncate(head, maxWidth)
-	}
-	remaining := maxWidth - lipgloss.Width(head) - 2
-	if remaining <= 0 {
-		return truncate(head, maxWidth)
-	}
-	return head + "  " + styleReason.Render(truncate(v.Reason, remaining))
+func tableCell(s string, width int) string {
+	return padCell(truncateWithSuffix(s, width, "..."), width)
+}
+
+func styledTableCell(s string, width int, style lipgloss.Style) string {
+	return padCell(style.Render(truncateWithSuffix(s, width, "...")), width)
 }
 
 func verifierType(v ipc.VerifierStatus) string {
@@ -660,126 +865,37 @@ func verifierType(v ipc.VerifierStatus) string {
 	}
 }
 
-func metadataSummary(v ipc.VerifierStatus) string {
-	cfg := v.Config
-	parts := []string{}
-	if cfg.Source == "remote" {
-		parts = append(parts, styleRemoteBadge.Render("remote"))
-	}
-	switch verifierType(v) {
-	case "agent":
-		parts = append(parts,
-			"agent="+defaultSetting(cfg.Agent),
-			"model="+defaultSetting(cfg.Model),
-			"thinking="+defaultSetting(cfg.Thinking),
-		)
-	case "binary":
-		if len(cfg.Command) > 0 {
-			parts = append(parts, "cmd="+strings.Join(cfg.Command, " "))
-		}
-		if v.Status == ipc.StatusOK {
-			if v.Distance == 0 && cfg.PassReason != "" {
-				parts = append(parts, "pass="+cfg.PassReason)
-			}
-			if v.Distance > 0 && cfg.FailReason != "" {
-				parts = append(parts, "fail="+cfg.FailReason)
-			}
-		}
-	default:
-		if len(cfg.Command) > 0 {
-			parts = append(parts, "cmd="+strings.Join(cfg.Command, " "))
-		}
-	}
-	if cfg.Timeout != "" {
-		parts = append(parts, "timeout="+cfg.Timeout)
-	}
-	if perms := permissionsSummary(cfg.Permissions); perms != "" {
-		parts = append(parts, perms)
-	}
-	if v.LastUsage != nil && v.LastUsage.CostUSD > 0 {
-		parts = append(parts, styleCostBadge.Render(formatCost(v.LastUsage.CostUSD, v.LastUsage.InputTokens+v.LastUsage.OutputTokens)))
-	}
-	if len(parts) == 0 {
-		return "(no config fields)"
-	}
-	return strings.Join(parts, " ")
-}
-
-// permissionsSummary renders the advisory permissions block as a compact
-// chip, e.g. "fs=read-only net=off". Empty when the user did not declare
-// permissions — silence is informative (no opinion stated).
-func permissionsSummary(p ipc.VerifierPermissions) string {
-	parts := []string{}
-	if p.Filesystem != "" {
-		parts = append(parts, "fs="+p.Filesystem)
-	}
-	if p.Network {
-		parts = append(parts, "net=on")
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, " ")
-}
-
-// renderStatusBadge picks the right style for the verifier's outcome
+// renderStatusCell picks the right style for the verifier's outcome
 // state. Distinct rendering for ok/error/unknown/stale/disabled/pending
 // is the whole point of the Status enum — collapsing them onto a magic
 // distance value was the v0 footgun this fixes.
-func renderStatusBadge(v ipc.VerifierStatus) string {
+func renderStatusCell(v ipc.VerifierStatus, width, tick int) string {
+	if v.Running {
+		return styledTableCell("running "+plainDot(tick), width, styleRunning)
+	}
+	var text string
+	var style lipgloss.Style
 	switch {
 	case v.Disabled:
-		return styleDisabled.Render("off")
+		text = "off"
+		style = styleDisabled
 	case v.Status == ipc.StatusError:
-		return styleErrorBadge.Render("err  d=" + fmt.Sprintf("%.2f", v.Distance))
+		text = "err  d=" + fmt.Sprintf("%.2f", v.Distance)
+		style = styleErrorBadge
 	case v.Status == ipc.StatusUnknown:
-		return styleUnknownBadge.Render("?    d=" + fmt.Sprintf("%.2f", v.Distance))
+		text = "?    d=" + fmt.Sprintf("%.2f", v.Distance)
+		style = styleUnknownBadge
 	case v.Status == ipc.StatusStale:
-		return styleStaleBadge.Render("stale d=" + fmt.Sprintf("%.2f", v.Distance))
+		text = "stale d=" + fmt.Sprintf("%.2f", v.Distance)
+		style = styleStaleBadge
 	case v.Status == ipc.StatusPending:
-		return stylePendingBadge.Render("—   ")
+		text = "-"
+		style = stylePendingBadge
 	default:
-		return orbStyle(v.Distance).Render(fmt.Sprintf("d=%.2f", v.Distance))
+		text = fmt.Sprintf("d=%.2f", v.Distance)
+		style = orbStyle(v.Distance)
 	}
-}
-
-// renderSparkline draws a tiny inline trend of the last few distances.
-// Each block height encodes (1 - distance) so a verifier moving toward
-// the goal climbs visually. Status taints are merged into the colour.
-const sparklineWidth = 8
-
-var sparkBlocks = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
-
-func renderSparkline(history []ipc.HistoryPoint) string {
-	if len(history) == 0 {
-		return ""
-	}
-	pts := history
-	if len(pts) > sparklineWidth {
-		pts = pts[len(pts)-sparklineWidth:]
-	}
-	var b strings.Builder
-	for _, p := range pts {
-		// (1 - distance) so "near goal" => tall block, "far" => short.
-		level := 1.0 - p.Distance
-		if level < 0 {
-			level = 0
-		}
-		if level > 1 {
-			level = 1
-		}
-		idx := int(level * float64(len(sparkBlocks)-1))
-		ch := string(sparkBlocks[idx])
-		switch p.Status {
-		case ipc.StatusError:
-			b.WriteString(styleErrorBadge.Render(ch))
-		case ipc.StatusUnknown:
-			b.WriteString(styleUnknownBadge.Render(ch))
-		default:
-			b.WriteString(orbStyle(p.Distance).Render(ch))
-		}
-	}
-	return b.String()
+	return styledTableCell(text, width, style)
 }
 
 // formatCost renders a cost-and-tokens chip. Below $0.01 we show the raw
@@ -792,13 +908,6 @@ func formatCost(cost float64, tokens int) string {
 		return fmt.Sprintf("%d tok", tokens)
 	}
 	return ""
-}
-
-func defaultSetting(s string) string {
-	if s == "" {
-		return "default"
-	}
-	return s
 }
 
 func toggleLabel(i int) string {
@@ -820,12 +929,7 @@ const dotTrack = 5
 // renderDot renders a bracketed ping-pong spinner: a single "." bounces
 // across a dotTrack-wide field. Result is always "[" + dotTrack cells + "]".
 func renderDot(tick int) string {
-	period := (dotTrack - 1) * 2
-	phase := ((tick % period) + period) % period
-	pos := phase
-	if pos >= dotTrack {
-		pos = period - phase
-	}
+	pos := dotPosition(tick)
 	var sb strings.Builder
 	sb.WriteByte('[')
 	for i := 0; i < dotTrack; i++ {
@@ -839,24 +943,65 @@ func renderDot(tick int) string {
 	return sb.String()
 }
 
+func plainDot(tick int) string {
+	pos := dotPosition(tick)
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i := 0; i < dotTrack; i++ {
+		if i == pos {
+			sb.WriteByte('.')
+		} else {
+			sb.WriteByte(' ')
+		}
+	}
+	sb.WriteByte(']')
+	return sb.String()
+}
+
+func dotPosition(tick int) int {
+	period := (dotTrack - 1) * 2
+	phase := ((tick % period) + period) % period
+	pos := phase
+	if pos >= dotTrack {
+		pos = period - phase
+	}
+	return pos
+}
+
 func truncate(s string, n int) string {
+	return truncateWithSuffix(s, n, "…")
+}
+
+func truncateWithSuffix(s string, n int, suffix string) string {
 	if n <= 0 {
 		return ""
 	}
 	if lipgloss.Width(s) <= n {
 		return s
 	}
-	if n == 1 {
-		return "…"
+	suffixW := lipgloss.Width(suffix)
+	if suffixW >= n {
+		return truncateSuffix(suffix, n)
 	}
 	var b strings.Builder
 	for _, r := range s {
-		if lipgloss.Width(b.String()+string(r)+"…") > n {
+		if lipgloss.Width(b.String()+string(r)+suffix) > n {
 			break
 		}
 		b.WriteRune(r)
 	}
-	return b.String() + "…"
+	return b.String() + suffix
+}
+
+func truncateSuffix(suffix string, n int) string {
+	var b strings.Builder
+	for _, r := range suffix {
+		if lipgloss.Width(b.String()+string(r)) > n {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func padCell(s string, width int) string {
@@ -867,4 +1012,11 @@ func padCell(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", width-lipgloss.Width(s))
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

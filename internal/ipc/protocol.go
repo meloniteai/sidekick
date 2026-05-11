@@ -144,9 +144,9 @@ type VerifierStatus struct {
 }
 
 // HistoryPoint is one prior verifier result, kept in a small ring buffer per
-// verifier so the TUI can render a sparkline and agents can read trends via
-// hud_explain. Status is denormalised (pending/error rows are still kept so
-// the user sees flakiness, not just successful runs).
+// verifier so clients and agents can read trends via hud_explain. Status is
+// denormalised (pending/error rows are still kept so the user sees flakiness,
+// not just successful runs).
 type HistoryPoint struct {
 	Distance   float64   `json:"distance"`
 	Status     string    `json:"status,omitempty"`

@@ -1,6 +1,7 @@
 package hud
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -107,12 +108,12 @@ func TestRenderListTruncatesReasonToWidth(t *testing.T) {
 	if got := lipgloss.Width(out); got > width {
 		t.Fatalf("rendered line width = %d, want <= %d: %q", got, width, out)
 	}
-	if !strings.Contains(out, "…") {
+	if !strings.Contains(out, "...") {
 		t.Fatalf("expected truncated reason marker in %q", out)
 	}
 }
 
-func TestRenderListShowsVerifierMetadata(t *testing.T) {
+func TestRenderListOmitsVerifierConfigMetadata(t *testing.T) {
 	m := Model{
 		snapshot: ipc.StatusReply{
 			Verifiers: []ipc.VerifierStatus{
@@ -157,18 +158,21 @@ func TestRenderListShowsVerifierMetadata(t *testing.T) {
 	}
 	out := m.renderList(180)
 	for _, want := range []string{
-		"key", "verifier", "type", "config",
-		"agent", "agent=claude", "model=haiku", "thinking=low", "timeout=90s",
-		"binary", "cmd=./scripts/test.sh", "pass=tests pass",
-		"cmd=./scripts/lint.sh", "fail=lint failed",
+		"key", "verifier", "type", "status", "reason",
+		"agent", "binary", "d=0.10", "d=0.00", "d=1.00",
 	} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("metadata footer missing %q in:\n%s", want, out)
+			t.Fatalf("browser row missing %q in:\n%s", want, out)
 		}
 	}
-	for _, unwanted := range []string{"fail=tests failed", "pass=lint passed"} {
+	for _, unwanted := range []string{
+		"config",
+		"agent=claude", "model=haiku", "thinking=low", "timeout=90s",
+		"cmd=./scripts/test.sh", "pass=tests pass", "fail=tests failed",
+		"cmd=./scripts/lint.sh", "pass=lint passed", "fail=lint failed",
+	} {
 		if strings.Contains(out, unwanted) {
-			t.Fatalf("metadata footer unexpectedly contained %q in:\n%s", unwanted, out)
+			t.Fatalf("browser row unexpectedly contained config metadata %q in:\n%s", unwanted, out)
 		}
 	}
 }
@@ -202,7 +206,7 @@ func TestRenderListShowsBrowserActionsAndSelection(t *testing.T) {
 	}
 	out := m.renderList(180)
 	for _, want := range []string{
-		"key", "verifier", "dir", "type", "config",
+		"key", "verifier", "dir", "type", "status", "reason",
 		"keys:", "enter status", "space toggle", "r run one", "t all", "e edit", "1-9/0 toggle",
 		">", "[2]", "Test",
 	} {
@@ -213,6 +217,59 @@ func TestRenderListShowsBrowserActionsAndSelection(t *testing.T) {
 	firstLine := strings.SplitN(out, "\n", 2)[0]
 	if strings.Contains(firstLine, "sel") {
 		t.Fatalf("table header should not include selection column:\n%s", out)
+	}
+	if strings.Contains(firstLine, "config") {
+		t.Fatalf("table header should not include config column:\n%s", out)
+	}
+}
+
+func TestRenderListColumnsStayAlignedAndTruncated(t *testing.T) {
+	m := Model{
+		selectedVerifier: 1,
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{
+					Name:      "Ridiculously Long Verifier Name",
+					Direction: "NE",
+					Distance:  0.12,
+					Reason:    "first very long reason that should remain in the reason column",
+				},
+				{
+					Name:      "Tiny",
+					Direction: "S",
+					Distance:  1,
+					Status:    ipc.StatusError,
+					Reason:    "second very long reason that should also truncate cleanly",
+				},
+			},
+		},
+	}
+
+	const width = 76
+	lines := strings.Split(strings.TrimRight(m.renderList(width), "\n"), "\n")
+	if got := len(lines); got != 4 {
+		t.Fatalf("got %d lines, want 4:\n%s", got, strings.Join(lines, "\n"))
+	}
+	layout := listLayoutFor(width)
+	statusStart := lipgloss.Width(listCursorPad) + layout.keyW + layout.nameW + layout.dirW + layout.typeW + 4*lipgloss.Width(listColumnGap)
+	reasonStart := statusStart + layout.statusW + lipgloss.Width(listColumnGap)
+	for row, line := range lines[:3] {
+		if got := lipgloss.Width(line); got > width {
+			t.Fatalf("line %d width = %d, want <= %d: %q", row, got, width, line)
+		}
+		if lipgloss.Width(line) < reasonStart {
+			t.Fatalf("line %d too short to contain reason column at %d: %q", row, reasonStart, line)
+		}
+	}
+	for _, line := range lines[1:3] {
+		statusCol := visualSlice(line, statusStart, statusStart+layout.statusW)
+		reasonCol := visualSlice(line, reasonStart, width)
+		if strings.TrimSpace(statusCol) == "" {
+			t.Fatalf("status column empty in row %q", line)
+		}
+		if !strings.Contains(reasonCol, "...") {
+			t.Fatalf("reason column should be truncated with three dots; got %q in row %q", reasonCol, line)
+		}
 	}
 }
 
@@ -227,6 +284,150 @@ func TestRenderGridSkipsDisabledVerifier(t *testing.T) {
 	out := m.renderGrid(41, 21)
 	if strings.Contains(out, "architect") {
 		t.Fatalf("disabled verifier should not render on grid:\n%s", out)
+	}
+	if strings.ContainsRune(out, verifierMarkerGlyph(0)) {
+		t.Fatalf("disabled verifier marker should not render on grid:\n%s", out)
+	}
+}
+
+func TestVerifierMarkerGlyphsAreDistinctSingleCellShapes(t *testing.T) {
+	seen := map[rune]bool{}
+	for i := 0; i < 8; i++ {
+		glyph := verifierMarkerGlyph(i)
+		if seen[glyph] {
+			t.Fatalf("marker glyph %d repeats %q", i, glyph)
+		}
+		seen[glyph] = true
+		if got := lipgloss.Width(string(glyph)); got != 1 {
+			t.Fatalf("marker glyph %q has width %d, want 1", glyph, got)
+		}
+	}
+}
+
+func TestRenderGridSeparatesVerifierMarkerAndLabel(t *testing.T) {
+	m := Model{
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.8},
+			},
+		},
+	}
+	const width, height = 41, 21
+	col, row, ok := project("N", 0.8, width, height)
+	if !ok {
+		t.Fatal("project N failed")
+	}
+	out := m.renderGrid(width, height)
+	lines := strings.Split(out, "\n")
+	if got := len(lines); got != height {
+		t.Fatalf("line count = %d, want %d:\n%s", got, height, out)
+	}
+	markerLine := []rune(lines[row])
+	if markerLine[col] != verifierMarkerGlyph(0) {
+		t.Fatalf("marker at projected cell = %q, want %q\n%s", markerLine[col], verifierMarkerGlyph(0), out)
+	}
+	if strings.Contains(lines[row], "architect") {
+		t.Fatalf("label should be offset from marker row:\n%s", out)
+	}
+	if !strings.Contains(out, "architect") {
+		t.Fatalf("lowercase verifier label missing:\n%s", out)
+	}
+}
+
+func TestRenderGridUsesDistinctVerifierMarkers(t *testing.T) {
+	m := Model{
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.9},
+				{Name: "Test", Direction: "E", Distance: 0.9},
+				{Name: "Security", Direction: "S", Distance: 0.9},
+				{Name: "Deploy", Direction: "W", Distance: 0.9},
+				{Name: "Bench", Direction: "NE", Distance: 0.9},
+				{Name: "Lint", Direction: "NW", Distance: 0.9},
+				{Name: "Docs", Direction: "SE", Distance: 0.9},
+				{Name: "UX", Direction: "SW", Distance: 0.9},
+			},
+		},
+	}
+	out := m.renderGrid(61, 25)
+	for i := 0; i < 8; i++ {
+		glyph := verifierMarkerGlyph(i)
+		if !strings.ContainsRune(out, glyph) {
+			t.Fatalf("grid missing marker glyph %q for verifier %d:\n%s", glyph, i, out)
+		}
+	}
+}
+
+func TestRenderGridSmallLabelsStayInsideEdges(t *testing.T) {
+	m := Model{
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "zzzzzzzzzz", Direction: "E", Distance: 1},
+				{Name: "yyyyyyyyyy", Direction: "W", Distance: 1},
+			},
+		},
+	}
+	const width, height = 20, 9
+	out := m.renderGrid(width, height)
+	lines := strings.Split(out, "\n")
+	if got := len(lines); got != height {
+		t.Fatalf("line count = %d, want %d:\n%s", got, height, out)
+	}
+	for row, line := range lines {
+		if got := lipgloss.Width(line); got != width {
+			t.Fatalf("line %d width = %d, want %d: %q\n%s", row, got, width, line, out)
+		}
+		runes := []rune(line)
+		for _, edge := range []int{0, len(runes) - 1} {
+			switch runes[edge] {
+			case 'z', 'y', '…':
+				t.Fatalf("label clipped into edge at row %d col %d:\n%s", row, edge, out)
+			}
+		}
+	}
+	if strings.Contains(lines[0], "z") || strings.Contains(lines[height-1], "z") ||
+		strings.Contains(lines[0], "y") || strings.Contains(lines[height-1], "y") {
+		t.Fatalf("label clipped into wind-marker rows:\n%s", out)
+	}
+}
+
+func TestRenderGridDistanceRingsPreserveDimensions(t *testing.T) {
+	m := Model{}
+	const width, height = 31, 15
+	out := m.renderGrid(width, height)
+	lines := strings.Split(out, "\n")
+	if got := len(lines); got != height {
+		t.Fatalf("line count = %d, want %d:\n%s", got, height, out)
+	}
+	for row, line := range lines {
+		if got := lipgloss.Width(line); got != width {
+			t.Fatalf("line %d width = %d, want %d: %q\n%s", row, got, width, line, out)
+		}
+	}
+	axisDots := width + height - 1
+	if got := strings.Count(out, "·"); got <= axisDots {
+		t.Fatalf("expected ring fragments beyond axis dots, got %d axis baseline %d:\n%s", got, axisDots, out)
+	}
+}
+
+func TestDrawDistanceRingsUsesThinOutlines(t *testing.T) {
+	const width, height = 41, 21
+	cells := make([][]rune, height)
+	kinds := make([][]int, height)
+	for r := range cells {
+		cells[r] = make([]rune, width)
+		kinds[r] = make([]int, width)
+	}
+	drawDistanceRings(cells, kinds, width, height, width/2, height/2)
+	for r := 0; r < height-1; r++ {
+		for c := 0; c < width-1; c++ {
+			if kinds[r][c] == ringCell &&
+				kinds[r+1][c] == ringCell &&
+				kinds[r][c+1] == ringCell &&
+				kinds[r+1][c+1] == ringCell {
+				t.Fatalf("ring outline became a thick 2x2 band near row %d col %d", r, c)
+			}
+		}
 	}
 }
 
@@ -438,4 +639,30 @@ func TestTruncateUsesVisualWidth(t *testing.T) {
 	if !strings.HasSuffix(got, "…") {
 		t.Fatalf("expected ellipsis suffix in %q", got)
 	}
+}
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+func visualSlice(s string, start, end int) string {
+	s = ansiRE.ReplaceAllString(s, "")
+	if start < 0 {
+		start = 0
+	}
+	if end < start {
+		end = start
+	}
+	var b strings.Builder
+	pos := 0
+	for _, r := range s {
+		w := lipgloss.Width(string(r))
+		next := pos + w
+		if next > start && pos < end {
+			b.WriteRune(r)
+		}
+		pos = next
+		if pos >= end {
+			break
+		}
+	}
+	return b.String()
 }
