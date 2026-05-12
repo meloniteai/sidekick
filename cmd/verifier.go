@@ -177,25 +177,43 @@ func newVerifierAddCmd() *cobra.Command {
 		kind        string
 		yes         bool
 		permissions string
+		local       bool
 	)
 	cmd := &cobra.Command{
-		Use:   "add <url>",
-		Short: "Fetch a remote SKILL.md or verifier script, pin it by sha256, and register it in hud.yaml",
-		Long: `Add a remote verifier to hud.yaml.
+		Use:   "add [url]",
+		Short: "Register a verifier in hud.yaml — either a pinned remote URL or a local one via the interactive wizard",
+		Long: `Add a verifier to hud.yaml.
 
-` + "`hud verifier add`" + ` downloads the URL once, displays the first 20 lines of
-the content, prompts for confirmation, computes the sha256, and writes a
-new entry into hud.yaml that pins the artefact by hash. Subsequent loads
-of the verifier go through the on-disk cache; HUD refuses to use any
-content whose hash has drifted from the pin.
+Remote mode (default):
+` + "  `hud verifier add <url>`" + ` downloads the URL once, displays the first 20
+  lines of the content, prompts for confirmation, computes the sha256, and
+  writes a new entry into hud.yaml that pins the artefact by hash. Subsequent
+  loads of the verifier go through the on-disk cache; HUD refuses to use any
+  content whose hash has drifted from the pin.
 
-URLs are heuristically classified by extension and content:
-  *.md or first line "---" -> agent verifier (SKILL.md)
-  anything else            -> command verifier (executable script)
+  URLs are heuristically classified by extension and content:
+    *.md or first line "---" -> agent verifier (SKILL.md)
+    anything else            -> command verifier (executable script)
 
-Override the heuristic with --type {agent,command,binary}.`,
-		Args: cobra.ExactArgs(1),
+  Override the heuristic with --type {agent,command,binary}.
+
+Local mode:
+` + "  `hud verifier add --local`" + ` runs an interactive field-by-field wizard
+  that prompts for name, direction, type, command/skill path, timeout, and
+  optional advisory permissions, then writes the entry to hud.yaml without
+  any URL or sha256 pin. Pre-set --name/--direction/--type/--permissions
+  flags become the defaults the wizard suggests.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if local {
+				if len(args) > 0 {
+					return fmt.Errorf("--local takes no <url> argument")
+				}
+				return runLocalVerifierWizard(cmd, configPath, name, direction, kind, permissions, yes)
+			}
+			if len(args) == 0 {
+				return fmt.Errorf("provide a <url> to pin a remote verifier, or pass --local to create one interactively")
+			}
 			rawURL := args[0]
 			parsed, err := url.Parse(rawURL)
 			if err != nil || parsed.Scheme == "" {
@@ -287,6 +305,7 @@ Override the heuristic with --type {agent,command,binary}.`,
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the interactive confirmation prompt")
 	cmd.Flags().StringVar(&permissions, "permissions", "",
 		`advisory permissions, comma-separated. e.g. "fs=read-only,network=false" — surfaced in the TUI on first run.`)
+	cmd.Flags().BoolVar(&local, "local", false, "skip the URL fetch and create a local verifier interactively (no <url> argument)")
 	return cmd
 }
 

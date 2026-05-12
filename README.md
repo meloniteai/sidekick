@@ -47,6 +47,7 @@ the HUD re-evaluates, and the agent itself can read the result via the
 | `hud hook <event>` | Spawned by Claude Code or Codex hooks. Reads hook JSON on stdin, posts a normalized event to the daemon, exits. | one-shot |
 | `hud mcp` | Spawned by the agent client as an MCP server. Proxies `hud_status` / `hud_explain` to the daemon. | per agent session |
 | `hud verifier add <url>` | Fetches a remote SKILL.md or verifier script, pins it by sha256, and registers it in `hud.yaml`. | one-shot |
+| `hud verifier add --local` | Interactive wizard that walks through name, direction, type, command/skill, and timeout, then writes a local entry to `hud.yaml`. | one-shot |
 | `hud verifier trust ...` | Manages `~/.hud/trust.json` — the trust-on-first-use ledger for remote verifiers. | one-shot |
 | `hud verifier list` | Prints the verifiers configured in `hud.yaml` with source provenance. | one-shot |
 
@@ -282,6 +283,21 @@ hud verifier trust Performance
 See [`CONTRIBUTING-VERIFIERS.md`](CONTRIBUTING-VERIFIERS.md) for the
 full protocol and [`examples/community/`](examples/community/) for
 reference verifiers (docs-drift, lint, bench, migration-safety).
+
+## Local verifiers (interactive)
+
+For a verifier that lives entirely in your repo (no URL, no sha256 pin),
+use the wizard:
+
+```bash
+hud verifier add --local
+```
+
+It prompts field-by-field for name, compass direction, type (agent /
+command / binary), the per-type config (skill path or command argv),
+optional timeout, and optional advisory permissions, then appends the
+entry to `hud.yaml`. `--name`, `--direction`, `--type`, and
+`--permissions` flags pre-fill defaults if you already know them.
 
 ## Layout
 

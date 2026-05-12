@@ -460,6 +460,43 @@ func TestStatusWizardShowsFullVerifierStatus(t *testing.T) {
 	}
 }
 
+func TestViewWrapsVerifierBrowserInWhiteBorder(t *testing.T) {
+	m := Model{
+		width:  100,
+		height: 30,
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.1},
+				{Name: "Test", Direction: "E", Distance: 0.2},
+			},
+		},
+	}
+	out := m.View()
+
+	lines := strings.Split(out, "\n")
+	headerIdx := -1
+	for i, ln := range lines {
+		if strings.Contains(ln, "key") && strings.Contains(ln, "verifier") {
+			headerIdx = i
+			break
+		}
+	}
+	if headerIdx < 1 {
+		t.Fatalf("verifier browser header not found in:\n%s", out)
+	}
+	if !strings.Contains(lines[headerIdx-1], "╭") {
+		t.Fatalf("expected top border immediately above verifier browser header, got %q", lines[headerIdx-1])
+	}
+	if !strings.Contains(lines[len(lines)-1], "╰") {
+		t.Fatalf("expected bottom border on final line, got %q", lines[len(lines)-1])
+	}
+
+	want := lipgloss.NewStyle().BorderForeground(lipgloss.Color("15")).Border(lipgloss.RoundedBorder()).Render("")
+	if got := styleListBorder.Render(""); got != want {
+		t.Fatalf("styleListBorder must use a white rounded border: got %q want %q", got, want)
+	}
+}
+
 func TestViewFitsTerminalHeight(t *testing.T) {
 	m := Model{
 		width:  80,

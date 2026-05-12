@@ -28,6 +28,7 @@ var (
 	styleArrowInHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28"))
 	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("252"))
+	styleListBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("15"))
 	styleHeaderLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleSessionOn     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
 	styleWind          = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Bold(true)
@@ -144,7 +145,7 @@ func (m Model) View() string {
 			gridW = gridW - logW - 2
 		}
 	}
-	gridH := m.height - headerLines - 3 - listLines
+	gridH := m.height - headerLines - 2 - listLines
 	if gridH < 9 {
 		gridH = 9
 	}
@@ -164,8 +165,12 @@ func (m Model) View() string {
 	} else {
 		b.WriteString(compass)
 	}
-	b.WriteString("\n\n")
-	b.WriteString(m.renderList(m.width))
+	b.WriteString("\n")
+	listInnerW := m.width - styleListBorder.GetHorizontalFrameSize()
+	if listInnerW < 1 {
+		listInnerW = 1
+	}
+	b.WriteString(styleListBorder.Render(m.renderList(listInnerW)))
 	return b.String()
 }
 
@@ -581,10 +586,11 @@ func absInt(v int) int {
 }
 
 func (m Model) listLineCount() int {
+	border := styleListBorder.GetVerticalFrameSize()
 	if len(m.snapshot.Verifiers) == 0 {
-		return 3
+		return 3 + border
 	}
-	return len(m.snapshot.Verifiers) + 2
+	return len(m.snapshot.Verifiers) + 2 + border
 }
 
 func (m Model) renderList(maxWidth int) string {
