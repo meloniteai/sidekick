@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/yaml.v3"
 
@@ -74,6 +75,16 @@ type EditWizard struct {
 
 	width  int
 	height int
+
+	// huh-backed pickers for the two selection phases. nil outside those
+	// phases. The bound values are *string so the address stays stable
+	// across the value-receiver Update copies — a Select.Value pointer
+	// into an EditWizard field would dangle as soon as the caller stored
+	// the next EditWizard value at a different address.
+	selectForm      *huh.Form
+	selectValue     *string
+	createTypeForm  *huh.Form
+	createTypeValue *string
 }
 
 // NewEditWizard loads hud.yaml and starts at the verifier picker.
@@ -91,6 +102,7 @@ func NewEditWizard(configPath string) EditWizard {
 	w.configPath = path
 	w.configDir = filepath.Dir(path)
 	w.file = *f
+	w.startSelect()
 	return w
 }
 
@@ -165,26 +177,46 @@ func (w EditWizard) Update(msg tea.Msg) (EditWizard, tea.Cmd, bool) {
 }
 
 func (w EditWizard) updateSelect(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
-	switch key.String() {
-	case "q":
-		return w, nil, true
-	case "up", "k":
-		if w.cursor > 0 {
-			w.cursor--
-		}
-	case "down", "j":
-		if w.cursor < len(w.file.Verifiers)-1 {
-			w.cursor++
-		}
-	case "enter":
-		if len(w.file.Verifiers) == 0 {
+	if len(w.file.Verifiers) == 0 {
+		switch key.String() {
+		case "q":
+			return w, nil, true
+		case "enter":
 			w.errMsg = "no verifiers configured"
 			return w, nil, false
 		}
-		w.selected = w.cursor
-		w.startMetadata()
+		return w, nil, false
 	}
-	return w, nil, false
+	if key.String() == "q" {
+		return w, nil, true
+	}
+	if w.selectForm == nil {
+		w.startSelect()
+	}
+	// Map ctrl+s onto enter so power users can advance with the
+	// universal save shortcut just like the metadata/skill phases.
+	msg := tea.Msg(key)
+	if key.String() == "ctrl+s" {
+		msg = tea.KeyMsg{Type: tea.KeyEnter}
+	}
+	form, cmd := driveHuhForm(w.selectForm, msg)
+	w.selectForm = form
+	if form != nil && form.State == huh.StateCompleted {
+		chosen := ""
+		if w.selectValue != nil {
+			chosen = *w.selectValue
+		}
+		for i, v := range w.file.Verifiers {
+			if v.Name == chosen {
+				w.cursor = i
+				w.selected = i
+				break
+			}
+		}
+		w.startMetadata()
+		return w, nil, false
+	}
+	return w, cmd, false
 }
 
 func (w EditWizard) updateMetadata(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
@@ -243,20 +275,78 @@ func (w EditWizard) updateCreateBasics(key tea.KeyMsg) (EditWizard, tea.Cmd, boo
 }
 
 func (w EditWizard) updateCreateType(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
-	switch key.String() {
-	case "up", "k":
-		if w.cursor > 0 {
-			w.cursor--
-		}
-	case "down", "j":
-		if w.cursor < len(createVerifierTypes)-1 {
-			w.cursor++
-		}
-	case "enter", "ctrl+s":
-		w.createKind = createVerifierTypes[w.cursor].kind
-		w.startCreateConfig()
+	if w.createTypeForm == nil {
+		w.startCreateType()
 	}
-	return w, nil, false
+	msg := tea.Msg(key)
+	if key.String() == "ctrl+s" {
+		msg = tea.KeyMsg{Type: tea.KeyEnter}
+	}
+	form, cmd := driveHuhForm(w.createTypeForm, msg)
+	w.createTypeForm = form
+	if form != nil && form.State == huh.StateCompleted {
+		if w.createTypeValue != nil {
+			w.createKind = *w.createTypeValue
+		}
+		w.cursor = createTypeIndex(w.createKind)
+		w.startCreateConfig()
+		return w, nil, false
+	}
+	return w, cmd, false
+}
+
+// driveHuhForm sends msg to form and then synchronously drains any internal
+// commands the form returns (nextField, nextGroup, etc.) so single-message
+// transitions like "Enter on the last field → StateCompleted" land in one
+// Update call. Returns the updated form and the residual cmd from the final
+// iteration (typically nil).
+func driveHuhForm(form *huh.Form, msg tea.Msg) (*huh.Form, tea.Cmd) {
+	next, cmd := form.Update(msg)
+	current, _ := next.(*huh.Form)
+	if current == nil {
+		return form, cmd
+	}
+	for i := 0; cmd != nil && i < 16; i++ {
+		if current.State != huh.StateNormal {
+			break
+		}
+		msgs := flushTeaCmd(cmd)
+		cmd = nil
+		for _, m := range msgs {
+			if _, quit := m.(tea.QuitMsg); quit {
+				continue
+			}
+			nx, c := current.Update(m)
+			if f, ok := nx.(*huh.Form); ok {
+				current = f
+			}
+			if c != nil {
+				cmd = c
+			}
+		}
+	}
+	return current, cmd
+}
+
+// flushTeaCmd synchronously runs cmd and returns the messages it produces,
+// flattening any tea.BatchMsg into the resulting slice. Returns nil for a
+// nil cmd or a cmd that yields no message.
+func flushTeaCmd(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if msg == nil {
+		return nil
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, sub := range batch {
+			out = append(out, flushTeaCmd(sub)...)
+		}
+		return out
+	}
+	return []tea.Msg{msg}
 }
 
 func (w EditWizard) updateCreateConfig(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
@@ -307,10 +397,45 @@ func (w EditWizard) updateCreateSkill(key tea.KeyMsg) (EditWizard, tea.Cmd, bool
 	return w, nil, false
 }
 
+func (w *EditWizard) startSelect() {
+	w.phase = editSelect
+	w.errMsg = ""
+	w.message = ""
+	w.selectForm = nil
+	w.selectValue = nil
+	if len(w.file.Verifiers) == 0 {
+		return
+	}
+	if w.cursor < 0 || w.cursor >= len(w.file.Verifiers) {
+		w.cursor = 0
+	}
+	chosen := w.file.Verifiers[w.cursor].Name
+	w.selectValue = &chosen
+	opts := make([]huh.Option[string], len(w.file.Verifiers))
+	for i, v := range w.file.Verifiers {
+		kind := v.Type
+		if kind == "" {
+			kind = "command"
+		}
+		label := fmt.Sprintf("%-16s %-7s %-3s %s", v.Name, kind, strings.ToUpper(v.Direction), v.LLM.Skill)
+		opts[i] = huh.NewOption(strings.TrimRight(label, " "), v.Name)
+	}
+	field := huh.NewSelect[string]().
+		Title("Pick a verifier to edit").
+		Description("↑/↓ move · enter edit · esc abort").
+		Options(opts...).
+		Value(w.selectValue)
+	w.selectForm = huh.NewForm(huh.NewGroup(field)).
+		WithTheme(HuhTheme()).
+		WithShowHelp(false)
+	_ = w.selectForm.Init()
+}
+
 func (w *EditWizard) startMetadata() {
 	w.phase = editMetadata
 	w.errMsg = ""
 	w.message = ""
+	w.selectForm = nil
 	raw, err := yaml.Marshal(w.file.Verifiers[w.selected])
 	if err != nil {
 		w.errMsg = err.Error()
@@ -356,12 +481,31 @@ func (w *EditWizard) startCreateType() {
 	w.errMsg = ""
 	w.message = ""
 	w.cursor = createTypeIndex(w.createKind)
+	chosen := w.createKind
+	if chosen == "" {
+		chosen = createVerifierTypes[0].kind
+	}
+	w.createTypeValue = &chosen
+	opts := make([]huh.Option[string], len(createVerifierTypes))
+	for i, t := range createVerifierTypes {
+		opts[i] = huh.NewOption(fmt.Sprintf("%-8s %s", t.label, t.summary), t.kind)
+	}
+	field := huh.NewSelect[string]().
+		Title("Verifier type").
+		Description("↑/↓ move · enter continue · esc abort").
+		Options(opts...).
+		Value(w.createTypeValue)
+	w.createTypeForm = huh.NewForm(huh.NewGroup(field)).
+		WithTheme(HuhTheme()).
+		WithShowHelp(false)
+	_ = w.createTypeForm.Init()
 }
 
 func (w *EditWizard) startCreateConfig() {
 	w.phase = editCreateConfig
 	w.errMsg = ""
 	w.message = ""
+	w.createTypeForm = nil
 	w.draft.Type = w.createKind
 	w.text = newTextBuffer(defaultCreateConfig(w.createKind, w.draft.Name))
 }
@@ -681,39 +825,17 @@ func (w EditWizard) renderSelect(width int) string {
 	if len(w.file.Verifiers) == 0 {
 		return styleReason.Render("(no verifiers configured)")
 	}
-	var b strings.Builder
-	for i, v := range w.file.Verifiers {
-		cursor := "  "
-		if i == w.cursor {
-			cursor = styleEditCursor.Render("> ")
-		}
-		kind := v.Type
-		if kind == "" {
-			kind = "command"
-		}
-		line := fmt.Sprintf("%s%-16s %-7s %-3s %s", cursor, v.Name, kind, strings.ToUpper(v.Direction), v.LLM.Skill)
-		b.WriteString(truncate(line, width))
-		if i < len(w.file.Verifiers)-1 {
-			b.WriteByte('\n')
-		}
+	if w.selectForm == nil {
+		return ""
 	}
-	return b.String()
+	return w.selectForm.View()
 }
 
 func (w EditWizard) renderCreateTypes(width int) string {
-	var b strings.Builder
-	for i, t := range createVerifierTypes {
-		cursor := "  "
-		if i == w.cursor {
-			cursor = styleEditCursor.Render("> ")
-		}
-		line := fmt.Sprintf("%s%-8s %s", cursor, t.label, t.summary)
-		b.WriteString(truncate(line, width))
-		if i < len(createVerifierTypes)-1 {
-			b.WriteByte('\n')
-		}
+	if w.createTypeForm == nil {
+		return ""
 	}
-	return b.String()
+	return w.createTypeForm.View()
 }
 
 func (w EditWizard) renderEditor(width int) string {

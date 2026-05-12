@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
 	"github.com/uriahlevy/hud/internal/config"
@@ -171,25 +172,59 @@ func newStartCmd() *cobra.Command {
 }
 
 // runPicker shows the opt-in selection screen and returns the chosen
-// verifiers. Aborting the picker (q/ctrl+c) is treated as a clean exit.
+// verifiers. Aborting the picker (esc/ctrl+c) is treated as a clean exit.
 func runPicker(available []verifier.Verifier) ([]verifier.Verifier, error) {
-	picker := hudtui.NewPicker(available)
-	final, err := tea.NewProgram(picker, tea.WithAltScreen()).Run()
-	if err != nil {
+	selected := make([]string, len(available))
+	opts := make([]huh.Option[string], len(available))
+	for i, v := range available {
+		selected[i] = v.Name
+		label := fmt.Sprintf("%s  %s", v.Name, v.Direction)
+		opts[i] = huh.NewOption(label, v.Name).Selected(true)
+	}
+
+	field := huh.NewMultiSelect[string]().
+		Title("HUD — choose verifiers").
+		Description(fmt.Sprintf("pick at least %d. ↑/↓ move · space toggle · enter start · esc abort", hudtui.MinSelected)).
+		Options(opts...).
+		Value(&selected).
+		Validate(func(s []string) error {
+			if len(s) < hudtui.MinSelected {
+				return fmt.Errorf("select at least %d verifier (currently %d)", hudtui.MinSelected, len(s))
+			}
+			return nil
+		})
+
+	form := huh.NewForm(huh.NewGroup(field)).WithTheme(hudtui.HuhTheme())
+	if err := form.Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return nil, fmt.Errorf("aborted: no verifiers selected")
+		}
 		return nil, err
 	}
-	pm, ok := final.(hudtui.PickerModel)
-	if !ok {
-		return nil, fmt.Errorf("picker returned unexpected model type %T", final)
+
+	out := filterPickerSelection(available, selected)
+	if len(out) < hudtui.MinSelected {
+		return nil, fmt.Errorf("picker returned %d verifiers, need at least %d", len(out), hudtui.MinSelected)
 	}
-	if pm.Aborted() || !pm.Confirmed() {
-		return nil, fmt.Errorf("aborted: no verifiers selected")
+	return out, nil
+}
+
+// filterPickerSelection returns the verifiers from available whose name
+// appears in selectedNames, preserving the order of available (not the
+// order of selectedNames). Names in selectedNames that don't match any
+// verifier are silently dropped. Duplicate names are emitted once.
+func filterPickerSelection(available []verifier.Verifier, selectedNames []string) []verifier.Verifier {
+	keep := make(map[string]bool, len(selectedNames))
+	for _, n := range selectedNames {
+		keep[n] = true
 	}
-	sel := pm.Selection()
-	if len(sel) < hudtui.MinSelected {
-		return nil, fmt.Errorf("picker returned %d verifiers, need at least %d", len(sel), hudtui.MinSelected)
+	out := make([]verifier.Verifier, 0, len(selectedNames))
+	for _, v := range available {
+		if keep[v.Name] {
+			out = append(out, v)
+		}
 	}
-	return sel, nil
+	return out
 }
 
 func verifierNames(vs []verifier.Verifier) string {
