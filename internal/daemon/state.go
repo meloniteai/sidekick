@@ -232,6 +232,10 @@ func (s *State) Snapshot() ipc.StatusReply {
 			sum += v.Distance
 			enabled++
 		}
+		if v.Running && !v.Disabled {
+			out.AnyRunning = true
+			out.RunningVerifiers = append(out.RunningVerifiers, v.Name)
+		}
 	}
 	if enabled > 0 {
 		out.OverallDistance = sum / float64(enabled)

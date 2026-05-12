@@ -37,7 +37,12 @@ func Run(ctx context.Context, version string) error {
 					"Read the latest HUD verifier snapshot for the active session. " +
 						"Returns the goal and each verifier's compass direction, " +
 						"distance from goal (0=achieved, 1=far), and one-line reason. " +
-						"Read-only: never triggers verifier recomputation."),
+						"Read-only: never triggers verifier recomputation. " +
+						"When any_running is true (or running_verifiers is non-empty), " +
+						"one or more verifiers are still computing; the distance and " +
+						"reason fields reflect the previous run and may be stale. " +
+						"Wait a few seconds and call hud_status again to read fresh " +
+						"scores before acting on them."),
 			}, readOnly...)...,
 		),
 		statusHandler,
@@ -49,7 +54,10 @@ func Run(ctx context.Context, version string) error {
 				mcp.WithDescription(
 					"Read the detailed last-known state of a single HUD verifier by name. " +
 						"Use this when hud_status shows a high distance and you want the " +
-						"verifier's reason expanded for the agent's next decision."),
+						"verifier's reason expanded for the agent's next decision. " +
+						"If the returned running flag is true, the verifier is still " +
+						"computing and distance/reason reflect the previous run; wait " +
+						"a few seconds and re-query for fresh results."),
 				mcp.WithString("verifier",
 					mcp.Required(),
 					mcp.Description("Verifier name (e.g. \"Architect\", \"Test\", \"Security\")"),

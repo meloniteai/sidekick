@@ -17,6 +17,34 @@ func TestSnapshotOverallDistanceExcludesDisabledVerifiers(t *testing.T) {
 	}
 }
 
+func TestSnapshotSurfacesRunningVerifiers(t *testing.T) {
+	state := NewState()
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Idle", Distance: 0.3})
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Busy", Distance: 0.7, Running: true})
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "OffButRunning", Distance: 1.0, Running: true, Disabled: true})
+
+	snap := state.Snapshot()
+	if !snap.AnyRunning {
+		t.Fatal("any_running: got false, want true")
+	}
+	if got, want := snap.RunningVerifiers, []string{"Busy"}; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("running_verifiers: got %v, want %v", got, want)
+	}
+}
+
+func TestSnapshotNoRunningVerifiers(t *testing.T) {
+	state := NewState()
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Idle", Distance: 0.3})
+
+	snap := state.Snapshot()
+	if snap.AnyRunning {
+		t.Fatal("any_running: got true, want false")
+	}
+	if snap.RunningVerifiers != nil {
+		t.Fatalf("running_verifiers: got %v, want nil", snap.RunningVerifiers)
+	}
+}
+
 func TestToggleVerifierDisabledKeepsVerifierVisible(t *testing.T) {
 	state := NewState()
 	state.UpsertVerifier(ipc.VerifierStatus{Name: "Architect", Distance: 0.4, Reason: "ok", Running: true})

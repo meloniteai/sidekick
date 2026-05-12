@@ -194,13 +194,20 @@ type VerifierPermissions struct {
 }
 
 // StatusReply is returned by TypeStatus.
+//
+// AnyRunning and RunningVerifiers surface in-flight verifier work at the top
+// level so MCP agents can recognise that the displayed Distance/Reason fields
+// are stale and need to be re-read after a brief wait. The per-verifier
+// Running bool carries the same information row-by-row.
 type StatusReply struct {
-	Goal            string           `json:"goal"`
-	Verifiers       []VerifierStatus `json:"verifiers"`
-	OverallDistance float64          `json:"overall_distance"`
-	Version         string           `json:"version,omitempty"`
-	LastSocketAt    time.Time        `json:"last_socket_at"`
-	LastMCPAt       time.Time        `json:"last_mcp_at"`
+	Goal             string           `json:"goal"`
+	Verifiers        []VerifierStatus `json:"verifiers"`
+	OverallDistance  float64          `json:"overall_distance"`
+	AnyRunning       bool             `json:"any_running"`
+	RunningVerifiers []string         `json:"running_verifiers,omitempty"`
+	Version          string           `json:"version,omitempty"`
+	LastSocketAt     time.Time        `json:"last_socket_at"`
+	LastMCPAt        time.Time        `json:"last_mcp_at"`
 }
 
 // Send dials the daemon, writes one request, reads one response, and closes.
