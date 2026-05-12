@@ -16,10 +16,8 @@ import (
 var (
 	styleHeader        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	styleGrid          = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	styleGoal          = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
 	styleGoalDot       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	styleAxis          = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleRing          = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 	styleRunning       = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
 	styleVerifierLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("211")).Bold(true)
 	styleReason        = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
@@ -269,9 +267,11 @@ func (m Model) renderHeader(totalW int) string {
 
 	var rows []string
 
-	// Row 1 — identity + session indicator.
+	// Row 1 — identity + session indicator. The wordmark animates with the
+	// model tick so the user gets an immediate "this thing is alive" cue
+	// even before any verifier has reported.
 	rows = append(rows,
-		styleHeader.Render("HUD")+
+		flareBrand(m.tick, "HUD")+
 			"  "+styleHeaderLabel.Render("version: ")+ver+
 			"  "+styleHeaderLabel.Render("session: ")+styleSessionOn.Render("active"),
 	)
@@ -530,7 +530,14 @@ func (m Model) renderGrid(w, h int) string {
 			markerHere := false
 			for _, p := range placements {
 				if p.marker && p.col == c && p.row == r {
-					sb.WriteString(orbStyle(p.distance).Render(string(p.glyph)))
+					glyph := p.glyph
+					// Very-near-goal orbs occasionally twinkle into a sparkle
+					// glyph so the user perceives "convergence" without
+					// having to read the distance number.
+					if p.distance <= 0.08 && (m.tick/3)%2 == 0 {
+						glyph = sparkleGlyph(m.tick)
+					}
+					sb.WriteString(orbStyleFlare(p.distance, m.tick).Render(string(glyph)))
 					markerHere = true
 					break
 				}
@@ -539,7 +546,7 @@ func (m Model) renderGrid(w, h int) string {
 				continue
 			}
 			if c == cx && r == cy {
-				sb.WriteString(styleGoal.Render(goalGlyph))
+				sb.WriteString(pulseStyle(m.tick).Render(goalGlyphAt(m.tick)))
 				continue
 			}
 			if a, ok := arrows[[2]int{c, r}]; ok {
@@ -584,7 +591,7 @@ func (m Model) renderGrid(w, h int) string {
 			case axisCell:
 				sb.WriteString(styleAxis.Render("·"))
 			case ringCell:
-				sb.WriteString(styleRing.Render("·"))
+				sb.WriteString(ringSweepStyle(0, m.tick).Render("·"))
 			default:
 				sb.WriteRune(cells[r][c])
 			}
@@ -1016,7 +1023,11 @@ func verifierType(v ipc.VerifierStatus) string {
 // distance value was the v0 footgun this fixes.
 func renderStatusCell(v ipc.VerifierStatus, width, tick int) string {
 	if v.Running {
-		return styledTableCell("running "+plainDot(tick), width, styleRunning)
+		// Pair the legacy bracketed dot (kept so the layout & tests stay
+		// stable) with a braille spinner glyph for a richer "working"
+		// signal; the row's foreground hue glides through magenta/cyan.
+		text := string(brailleSpinner(tick)) + " run " + plainDot(tick)
+		return styledTableCell(text, width, runningGlow(tick))
 	}
 	var text string
 	var style lipgloss.Style
