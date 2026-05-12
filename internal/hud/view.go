@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/uriahlevy/hud/internal/daemon"
+	"github.com/uriahlevy/hud/internal/gitstats"
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
@@ -40,6 +41,10 @@ var (
 	stylePendingBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	styleRemoteBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	styleCostBadge     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	styleDiffAdded     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+	styleDiffRemoved   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	styleDiffBinary    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	styleGitBranch     = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 )
 
 // directionArrow points outward along each compass axis (away from goal toward
@@ -121,6 +126,7 @@ func (m Model) View() string {
 	header := m.renderHeader(m.width)
 	headerLines := strings.Count(header, "\n") + 1
 	listLines := m.listLineCount()
+	gitLines := m.gitPanelLineCount()
 
 	totalW := m.width - styleGrid.GetHorizontalFrameSize()
 	gridW := totalW
@@ -145,7 +151,7 @@ func (m Model) View() string {
 			gridW = gridW - logW - 2
 		}
 	}
-	gridH := m.height - headerLines - 2 - listLines
+	gridH := m.height - headerLines - 2 - listLines - gitLines
 	if gridH < 9 {
 		gridH = 9
 	}
@@ -159,6 +165,10 @@ func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n")
+	if m.showGitPanel {
+		b.WriteString(m.renderGitPanel(m.width))
+		b.WriteString("\n")
+	}
 	compass := styleGrid.Render(m.renderGrid(gridW, gridH))
 	if logW > 0 {
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, compass, "  ", m.renderEventLog(logW, gridH)))
@@ -172,6 +182,75 @@ func (m Model) View() string {
 	}
 	b.WriteString(styleListBorder.Render(m.renderList(listInnerW)))
 	return b.String()
+}
+
+// gitPanelLineCount returns the number of lines the per-file git panel
+// would render (including its border). Returns 0 when the panel is hidden
+// or there is nothing to show.
+func (m Model) gitPanelLineCount() int {
+	if !m.showGitPanel {
+		return 0
+	}
+	border := styleListBorder.GetVerticalFrameSize()
+	// Header line + at least one body line (we render "(no files yet)" when
+	// the file list is empty so the layout doesn't reflow on toggle).
+	bodyLines := len(m.workspace.Files)
+	if bodyLines == 0 {
+		bodyLines = 1
+	}
+	return border + 1 + bodyLines
+}
+
+// renderGitPanel draws the per-file workspace panel: each touched file with
+// +N -M counts. Rendered below the verifier browser when m.showGitPanel is
+// true. Width matches the verifier browser so the borders line up.
+func (m Model) renderGitPanel(maxWidth int) string {
+	innerW := maxWidth - styleListBorder.GetHorizontalFrameSize()
+	if innerW < 1 {
+		innerW = 1
+	}
+	header := styleHeader.Render("workspace files") + "  " +
+		styleHeaderLabel.Render(fmt.Sprintf("worktree=%s branch=%s",
+			defaultString(m.workspace.WorktreeName, "?"),
+			defaultString(m.workspace.Branch, "?"),
+		))
+	rows := []string{truncate(header, innerW)}
+	if len(m.workspace.Files) == 0 {
+		rows = append(rows, styleReason.Render(truncate("(no files edited yet this session)", innerW)))
+	} else {
+		// Column widths: keep +/-/binary chips narrow on the right; give the
+		// path everything that remains so long paths read naturally.
+		const countW = 6 // "+9999" / "-9999" — generous in practice
+		pathW := innerW - 2*countW - 2
+		if pathW < 8 {
+			pathW = 8
+		}
+		for _, f := range m.workspace.Files {
+			rows = append(rows, renderGitFileRow(f, pathW, countW))
+		}
+	}
+	return styleListBorder.Render(strings.Join(rows, "\n"))
+}
+
+func renderGitFileRow(f gitstats.FileStat, pathW, countW int) string {
+	path := truncate(f.Path, pathW)
+	path = padCell(path, pathW)
+	var added, removed string
+	if f.Binary {
+		added = styleDiffBinary.Render(padCell("bin", countW))
+		removed = styleDiffBinary.Render(padCell("", countW))
+	} else {
+		added = styleDiffAdded.Render(padCell(fmt.Sprintf("+%d", f.Added), countW))
+		removed = styleDiffRemoved.Render(padCell(fmt.Sprintf("-%d", f.Removed), countW))
+	}
+	return path + "  " + added + removed
+}
+
+func defaultString(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }
 
 // renderHeader builds the framed metadata box at the top of the screen. The
@@ -221,7 +300,14 @@ func (m Model) renderHeader(totalW int) string {
 			costSummary,
 	)
 
-	// Row 3 — goal summary, single line, truncated to fit.
+	// Row 3 — git workspace summary: worktree, branch, +added/-removed.
+	// Skipped when no git context has been detected (tests, demo runs) so
+	// the header doesn't gain a permanently empty row.
+	if git := m.renderGitHeaderRow(contentW); git != "" {
+		rows = append(rows, git)
+	}
+
+	// Goal summary, single line, truncated to fit.
 	goal := m.snapshot.Goal
 	goalRow := styleGoalLbl.Render("goal: ")
 	if goal == "" {
@@ -232,6 +318,59 @@ func (m Model) renderHeader(totalW int) string {
 	rows = append(rows, goalRow)
 
 	return styleHeaderBox.Width(styleW).Render(strings.Join(rows, "\n"))
+}
+
+// renderGitHeaderRow renders the single-line git summary always shown in
+// the header. Worktree and branch on the left; "+added -removed" diff
+// summary on the right. When there is no git context (running outside a
+// repo, no session base ref) it renders an em-dash placeholder so the
+// header height stays stable.
+func (m Model) renderGitHeaderRow(contentW int) string {
+	ws := m.workspace
+	if ws.WorktreeName == "" && ws.Branch == "" && len(ws.Files) == 0 {
+		// Render nothing rather than a dim placeholder; the caller drops
+		// the row entirely so the header doesn't lose vertical real estate
+		// outside a git repo (or in tests that don't populate workspace).
+		return ""
+	}
+	row := styleHeaderLabel.Render("git: ")
+	if ws.WorktreeName != "" {
+		row += ws.WorktreeName
+	}
+	if ws.Branch != "" {
+		if ws.WorktreeName != "" {
+			row += styleHeaderLabel.Render("/")
+		}
+		row += styleGitBranch.Render(ws.Branch)
+	}
+	row += "  " + renderDiffSummary(ws.TotalAdded, ws.TotalRemoved, len(ws.Files))
+	if m.showGitPanel {
+		row += "  " + styleHeaderLabel.Render("(g to collapse)")
+	} else if len(ws.Files) > 0 {
+		row += "  " + styleHeaderLabel.Render("(g to expand)")
+	}
+	return truncate(row, contentW)
+}
+
+// renderDiffSummary formats "+N -M" with the standard diff colors. When
+// nothing has changed yet we render a dim "no changes" hint so the header
+// still has stable width.
+func renderDiffSummary(added, removed, fileCount int) string {
+	if fileCount == 0 && added == 0 && removed == 0 {
+		return styleReason.Render("(no changes since session start)")
+	}
+	return styleDiffAdded.Render(fmt.Sprintf("+%d", added)) +
+		" " +
+		styleDiffRemoved.Render(fmt.Sprintf("-%d", removed)) +
+		"  " +
+		styleHeaderLabel.Render(fmt.Sprintf("%d file%s", fileCount, plural(fileCount)))
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // formatTimestamp renders a wall-clock HH:MM:SS for the header. Zero values
@@ -611,7 +750,7 @@ func (m Model) renderList(maxWidth int) string {
 }
 
 func (m Model) renderFooterHelp(maxWidth int) string {
-	text := "keys: up/down select | enter status | space toggle | r run one | t all | n new | e edit | l log | esc stop | q quit | 1-9/0 toggle"
+	text := "keys: up/down select | enter status | space toggle | r run one | t all | n new | e edit | l log | g git | esc stop | q quit | 1-9/0 toggle"
 	if m.footerNotice != "" && m.tick < m.footerNoticeUntil {
 		text = m.footerNotice
 	}

@@ -45,6 +45,35 @@ func TestSnapshotNoRunningVerifiers(t *testing.T) {
 	}
 }
 
+func TestRecordEditTracksUniqueFilesInOrder(t *testing.T) {
+	state := NewState()
+	state.RecordEdit("a.go")
+	state.RecordEdit("b.go")
+	state.RecordEdit("a.go") // duplicate
+	state.RecordEdit("")     // dropped
+	state.RecordEdit("c.go")
+	got := state.SessionEdits()
+	want := []string{"a.go", "b.go", "c.go"}
+	if len(got) != len(want) {
+		t.Fatalf("session edits: got %v, want %v", got, want)
+	}
+	for i, p := range want {
+		if got[i] != p {
+			t.Fatalf("session edits[%d]: got %q, want %q", i, got[i], p)
+		}
+	}
+}
+
+func TestSessionEditsReturnsCopy(t *testing.T) {
+	state := NewState()
+	state.RecordEdit("a.go")
+	got := state.SessionEdits()
+	got[0] = "mutated"
+	if again := state.SessionEdits(); again[0] != "a.go" {
+		t.Fatalf("mutating returned slice leaked into state: %v", again)
+	}
+}
+
 func TestToggleVerifierDisabledKeepsVerifierVisible(t *testing.T) {
 	state := NewState()
 	state.UpsertVerifier(ipc.VerifierStatus{Name: "Architect", Distance: 0.4, Reason: "ok", Running: true})

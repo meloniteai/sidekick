@@ -1,11 +1,13 @@
 package hud
 
 import (
+	"context"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/uriahlevy/hud/internal/daemon"
+	"github.com/uriahlevy/hud/internal/gitstats"
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
@@ -20,6 +22,11 @@ const arrowAnimFrames = 5
 // footerNoticeTicks controls how long transient footer feedback replaces the
 // key legend. At 133ms per tick this is roughly 1.6s.
 const footerNoticeTicks = 12
+
+// gitRefreshTicks controls how often we shell out to `git diff --numstat`
+// behind the workspace header. At 133ms per tick this is ~4s — fast enough
+// to feel live without spawning a git process every render frame.
+const gitRefreshTicks = 30
 
 type tickMsg time.Time
 
@@ -42,6 +49,7 @@ type Model struct {
 	snapshot          ipc.StatusReply
 	events            []daemon.EventEntry
 	showEventLog      bool
+	showGitPanel      bool
 	width             int
 	height            int
 	tick              int
@@ -60,6 +68,11 @@ type Model struct {
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
 	anims map[string]arrowAnim
+	// workspace caches the last gitstats fetch and the tick at which we
+	// performed it. gitstats.Fetch shells out to git and we don't want to
+	// do that on every render frame.
+	workspace        gitstats.Workspace
+	workspaceFetchAt int
 }
 
 // New returns an initialized Model.
@@ -141,6 +154,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.footerNoticeUntil = 0
 		}
 		m.refreshAnims()
+		m.refreshWorkspace()
 		return m, tick()
 	}
 	if m.status != nil {
@@ -221,6 +235,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "l":
 			m.showEventLog = !m.showEventLog
+		case "g":
+			m.showGitPanel = !m.showGitPanel
+			// Force a refresh on toggle so the user doesn't see stale data
+			// the first time they open the panel.
+			m.workspaceFetchAt = 0
+			m.refreshWorkspace()
 		default:
 			if idx, ok := toggleKeyIndex(msg.String()); ok && idx < len(m.snapshot.Verifiers) {
 				m.toggleVerifierByName(m.snapshot.Verifiers[idx].Name)
@@ -326,6 +346,25 @@ func toggleKeyIndex(key string) (int, bool) {
 
 func tick() tea.Cmd {
 	return tea.Tick(tickInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// refreshWorkspace refetches git workspace metadata when enough ticks have
+// passed since the last fetch. The first call after construction always
+// fetches (workspaceFetchAt == 0).
+func (m *Model) refreshWorkspace() {
+	if m.state == nil {
+		return
+	}
+	if m.workspaceFetchAt != 0 && m.tick-m.workspaceFetchAt < gitRefreshTicks {
+		return
+	}
+	m.workspace = gitstats.Fetch(context.Background(), m.state.SessionBaseRef(), m.state.SessionEdits())
+	m.workspaceFetchAt = m.tick
+	if m.workspaceFetchAt == 0 {
+		// Reserve 0 as the "never fetched" sentinel so the tick==0 case still
+		// triggers a refresh next time.
+		m.workspaceFetchAt = 1
+	}
 }
 
 // refreshAnims walks the latest snapshot and starts an animation whenever a

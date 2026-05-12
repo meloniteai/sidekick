@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/uriahlevy/hud/internal/gitstats"
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
@@ -654,6 +655,96 @@ func TestRenderHeaderFields(t *testing.T) {
 	}
 	if !strings.Contains(empty, "verifiers: 0") {
 		t.Errorf("empty header should report 0 verifiers; got:\n%s", empty)
+	}
+}
+
+func TestRenderHeaderShowsGitSummaryWhenWorkspacePresent(t *testing.T) {
+	m := Model{
+		width:  120,
+		height: 40,
+		workspace: gitstats.Workspace{
+			WorktreeName: "hud",
+			Branch:       "main",
+			TotalAdded:   42,
+			TotalRemoved: 7,
+			Files: []gitstats.FileStat{
+				{Path: "internal/foo.go", Added: 30, Removed: 5},
+				{Path: "internal/bar.go", Added: 12, Removed: 2},
+			},
+		},
+		snapshot: ipc.StatusReply{Goal: "ship the panel"},
+	}
+	out := m.renderHeader(120)
+	for _, want := range []string{"git: ", "hud", "main", "+42", "-7", "2 files", "(g to expand)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("git header missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderHeaderOmitsGitRowWhenWorkspaceEmpty(t *testing.T) {
+	m := Model{
+		width:    120,
+		height:   40,
+		snapshot: ipc.StatusReply{Goal: "no git context"},
+	}
+	out := m.renderHeader(120)
+	if strings.Contains(out, "git: ") {
+		t.Fatalf("empty workspace should suppress git row:\n%s", out)
+	}
+}
+
+func TestRenderGitPanelListsFilesWithCounts(t *testing.T) {
+	m := Model{
+		width:        140,
+		height:       40,
+		showGitPanel: true,
+		workspace: gitstats.Workspace{
+			WorktreeName: "hud",
+			Branch:       "feat/git-panel",
+			Files: []gitstats.FileStat{
+				{Path: "internal/foo.go", Added: 30, Removed: 5},
+				{Path: "assets/logo.png", Binary: true},
+				{Path: "internal/bar.go", Added: 0, Removed: 0},
+			},
+		},
+	}
+	out := m.renderGitPanel(140)
+	for _, want := range []string{
+		"workspace files", "worktree=hud", "branch=feat/git-panel",
+		"internal/foo.go", "+30", "-5",
+		"assets/logo.png", "bin",
+		"internal/bar.go",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("git panel missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestViewIncludesGitPanelOnlyWhenToggled(t *testing.T) {
+	m := Model{
+		width:  120,
+		height: 30,
+		workspace: gitstats.Workspace{
+			WorktreeName: "hud",
+			Branch:       "main",
+			Files: []gitstats.FileStat{
+				{Path: "internal/foo.go", Added: 1, Removed: 0},
+			},
+		},
+		snapshot: ipc.StatusReply{
+			Verifiers: []ipc.VerifierStatus{
+				{Name: "Architect", Direction: "N", Distance: 0.1},
+			},
+		},
+	}
+	if strings.Contains(m.View(), "workspace files") {
+		t.Fatalf("git panel should be hidden by default")
+	}
+	m.showGitPanel = true
+	if !strings.Contains(m.View(), "workspace files") {
+		t.Fatalf("git panel should appear after toggle:\n%s", m.View())
 	}
 }
 

@@ -33,6 +33,7 @@ func (h *runnerHandler) OnGoal(goal string) {
 	h.state.SetGoal(goal)
 }
 func (h *runnerHandler) OnWrite(file string) {
+	h.state.RecordEdit(file)
 	h.runner.Trigger(file)
 }
 

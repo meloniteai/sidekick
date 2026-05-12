@@ -43,11 +43,48 @@ type State struct {
 	lastSocketAt   time.Time
 	lastMCPAt      time.Time
 	events         []EventEntry
+	// sessionEdits is the set of file paths reported via OnWrite this
+	// session. Stored as insertion-ordered to keep the per-file panel
+	// rendering stable across renders.
+	sessionEdits      map[string]struct{}
+	sessionEditsOrder []string
 }
 
 // NewState returns a zeroed State.
 func NewState() *State {
-	return &State{verifiers: map[string]ipc.VerifierStatus{}}
+	return &State{
+		verifiers:    map[string]ipc.VerifierStatus{},
+		sessionEdits: map[string]struct{}{},
+	}
+}
+
+// RecordEdit registers a file path as touched in this session. Empty paths
+// are dropped (Codex hook payloads occasionally fire without a path); repeat
+// paths are de-duplicated.
+func (s *State) RecordEdit(file string) {
+	if file == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sessionEdits == nil {
+		s.sessionEdits = map[string]struct{}{}
+	}
+	if _, seen := s.sessionEdits[file]; seen {
+		return
+	}
+	s.sessionEdits[file] = struct{}{}
+	s.sessionEditsOrder = append(s.sessionEditsOrder, file)
+}
+
+// SessionEdits returns the insertion-ordered list of files seen via
+// RecordEdit. The slice is a copy; callers may mutate it freely.
+func (s *State) SessionEdits() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, len(s.sessionEditsOrder))
+	copy(out, s.sessionEditsOrder)
+	return out
 }
 
 // SetGoal replaces the active goal.

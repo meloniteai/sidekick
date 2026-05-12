@@ -26,6 +26,22 @@ func TestToggleKeyIndex(t *testing.T) {
 	}
 }
 
+func TestModelToggleGitPanelKey(t *testing.T) {
+	state := daemon.NewState()
+	m := New(state)
+	if m.showGitPanel {
+		t.Fatal("git panel should start hidden")
+	}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	if !next.(Model).showGitPanel {
+		t.Fatal("g should toggle git panel on")
+	}
+	after, _ := next.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	if after.(Model).showGitPanel {
+		t.Fatal("second g should toggle git panel off")
+	}
+}
+
 func TestModelToggleVerifierKey(t *testing.T) {
 	state := daemon.NewState()
 	state.UpsertVerifier(ipc.VerifierStatus{Name: "Architect", Direction: "N", Distance: 0.4})
