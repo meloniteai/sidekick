@@ -4,6 +4,7 @@ go 1.26.3
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
+	github.com/charmbracelet/harmonica v0.2.0
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/log v1.0.0

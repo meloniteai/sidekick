@@ -424,7 +424,10 @@ func (m Model) renderGrid(w, h int) string {
 		if v.Disabled {
 			continue
 		}
-		col, row, ok := project(v.Direction, v.Distance, w, h)
+		// Use the smoothed orb position so the marker glides across cells
+		// when distance/direction change. Labels still anchor to the marker's
+		// current cell so they ride along with the orb.
+		col, row, ok := m.orbPosition(v.Name, v.Direction, v.Distance, w, h)
 		if !ok {
 			continue
 		}

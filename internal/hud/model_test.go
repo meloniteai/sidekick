@@ -99,6 +99,41 @@ func TestModelFooterBrowserActionsUseSelectedVerifier(t *testing.T) {
 	}
 }
 
+func TestRefreshOrbsSnapsThenSpringsToNewTarget(t *testing.T) {
+	state := daemon.NewState()
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Tests", Direction: "E", Distance: 0.2})
+	m := New(state)
+
+	// First tick must snap to the target — reconnecting to a running daemon
+	// shouldn't paint a glide-from-center.
+	next, _ := m.Update(tickMsg{})
+	m = next.(Model)
+	got := m.orbs["Tests"]
+	if !got.armed {
+		t.Fatal("first observation should arm the spring")
+	}
+	if got.x != 0.2 || got.y != 0 {
+		t.Fatalf("first observation should snap to target; got (%v, %v) want (0.2, 0)", got.x, got.y)
+	}
+
+	// Now push the target outward; the spring should approach it over a few
+	// ticks without overshooting past 1.0.
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Tests", Direction: "E", Distance: 0.9})
+	prev := got.x
+	for i := 0; i < 6; i++ {
+		next, _ = m.Update(tickMsg{})
+		m = next.(Model)
+		cur := m.orbs["Tests"].x
+		if cur < prev {
+			t.Fatalf("spring should move outward on tick %d: prev=%v cur=%v", i, prev, cur)
+		}
+		prev = cur
+	}
+	if prev <= 0.5 {
+		t.Fatalf("spring should have meaningfully approached the new target after 6 ticks; got %v", prev)
+	}
+}
+
 func TestModelFooterNoticeExpires(t *testing.T) {
 	state := daemon.NewState()
 	state.UpsertVerifier(ipc.VerifierStatus{Name: "Test", Direction: "E", Distance: 0.5})

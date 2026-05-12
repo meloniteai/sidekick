@@ -32,13 +32,20 @@ func project(direction string, d float64, w, h int) (col, row int, ok bool) {
 	if d > 1 {
 		d = 1
 	}
+	col, row = projectFromAngle(θ, d, w, h)
+	return col, row, true
+}
+
+// projectXY returns terminal-cell coordinates for a verifier whose normalized
+// position is already expressed in Cartesian coords (x, y) ∈ [-1, 1]². Used
+// by the orb spring renderer, which interpolates in this space so that a
+// changing direction produces a curved glide rather than a jump.
+func projectXY(x, y float64, w, h int) (col, row int, ok bool) {
 	cx, cy := w/2, h/2
 	rx := float64(cx - 1)
 	ry := float64(cy - 1)
-	x := math.Cos(θ) * d * rx
-	y := -math.Sin(θ) * d * ry // negate: screen y grows downward
-	col = cx + int(math.Round(x))
-	row = cy + int(math.Round(y))
+	col = cx + int(math.Round(x*rx))
+	row = cy + int(math.Round(y*ry))
 	if col < 0 {
 		col = 0
 	}
@@ -52,4 +59,13 @@ func project(direction string, d float64, w, h int) (col, row int, ok bool) {
 		row = h - 1
 	}
 	return col, row, true
+}
+
+// projectFromAngle is the shared math between project and the orb spring's
+// target computation: given a polar (θ, d) in normalized space, returns the
+// rounded grid cell. Kept separate so callers needing the float-space target
+// for spring updates don't pay an int-round trip.
+func projectFromAngle(θ, d float64, w, h int) (col, row int) {
+	col, row, _ = projectXY(math.Cos(θ)*d, -math.Sin(θ)*d, w, h)
+	return col, row
 }

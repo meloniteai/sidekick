@@ -2,9 +2,11 @@ package hud
 
 import (
 	"context"
+	"math"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/harmonica"
 
 	"github.com/uriahlevy/hud/internal/daemon"
 	"github.com/uriahlevy/hud/internal/gitstats"
@@ -29,6 +31,18 @@ const footerNoticeTicks = 12
 const gitRefreshTicks = 30
 
 type tickMsg time.Time
+
+// orbSpring tracks a verifier orb's smoothed position in normalized
+// compass-plane coordinates. We spring on (x, y) ∈ [-1, 1]² rather than on
+// raw grid cells so the spring state is independent of window resizes, and
+// only project to integer cells at render time. Snap-without-spring on the
+// first observation of a verifier so reconnecting to a running daemon
+// doesn't paint a glide-from-center on the first frame.
+type orbSpring struct {
+	x, y   float64
+	vx, vy float64
+	armed  bool
+}
 
 // arrowAnim tracks a per-verifier compass-plane animation. Each time a
 // verifier's ComputedAt advances (i.e. a new computation cycle lands because
@@ -68,6 +82,10 @@ type Model struct {
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
 	anims map[string]arrowAnim
+	// orbs holds the spring-smoothed position of each verifier orb in
+	// normalized compass coordinates. Updated every tick by orbSpringCfg.
+	orbs         map[string]orbSpring
+	orbSpringCfg harmonica.Spring
 	// workspace caches the last gitstats fetch and the tick at which we
 	// performed it. gitstats.Fetch shells out to git and we don't want to
 	// do that on every render frame.
@@ -77,7 +95,17 @@ type Model struct {
 
 // New returns an initialized Model.
 func New(state *daemon.State) Model {
-	return Model{state: state, snapshot: state.Snapshot(), events: state.Events(), anims: map[string]arrowAnim{}}
+	return Model{
+		state:        state,
+		snapshot:     state.Snapshot(),
+		events:       state.Events(),
+		anims:        map[string]arrowAnim{},
+		orbs:         map[string]orbSpring{},
+		// Critically damped so the orb settles onto its target without
+		// bouncing past it — overshoot would briefly paint a misleading
+		// "further from goal than it actually is" distance reading.
+		orbSpringCfg: harmonica.NewSpring(tickInterval.Seconds(), 7.0, 1.0),
+	}
 }
 
 // WithManualTrigger sets a callback invoked when the user presses 't' on the
@@ -154,6 +182,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.footerNoticeUntil = 0
 		}
 		m.refreshAnims()
+		m.refreshOrbs()
 		m.refreshWorkspace()
 		return m, tick()
 	}
@@ -392,6 +421,69 @@ func (m *Model) refreshAnims() {
 			inward:       v.Distance < a.lastDistance,
 		}
 	}
+}
+
+// refreshOrbs advances the per-verifier position springs toward each orb's
+// projected target in normalized compass coordinates. Direction+distance are
+// converted to (x, y) ∈ [-1, 1]²; the spring then eases the rendered position
+// toward that target over a handful of ticks.
+//
+// On first observation we snap to the target without springing — that way a
+// fresh TUI attached to an already-running daemon doesn't paint a glide-in
+// from the center for every verifier.
+//
+// Disabled verifiers are skipped entirely (renderGrid won't draw them); we do
+// not reset their spring state, so re-enabling them resumes from where they
+// left off rather than jumping back to center.
+func (m *Model) refreshOrbs() {
+	if m.orbs == nil {
+		m.orbs = make(map[string]orbSpring, len(m.snapshot.Verifiers))
+	}
+	for _, v := range m.snapshot.Verifiers {
+		if v.Disabled {
+			continue
+		}
+		tx, ty, ok := orbTargetXY(v.Direction, v.Distance)
+		if !ok {
+			continue
+		}
+		o, seen := m.orbs[v.Name]
+		if !seen || !o.armed {
+			m.orbs[v.Name] = orbSpring{x: tx, y: ty, armed: true}
+			continue
+		}
+		o.x, o.vx = m.orbSpringCfg.Update(o.x, o.vx, tx)
+		o.y, o.vy = m.orbSpringCfg.Update(o.y, o.vy, ty)
+		m.orbs[v.Name] = o
+	}
+}
+
+// orbTargetXY converts a (direction, distance) pair to the normalized
+// compass-plane target used by the orb springs. Returns ok=false for an
+// unknown direction string. The y axis is screen-down to match grid coords.
+func orbTargetXY(direction string, distance float64) (x, y float64, ok bool) {
+	θ, ok := directionAngle[direction]
+	if !ok {
+		return 0, 0, false
+	}
+	if distance < 0 {
+		distance = 0
+	}
+	if distance > 1 {
+		distance = 1
+	}
+	return math.Cos(θ) * distance, -math.Sin(θ) * distance, true
+}
+
+// orbPosition returns the smoothed (col, row) for a verifier on a grid of the
+// given size. Falls back to the canonical project() call when no spring state
+// exists yet so callers (e.g. tests) that never tick still render sensibly.
+func (m Model) orbPosition(name, direction string, distance float64, w, h int) (col, row int, ok bool) {
+	o, seen := m.orbs[name]
+	if !seen || !o.armed {
+		return project(direction, distance, w, h)
+	}
+	return projectXY(o.x, o.y, w, h)
 }
 
 // calibPeriod is the total ping-pong cycle length (out + back) for the
