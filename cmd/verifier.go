@@ -29,7 +29,69 @@ func newVerifierCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newVerifierAddCmd())
 	cmd.AddCommand(newVerifierListCmd())
+	cmd.AddCommand(newVerifierRemoveCmd())
 	cmd.AddCommand(newVerifierTrustCmd())
+	return cmd
+}
+
+func newVerifierRemoveCmd() *cobra.Command {
+	var (
+		configPath string
+		yes        bool
+	)
+	cmd := &cobra.Command{
+		Use:     "remove <name>",
+		Aliases: []string{"rm", "delete"},
+		Short:   "Delete a verifier from hud.yaml by name",
+		Long: `Remove a verifier entry from hud.yaml. Matching is case-insensitive.
+
+  hud verifier remove MyVerifier            prompts before deleting
+  hud verifier remove MyVerifier --yes      skip the confirmation prompt
+
+The verifier's source files on disk (skill, script) are left untouched —
+this command only edits hud.yaml. Trust approvals in ~/.hud/trust.json
+are also untouched, so re-adding the same artefact won't re-prompt.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := args[0]
+			f, path, err := config.Load(configPath)
+			if err != nil {
+				return fmt.Errorf("load hud.yaml: %w", err)
+			}
+			idx := -1
+			for i, v := range f.Verifiers {
+				if strings.EqualFold(v.Name, target) {
+					idx = i
+					break
+				}
+			}
+			if idx == -1 {
+				return fmt.Errorf("verifier %q not found in %s", target, path)
+			}
+			vs := f.Verifiers[idx]
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Removing %q [%s, %s] from %s\n", vs.Name, displayType(vs.Type), vs.Direction, path)
+			if vs.Source != nil && vs.Source.URL != "" {
+				fmt.Fprintf(out, "  source: %s\n", vs.Source.URL)
+			}
+
+			if !yes {
+				if !confirmYN(bufio.NewReader(cmd.InOrStdin()), out, fmt.Sprintf("Delete verifier %q?", vs.Name)) {
+					return errors.New("aborted")
+				}
+			}
+
+			f.Verifiers = append(f.Verifiers[:idx], f.Verifiers[idx+1:]...)
+			if err := config.Save(path, f); err != nil {
+				return fmt.Errorf("save %s: %w", path, err)
+			}
+			fmt.Fprintf(out, "Removed %q from %s.\n", vs.Name, path)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
 	return cmd
 }
 
