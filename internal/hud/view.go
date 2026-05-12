@@ -818,11 +818,50 @@ func (m Model) renderEventLog(width, contentH int) string {
 }
 
 // renderEventRow wraps the message across multiple rows up to maxLines.
-// Continuation lines are indented under the prefix; an overrun ends in "…".
+// The styled "HH:MM:SS LVL message" line is produced by charmbracelet/log
+// when the entry is created; this function only handles visual wrapping and
+// continuation indent. Older or test-constructed entries without a Rendered
+// payload fall back to the manual badge layout so callers don't have to go
+// through State to make a presentable row.
 func renderEventRow(e daemon.EventEntry, width, maxLines int) []string {
 	if maxLines <= 0 {
 		return nil
 	}
+	if e.Rendered == "" {
+		return renderEventRowFallback(e, width, maxLines)
+	}
+
+	// charm/log's TextFormatter always emits "HH:MM:SS LVL …" with single
+	// spaces; that's 13 visible chars before the message column. Indenting
+	// continuations under the message keeps multi-line entries readable on a
+	// narrow panel without re-parsing the ANSI-escaped line.
+	const prefixW = 13
+	msgW := width - prefixW
+	if msgW < 4 {
+		// Panel is too narrow for an indented body — just clip the styled
+		// line and let the user widen the terminal to see more.
+		return []string{padCell(ellipsisTail(e.Rendered, width), width)}
+	}
+
+	lines := wrapVisualLines(e.Rendered, width)
+	if len(lines) == 0 {
+		return nil
+	}
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines[len(lines)-1] = ellipsisTail(strings.TrimRight(lines[len(lines)-1], " "), width)
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, padCell(line, width))
+	}
+	return out
+}
+
+// renderEventRowFallback is the pre-charmlog rendering path. It exists so
+// EventEntry values constructed by hand (e.g. unit tests, or any future
+// non-Logger writer) still display correctly.
+func renderEventRowFallback(e daemon.EventEntry, width, maxLines int) []string {
 	ts := e.At.Format("15:04:05")
 	var level string
 	switch e.Level {

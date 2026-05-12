@@ -3,9 +3,13 @@ package daemon
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	charmlog "github.com/charmbracelet/log"
+	"github.com/muesli/termenv"
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
@@ -20,10 +24,15 @@ const (
 
 // EventEntry is one row in the event log surfaced by the TUI's toggleable
 // log panel. Stored in-memory only; persistence is out of scope for now.
+//
+// Rendered holds the pre-styled single-line representation produced by the
+// charmbracelet/log logger that owns this entry. The TUI consumes Rendered
+// directly so it doesn't have to re-derive timestamps and level badges.
 type EventEntry struct {
-	At    time.Time
-	Level EventLevel
-	Msg   string
+	At       time.Time
+	Level    EventLevel
+	Msg      string
+	Rendered string
 }
 
 // eventBufferCap bounds the per-session log so a long-running daemon does
@@ -48,14 +57,37 @@ type State struct {
 	// rendering stable across renders.
 	sessionEdits      map[string]struct{}
 	sessionEditsOrder []string
+
+	logger     *charmlog.Logger
+	logSink    *eventLogSink
+	pending    EventEntry
+	hasPending bool
 }
 
 // NewState returns a zeroed State.
 func NewState() *State {
-	return &State{
+	s := &State{
 		verifiers:    map[string]ipc.VerifierStatus{},
 		sessionEdits: map[string]struct{}{},
 	}
+	s.logSink = &eventLogSink{state: s}
+	s.logger = charmlog.NewWithOptions(s.logSink, charmlog.Options{
+		ReportTimestamp: true,
+		TimeFormat:      "15:04:05",
+	})
+	// charm/log probes the writer for tty support to decide whether to emit
+	// ANSI escapes. Our sink is a plain io.Writer, so without this override
+	// the rendered lines would arrive at the TUI as bare text.
+	s.logger.SetColorProfile(termenv.TrueColor)
+	s.logger.SetStyles(eventLogStyles())
+	return s
+}
+
+// Logger exposes the charmbracelet/log instance backing the event log so
+// callers can attach structured fields (logger.With(...)). LogEvent remains
+// the convenient API for the common printf-style cases.
+func (s *State) Logger() *charmlog.Logger {
+	return s.logger
 }
 
 // RecordEdit registers a file path as touched in this session. Empty paths
@@ -291,15 +323,74 @@ func (s *State) Verifier(name string) (ipc.VerifierStatus, bool) {
 // LogEvent appends a timestamped entry to the in-memory event log. Callsites
 // that previously wrote to os.Stderr during the TUI session use this so the
 // alt-screen isn't corrupted by stray writes; the TUI's `l` panel renders
-// the buffer instead.
+// the buffer instead. The line that lands in the ring buffer is the same one
+// the charm/log formatter would emit to a terminal — colour escapes and all
+// — so the renderer can drop it straight onto the screen.
 func (s *State) LogEvent(level EventLevel, format string, args ...any) {
-	entry := EventEntry{At: time.Now(), Level: level, Msg: fmt.Sprintf(format, args...)}
+	msg := fmt.Sprintf(format, args...)
 	s.mu.Lock()
-	s.events = append(s.events, entry)
-	if len(s.events) > eventBufferCap {
-		s.events = s.events[len(s.events)-eventBufferCap:]
-	}
+	s.pending = EventEntry{At: time.Now(), Level: level, Msg: msg}
+	s.hasPending = true
 	s.mu.Unlock()
+	switch level {
+	case EventError:
+		s.logger.Error(msg)
+	default:
+		s.logger.Info(msg)
+	}
+}
+
+// eventLogSink turns each charm/log line into an EventEntry in the ring
+// buffer. The "raw" portion of the entry (At, Level, Msg) is captured by
+// LogEvent just before invoking the logger; Write fills in Rendered and
+// commits the entry. This keeps level/timestamp data consistent between the
+// styled line shown in the side panel and any future structured consumers.
+type eventLogSink struct {
+	state *State
+}
+
+func (w *eventLogSink) Write(p []byte) (int, error) {
+	line := string(p)
+	// charm/log emits a trailing newline; strip it so the rendered text fits
+	// on a single panel row before our wrapper splits it.
+	line = strings.TrimRight(line, "\n")
+	w.state.mu.Lock()
+	entry := w.state.pending
+	if !w.state.hasPending {
+		// Defensive: a stray write outside LogEvent (e.g. logger.Print) still
+		// gets stored so it isn't silently dropped.
+		entry = EventEntry{At: time.Now(), Level: EventInfo, Msg: line}
+	}
+	entry.Rendered = line
+	w.state.events = append(w.state.events, entry)
+	if len(w.state.events) > eventBufferCap {
+		w.state.events = w.state.events[len(w.state.events)-eventBufferCap:]
+	}
+	w.state.pending = EventEntry{}
+	w.state.hasPending = false
+	w.state.mu.Unlock()
+	return len(p), nil
+}
+
+// eventLogStyles tints charm/log's level + timestamp output to match the
+// rest of the HUD palette (dim grey timestamp, cyan INF, red ERR). The level
+// labels are squashed to three characters so they line up with the historical
+// INF/ERR badges already familiar to users.
+func eventLogStyles() *charmlog.Styles {
+	s := charmlog.DefaultStyles()
+	s.Timestamp = s.Timestamp.Foreground(lipgloss.Color("245"))
+	s.Levels[charmlog.InfoLevel] = s.Levels[charmlog.InfoLevel].
+		SetString("INF").
+		Foreground(lipgloss.Color("39")).
+		Bold(false)
+	s.Levels[charmlog.ErrorLevel] = s.Levels[charmlog.ErrorLevel].
+		SetString("ERR").
+		Foreground(lipgloss.Color("9")).
+		Bold(true)
+	s.Levels[charmlog.WarnLevel] = s.Levels[charmlog.WarnLevel].SetString("WRN")
+	s.Levels[charmlog.DebugLevel] = s.Levels[charmlog.DebugLevel].SetString("DBG")
+	s.Levels[charmlog.FatalLevel] = s.Levels[charmlog.FatalLevel].SetString("FAT")
+	return s
 }
 
 // Events returns a copy of the event log buffer in arrival order.
