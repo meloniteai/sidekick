@@ -6,10 +6,6 @@ import (
 	hudmcp "github.com/uriahlevy/hud/internal/mcp"
 )
 
-// version is stamped at build time; default keeps `go run` working. Surfaced
-// in the TUI header and reported by `hud mcp` to the MCP client.
-var version = "dev"
-
 func newMcpCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "mcp",
