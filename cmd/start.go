@@ -83,7 +83,7 @@ func newStartCmd() *cobra.Command {
 
 			verifiers := available
 			if !headless {
-				selected, err := runPicker(available)
+				selected, err := runLanding(available, version, sock)
 				if err != nil {
 					return err
 				}
@@ -211,66 +211,32 @@ func acquireDaemonSocket(sock string, state *daemon.State, handler daemon.EventH
 	return daemon.Listen(sock, state, handler)
 }
 
-// runPicker shows the opt-in selection screen and returns the chosen
-// verifiers. Aborting the picker (esc/ctrl+c) is treated as a clean exit.
-func runPicker(available []verifier.Verifier) ([]verifier.Verifier, error) {
-	selected := make([]string, len(available))
-	opts := make([]huh.Option[string], len(available))
-	nameWidth := 0
-	for _, v := range available {
-		if n := len(v.Name); n > nameWidth {
-			nameWidth = n
-		}
-	}
-	for i, v := range available {
-		selected[i] = v.Name
-		label := fmt.Sprintf("%-*s  %s", nameWidth, v.Name, v.Direction)
-		opts[i] = huh.NewOption(label, v.Name).Selected(true)
-	}
-
-	field := huh.NewMultiSelect[string]().
-		Title("HUD — choose verifiers").
-		Description(fmt.Sprintf("pick at least %d. ↑/↓ move · space toggle · enter start · esc abort", hudtui.MinSelected)).
-		Options(opts...).
-		Value(&selected).
-		Validate(func(s []string) error {
-			if len(s) < hudtui.MinSelected {
-				return fmt.Errorf("select at least %d verifier (currently %d)", hudtui.MinSelected, len(s))
-			}
-			return nil
-		})
-
-	form := huh.NewForm(huh.NewGroup(field)).WithTheme(hudtui.HuhTheme())
-	if err := form.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return nil, fmt.Errorf("aborted: no verifiers selected")
-		}
+// runLanding shows the start-of-session landing screen (HUD wordmark, version,
+// session socket, verifier multi-select) and returns the chosen subset.
+// Aborting with esc/ctrl+c is reported as a clean shutdown so the user sees
+// the same "aborted: no verifiers selected" message they used to get from the
+// huh picker. The landing screen itself lives in internal/hud so the visual
+// styling stays adjacent to the command palette it mirrors.
+func runLanding(available []verifier.Verifier, version, socketPath string) ([]verifier.Verifier, error) {
+	cwd, _ := os.Getwd()
+	model := hudtui.NewLanding(available, version, socketPath, cwd)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	final, err := p.Run()
+	if err != nil {
 		return nil, err
 	}
-
-	out := filterPickerSelection(available, selected)
+	landing, ok := final.(hudtui.Landing)
+	if !ok {
+		return nil, fmt.Errorf("landing screen returned unexpected model %T", final)
+	}
+	if landing.Aborted() || !landing.Confirmed() {
+		return nil, fmt.Errorf("aborted: no verifiers selected")
+	}
+	out := landing.Selection()
 	if len(out) < hudtui.MinSelected {
-		return nil, fmt.Errorf("picker returned %d verifiers, need at least %d", len(out), hudtui.MinSelected)
+		return nil, fmt.Errorf("landing returned %d verifiers, need at least %d", len(out), hudtui.MinSelected)
 	}
 	return out, nil
-}
-
-// filterPickerSelection returns the verifiers from available whose name
-// appears in selectedNames, preserving the order of available (not the
-// order of selectedNames). Names in selectedNames that don't match any
-// verifier are silently dropped. Duplicate names are emitted once.
-func filterPickerSelection(available []verifier.Verifier, selectedNames []string) []verifier.Verifier {
-	keep := make(map[string]bool, len(selectedNames))
-	for _, n := range selectedNames {
-		keep[n] = true
-	}
-	out := make([]verifier.Verifier, 0, len(selectedNames))
-	for _, v := range available {
-		if keep[v.Name] {
-			out = append(out, v)
-		}
-	}
-	return out
 }
 
 func verifierNames(vs []verifier.Verifier) string {
