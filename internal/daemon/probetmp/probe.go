@@ -13,8 +13,8 @@ import (
 
 type noopHandler struct{}
 
-func (noopHandler) OnWrite(string) {}
-func (noopHandler) OnGoal(string)  {}
+func (noopHandler) OnWrite(string)        {}
+func (noopHandler) OnGoal(_, _, _ string) {}
 
 func main() {
 	dir, err := os.MkdirTemp("", "hud-probe-*")

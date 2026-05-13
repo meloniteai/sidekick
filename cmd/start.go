@@ -30,8 +30,18 @@ type runnerHandler struct {
 	runner *verifier.Runner
 }
 
-func (h *runnerHandler) OnGoal(goal string) {
+func (h *runnerHandler) OnGoal(goal, worktree, baseRef string) {
 	h.state.SetGoal(goal)
+	// Re-anchor whenever the caller (typically the MCP server running as a
+	// child of the agent) tells us its perspective. Empty fields leave the
+	// existing anchor untouched so the bootstrap default from `hud start`
+	// keeps working until the first MCP set-goal arrives.
+	if worktree != "" {
+		h.state.SetSessionWorktree(worktree)
+	}
+	if baseRef != "" {
+		h.state.SetSessionBaseRef(baseRef)
+	}
 }
 func (h *runnerHandler) OnWrite(file string) {
 	h.state.RecordEdit(file)
@@ -65,11 +75,12 @@ func newStartCmd() *cobra.Command {
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			baseRef, err := captureSessionBaseRef()
+			baseRef, worktree, err := captureSessionAnchor()
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "[hud] session base ref: %s\n", baseRef)
+			fmt.Fprintf(os.Stderr, "[hud] session worktree: %s\n", worktree)
 
 			available, quietPeriod, source, loadedConfigPath, err := loadVerifiers(configPath)
 			if err != nil {
@@ -93,6 +104,7 @@ func newStartCmd() *cobra.Command {
 
 			state := daemon.NewState()
 			state.SetSessionBaseRef(baseRef)
+			state.SetSessionWorktree(worktree)
 			state.SetVersion(version)
 			runner := verifier.NewRunner(ctx, state, verifiers)
 			runner.SetQuietPeriod(quietPeriod)
@@ -281,33 +293,47 @@ func verifierNames(vs []verifier.Verifier) string {
 	return strings.Join(names, ", ")
 }
 
-// captureSessionBaseRef snapshots the current `git rev-parse HEAD` so
-// LLM-backed verifiers can diff cumulative session work against it.
+// captureSessionAnchor snapshots both the current `git rev-parse HEAD`
+// and the git toplevel so LLM-backed verifiers can diff cumulative
+// session work against a specific worktree.
+//
+// The toplevel is what makes worktrees behave correctly: verifier
+// subprocesses run with this as their cwd, so `git diff
+// $SESSION_BASE_REF` evaluates the right tree no matter where `hud
+// start` itself was launched from. The MCP `hud_set_goal` handler
+// re-anchors both values from the agent's perspective whenever a goal
+// is set.
 //
 // If the cwd is not a git repository (or has no commits yet) we refuse
 // to start: the persona rubrics are written assuming `git diff
 // $SESSION_BASE_REF` works, and silently degrading would make every
 // verifier score the wrong thing.
-func captureSessionBaseRef() (string, error) {
-	if _, err := exec.LookPath("git"); err != nil {
-		return "", fmt.Errorf("hud requires git on PATH (verifiers diff session work against HEAD)")
+func captureSessionAnchor() (baseRef, worktree string, err error) {
+	if _, lookErr := exec.LookPath("git"); lookErr != nil {
+		return "", "", fmt.Errorf("hud requires git on PATH (verifiers diff session work against HEAD)")
 	}
-	out, err := exec.Command("git", "rev-parse", "HEAD").Output()
-	if err == nil {
-		return strings.TrimSpace(string(out)), nil
+	head, headErr := exec.Command("git", "rev-parse", "HEAD").Output()
+	if headErr != nil {
+		// Distinguish "not a repo" from "repo but no commits yet" so the
+		// hint is actionable.
+		check := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+		if checkErr := check.Run(); checkErr != nil {
+			return "", "", fmt.Errorf("hud requires a git repository in this directory.\n" +
+				"Verifiers score cumulative session work by diffing against HEAD.\n" +
+				"Run `git init && git add -A && git commit -m \"init\"` and try again.")
+		}
+		return "", "", fmt.Errorf("hud requires at least one commit on HEAD.\n" +
+			"Verifiers diff session work against HEAD; an empty repo has nothing to diff.\n" +
+			"Run `git commit --allow-empty -m \"init\"` (or stage and commit your work) and try again.")
 	}
-
-	// Distinguish "not a repo" from "repo but no commits yet" so the
-	// hint is actionable.
-	check := exec.Command("git", "rev-parse", "--is-inside-work-tree")
-	if checkErr := check.Run(); checkErr != nil {
-		return "", fmt.Errorf("hud requires a git repository in this directory.\n" +
-			"Verifiers score cumulative session work by diffing against HEAD.\n" +
-			"Run `git init && git add -A && git commit -m \"init\"` and try again.")
+	top, topErr := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if topErr != nil {
+		// rev-parse HEAD succeeded, so we are inside a repo; an error here is
+		// unexpected. Fall back to leaving the worktree unset rather than
+		// failing the boot — the MCP re-anchor path will fill it in.
+		return strings.TrimSpace(string(head)), "", nil
 	}
-	return "", fmt.Errorf("hud requires at least one commit on HEAD.\n" +
-		"Verifiers diff session work against HEAD; an empty repo has nothing to diff.\n" +
-		"Run `git commit --allow-empty -m \"init\"` (or stage and commit your work) and try again.")
+	return strings.TrimSpace(string(head)), strings.TrimSpace(string(top)), nil
 }
 
 // loadVerifiers returns runtime verifiers and the configured quiet period

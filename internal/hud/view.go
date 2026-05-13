@@ -215,9 +215,15 @@ func (m Model) renderGitPanel(maxWidth int) string {
 			defaultString(m.workspace.Branch, "?"),
 		))
 	rows := []string{truncate(header, innerW)}
-	if len(m.workspace.Files) == 0 {
+	switch {
+	case m.workspace.BaseRefUnset:
+		// No session anchor yet (goal hasn't been set, or the daemon was
+		// started outside a repo). Tell the user why the file list is
+		// empty instead of implying nothing has changed.
+		rows = append(rows, styleReason.Render(truncate("(session_base_ref not set — diffs not calculated; set a goal to anchor)", innerW)))
+	case len(m.workspace.Files) == 0:
 		rows = append(rows, styleReason.Render(truncate("(no files edited yet this session)", innerW)))
-	} else {
+	default:
 		// Column widths: keep +/-/binary chips narrow on the right; give the
 		// path everything that remains so long paths read naturally.
 		const countW = 6 // "+9999" / "-9999" — generous in practice

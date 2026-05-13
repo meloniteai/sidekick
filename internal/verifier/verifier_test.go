@@ -130,9 +130,10 @@ Rubric body.
 	}
 	v := Verifier{Name: "Architect", Type: TypeAgent, Agent: AgentConfig{Skill: skill}}
 	prompt, err := BuildAgentPrompt(v, Session{
-		Goal:           "ship it",
-		SessionBaseRef: "abc123",
-		ChangedFiles:   []string{"a.go", "b.go"},
+		Goal:            "ship it",
+		SessionBaseRef:  "abc123",
+		SessionWorktree: "/repo/worktree-x",
+		ChangedFiles:    []string{"a.go", "b.go"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -143,14 +144,15 @@ Rubric body.
 		"Verifier name: Architect",
 		"Active goal: ship it",
 		"Session base ref ($SESSION_BASE_REF): abc123",
+		"Session worktree ($SESSION_WORKTREE): /repo/worktree-x",
 		"Recently changed files",
 		// Protocol preamble lifted from skill bodies — these must come
 		// from the runtime, not the skill, so community skills can stay
 		// lens-only.
 		"## How to evaluate",
-		"git diff $SESSION_BASE_REF --stat",
-		"git diff $SESSION_BASE_REF",
-		"git status --porcelain",
+		"git -C $SESSION_WORKTREE diff $SESSION_BASE_REF --stat",
+		"git -C $SESSION_WORKTREE diff $SESSION_BASE_REF",
+		"git -C $SESSION_WORKTREE status --porcelain",
 		`{"distance": <number 0.0..1.0>, "reason": "<one short sentence>"}`,
 	} {
 		if !strings.Contains(prompt, want) {

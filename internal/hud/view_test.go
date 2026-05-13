@@ -656,6 +656,26 @@ func TestRenderGitPanelListsFilesWithCounts(t *testing.T) {
 	}
 }
 
+func TestRenderGitPanelHintsWhenBaseRefUnset(t *testing.T) {
+	m := Model{
+		width:        140,
+		height:       40,
+		showGitPanel: true,
+		workspace: gitstats.Workspace{
+			WorktreeName: "hud",
+			Branch:       "main",
+			BaseRefUnset: true,
+		},
+	}
+	out := m.renderGitPanel(140)
+	if !strings.Contains(out, "session_base_ref not set") {
+		t.Fatalf("git panel should hint that base ref is unset:\n%s", out)
+	}
+	if strings.Contains(out, "no files edited yet this session") {
+		t.Fatalf("git panel should not show the no-edits fallback when base ref is unset:\n%s", out)
+	}
+}
+
 func TestViewIncludesGitPanelOnlyWhenToggled(t *testing.T) {
 	m := Model{
 		width:  120,

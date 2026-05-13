@@ -30,12 +30,17 @@ type FileStat struct {
 
 // Workspace bundles every git-derived field rendered in the HUD header and
 // the toggleable per-file panel.
+//
+// BaseRefUnset signals that no session base ref was provided to Fetch, so
+// Files is empty for that reason rather than because nothing changed. The
+// panel renders an explanatory hint instead of "(no files edited yet)".
 type Workspace struct {
 	WorktreeName string
 	Branch       string
 	Files        []FileStat
 	TotalAdded   int
 	TotalRemoved int
+	BaseRefUnset bool
 }
 
 // Fetch collects the workspace summary. baseRef is the session base SHA;
@@ -49,6 +54,7 @@ func Fetch(ctx context.Context, baseRef string, extraFiles []string) Workspace {
 	var ws Workspace
 	ws.WorktreeName = worktreeName(ctx)
 	ws.Branch = currentBranch(ctx)
+	ws.BaseRefUnset = baseRef == ""
 	files := diffNumstat(ctx, baseRef)
 
 	known := map[string]int{}
