@@ -22,6 +22,20 @@ type EventHandler interface {
 	OnGoal(goal string)
 }
 
+// ErrDaemonRunning is returned by Listen when a probe of the existing
+// socket file got an answer, meaning another daemon already owns the
+// path. Callers can offer a "start anyway" recovery path via
+// RemoveSocket + Listen.
+var ErrDaemonRunning = errors.New("another hud daemon is already listening")
+
+// RemoveSocket unlinks the socket file so a subsequent Listen can take
+// over the path. Intended for the recovery flow when ErrDaemonRunning
+// is returned; any process still bound to the old inode is left
+// running but loses its name binding.
+func RemoveSocket(sockPath string) error {
+	return os.Remove(sockPath)
+}
+
 // Server hosts the Unix-socket JSON-line protocol.
 type Server struct {
 	state    *State
@@ -167,7 +181,7 @@ func removeStale(sockPath string) error {
 	c, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond)
 	if err == nil {
 		_ = c.Close()
-		return fmt.Errorf("another hud daemon is already listening on %s", sockPath)
+		return fmt.Errorf("%w on %s", ErrDaemonRunning, sockPath)
 	}
 	return os.Remove(sockPath)
 }

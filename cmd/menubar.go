@@ -56,7 +56,7 @@ func newMenubarCmd() *cobra.Command {
 			defer runner.Stop()
 
 			handler := &runnerHandler{state: state, runner: runner}
-			srv, err := daemon.Listen(sock, state, handler)
+			srv, err := acquireDaemonSocket(sock, state, handler, true)
 			if err != nil {
 				return err
 			}
