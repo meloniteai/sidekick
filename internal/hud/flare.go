@@ -65,15 +65,6 @@ func goalGlyphAt(tick int) string {
 	return frames[((tick/2)%len(frames)+len(frames))%len(frames)]
 }
 
-// ringSweepStyle returns a faintly hue-shifted ring style. The ring band
-// (0.25, 0.50, 0.75) plus a tick phase offset gives the impression of a
-// slow rainbow ripple radiating outward.
-func ringSweepStyle(band, tick int) lipgloss.Style {
-	hue := float64(tick)*(360.0/flarePeriod) + float64(band)*40
-	c := colorful.Hsl(math.Mod(math.Mod(hue, 360)+360, 360), 0.35, 0.32)
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(c.Hex()))
-}
-
 // sparkleGlyph returns one of a small set of sparkle runes, cycling with
 // tick so a "converged" orb appears to twinkle.
 func sparkleGlyph(tick int) rune {

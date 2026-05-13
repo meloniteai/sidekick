@@ -2,7 +2,6 @@ package hud
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -79,8 +78,7 @@ const arrowTrailLen = 2
 const goalGlyph = "◎"
 
 const (
-	ringCell = iota + 1
-	axisCell
+	axisCell = iota + 1
 )
 
 var verifierMarkerGlyphs = []rune{'▲', '◆', '■', '✚', '△', '◇', '□', '▽'}
@@ -398,8 +396,6 @@ func (m Model) renderGrid(w, h int) string {
 	}
 	cx, cy := w/2, h/2
 
-	drawDistanceRings(cells, kinds, w, h, cx, cy)
-
 	// axis lines (subtle bearing reference)
 	for c := 0; c < w; c++ {
 		cells[cy][c] = '·'
@@ -590,12 +586,9 @@ func (m Model) renderGrid(w, h int) string {
 				sb.WriteString(styleWind.Render(string(wch)))
 				continue
 			}
-			switch kinds[r][c] {
-			case axisCell:
+			if kinds[r][c] == axisCell {
 				sb.WriteString(styleAxis.Render("·"))
-			case ringCell:
-				sb.WriteString(ringSweepStyle(0, m.tick).Render("·"))
-			default:
+			} else {
 				sb.WriteRune(cells[r][c])
 			}
 		}
@@ -604,48 +597,6 @@ func (m Model) renderGrid(w, h int) string {
 		}
 	}
 	return sb.String()
-}
-
-func drawDistanceRings(cells [][]rune, kinds [][]int, w, h, cx, cy int) {
-	if w < 17 || h < 9 {
-		return
-	}
-	maxRX := cx - 1
-	maxRY := cy - 1
-	if maxRX <= 0 || maxRY <= 0 {
-		return
-	}
-	for _, band := range []float64{0.25, 0.50, 0.75} {
-		rx := int(math.Round(float64(maxRX) * band))
-		ry := int(math.Round(float64(maxRY) * band))
-		if rx < 1 || ry < 1 {
-			continue
-		}
-		samples := ringSampleCount(rx, ry)
-		for i := 0; i < samples; i++ {
-			theta := 2 * math.Pi * float64(i) / float64(samples)
-			col := cx + int(math.Round(math.Cos(theta)*float64(rx)))
-			row := cy - int(math.Round(math.Sin(theta)*float64(ry)))
-			if col <= 0 || col >= w-1 || row <= 0 || row >= h-1 {
-				continue
-			}
-			cells[row][col] = '·'
-			kinds[row][col] = ringCell
-		}
-	}
-}
-
-func ringSampleCount(rx, ry int) int {
-	// Ramanujan's first approximation is plenty for deciding how many terminal
-	// cells to sample along a faint ring outline.
-	a := float64(rx)
-	b := float64(ry)
-	circumference := math.Pi * (3*(a+b) - math.Sqrt((3*a+b)*(a+3*b)))
-	samples := int(math.Ceil(circumference * 2))
-	if samples < 16 {
-		return 16
-	}
-	return samples
 }
 
 func reticleGlyph(c, r, cx, cy, w, h int) (rune, bool) {

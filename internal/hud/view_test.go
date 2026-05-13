@@ -392,46 +392,6 @@ func TestRenderGridSmallLabelsStayInsideEdges(t *testing.T) {
 	}
 }
 
-func TestRenderGridDistanceRingsPreserveDimensions(t *testing.T) {
-	m := Model{}
-	const width, height = 31, 15
-	out := m.renderGrid(width, height)
-	lines := strings.Split(out, "\n")
-	if got := len(lines); got != height {
-		t.Fatalf("line count = %d, want %d:\n%s", got, height, out)
-	}
-	for row, line := range lines {
-		if got := lipgloss.Width(line); got != width {
-			t.Fatalf("line %d width = %d, want %d: %q\n%s", row, got, width, line, out)
-		}
-	}
-	axisDots := width + height - 1
-	if got := strings.Count(out, "·"); got <= axisDots {
-		t.Fatalf("expected ring fragments beyond axis dots, got %d axis baseline %d:\n%s", got, axisDots, out)
-	}
-}
-
-func TestDrawDistanceRingsUsesThinOutlines(t *testing.T) {
-	const width, height = 41, 21
-	cells := make([][]rune, height)
-	kinds := make([][]int, height)
-	for r := range cells {
-		cells[r] = make([]rune, width)
-		kinds[r] = make([]int, width)
-	}
-	drawDistanceRings(cells, kinds, width, height, width/2, height/2)
-	for r := 0; r < height-1; r++ {
-		for c := 0; c < width-1; c++ {
-			if kinds[r][c] == ringCell &&
-				kinds[r+1][c] == ringCell &&
-				kinds[r][c+1] == ringCell &&
-				kinds[r+1][c+1] == ringCell {
-				t.Fatalf("ring outline became a thick 2x2 band near row %d col %d", r, c)
-			}
-		}
-	}
-}
-
 func TestStatusWizardShowsFullVerifierStatus(t *testing.T) {
 	w := NewStatusWizard(ipc.VerifierStatus{
 		Name:       "Architect",
