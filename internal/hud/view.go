@@ -111,6 +111,9 @@ func orbStyle(d float64) lipgloss.Style {
 
 // View satisfies tea.Model.
 func (m Model) View() string {
+	if m.palette != nil {
+		return m.palette.View()
+	}
 	if m.status != nil {
 		return m.status.View()
 	}
@@ -712,7 +715,7 @@ func (m Model) renderList(maxWidth int) string {
 }
 
 func (m Model) renderFooterHelp(maxWidth int) string {
-	text := "keys: up/down select | enter status | space toggle | r run one | t all | n new | e edit | l log | g git | esc stop | q quit | 1-9/0 toggle"
+	text := "keys: up/down select | enter status | space toggle | r run one | t all | esc stop | q quit | 1-9/0 toggle | ctrl+p commands"
 	if m.footerNotice != "" && m.tick < m.footerNoticeUntil {
 		text = m.footerNotice
 	}

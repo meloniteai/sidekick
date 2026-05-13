@@ -78,6 +78,7 @@ type Model struct {
 	configPath        string
 	editor            *EditWizard
 	status            *StatusWizard
+	palette           *Palette
 	// anims is keyed by verifier name. We seed an entry on first observation
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
@@ -171,6 +172,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status.width = msg.Width
 			m.status.height = msg.Height
 		}
+		if m.palette != nil {
+			m.palette.SetSize(msg.Width, msg.Height)
+		}
 	case tickMsg:
 		m.snapshot = m.state.Snapshot()
 		m.events = m.state.Events()
@@ -185,6 +189,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshOrbs()
 		m.refreshWorkspace()
 		return m, tick()
+	}
+	if m.palette != nil {
+		next, cmd, done := m.palette.Update(msg)
+		if done {
+			action := next.Chosen()
+			m.palette = nil
+			m.dispatchPaletteAction(action)
+			return m, cmd
+		}
+		m.palette = &next
+		return m, cmd
 	}
 	if m.status != nil {
 		next, cmd, done := m.status.Update(msg)
@@ -223,6 +238,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "ctrl+p":
+			p := NewPalette()
+			p.SetSize(m.width, m.height)
+			m.palette = &p
+			return m, nil
 		case "t":
 			if m.onManualTrigger != nil {
 				m.onManualTrigger()
@@ -245,12 +265,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.onStopAll != nil {
 				m.onStopAll()
 			}
-		case "e":
+		case "e", "ctrl+e":
 			editor := m.newEditWizard()
 			editor.width = m.width
 			editor.height = m.height
 			m.editor = &editor
-		case "n":
+		case "n", "ctrl+n":
 			editor := NewCreateWizard(m.configPath)
 			editor.width = m.width
 			editor.height = m.height
@@ -262,9 +282,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				status.height = m.height
 				m.status = &status
 			}
-		case "l":
+		case "l", "ctrl+l":
 			m.showEventLog = !m.showEventLog
-		case "g":
+		case "g", "ctrl+g":
 			m.showGitPanel = !m.showGitPanel
 			// Force a refresh on toggle so the user doesn't see stale data
 			// the first time they open the panel.
@@ -375,6 +395,31 @@ func toggleKeyIndex(key string) (int, bool) {
 
 func tick() tea.Cmd {
 	return tea.Tick(tickInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// dispatchPaletteAction runs the side-effect for a palette item once the user
+// confirms with enter. Esc dismissal arrives as paletteActionNone and is a
+// no-op; all real actions reuse the same code paths as the bare hotkeys (n,
+// e, g, l) so behaviour stays consistent however the user invokes them.
+func (m *Model) dispatchPaletteAction(action paletteAction) {
+	switch action {
+	case paletteActionNewVerifier:
+		editor := NewCreateWizard(m.configPath)
+		editor.width = m.width
+		editor.height = m.height
+		m.editor = &editor
+	case paletteActionEditVerifier:
+		editor := m.newEditWizard()
+		editor.width = m.width
+		editor.height = m.height
+		m.editor = &editor
+	case paletteActionToggleGitPanel:
+		m.showGitPanel = !m.showGitPanel
+		m.workspaceFetchAt = 0
+		m.refreshWorkspace()
+	case paletteActionToggleEventLog:
+		m.showEventLog = !m.showEventLog
+	}
 }
 
 // refreshWorkspace refetches git workspace metadata when enough ticks have

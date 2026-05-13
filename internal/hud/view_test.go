@@ -182,7 +182,7 @@ func TestRenderListShowsBrowserActionsAndSelection(t *testing.T) {
 	out := m.renderList(180)
 	for _, want := range []string{
 		"key", "verifier", "dir", "type", "status", "reason",
-		"keys:", "enter status", "space toggle", "r run one", "t all", "e edit", "1-9/0 toggle",
+		"keys:", "enter status", "space toggle", "r run one", "t all", "ctrl+p commands", "1-9/0 toggle",
 		">", "[2]", "Test",
 	} {
 		if !strings.Contains(out, want) {
