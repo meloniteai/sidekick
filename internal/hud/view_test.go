@@ -12,32 +12,6 @@ import (
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
-func TestRenderDotStructure(t *testing.T) {
-	out := renderDot(0)
-	if !strings.HasPrefix(out, "[") || !strings.HasSuffix(out, "]") {
-		t.Fatalf("missing brackets: %q", out)
-	}
-	if got := strings.Count(out, "."); got != 1 {
-		t.Errorf("dot count: got %d, want 1", got)
-	}
-}
-
-func TestRenderDotPingPong(t *testing.T) {
-	period := (dotTrack - 1) * 2
-	// Frames repeat every period ticks.
-	if renderDot(0) != renderDot(period) || renderDot(0) != renderDot(2*period) {
-		t.Errorf("expected period %d", period)
-	}
-	// Adjacent ticks must differ (dot moves each tick).
-	if renderDot(0) == renderDot(1) {
-		t.Errorf("frames at tick 0 and 1 should differ")
-	}
-	// The dot should reach both ends: position 0 at tick 0 and position dotTrack-1 at tick dotTrack-1.
-	if renderDot(0) == renderDot(dotTrack-1) {
-		t.Errorf("opposite ends of track should differ")
-	}
-}
-
 func TestRenderListSnakeGating(t *testing.T) {
 	// The snake marquee must appear only on rows whose verifier is Running.
 	m := Model{
@@ -64,10 +38,10 @@ func TestRenderListSnakeGating(t *testing.T) {
 	if running == "" || idle == "" {
 		t.Fatalf("missing verifier lines: running=%q idle=%q", running, idle)
 	}
-	if !strings.Contains(running, ".") {
-		t.Errorf("running row missing dot: %q", running)
+	if !strings.Contains(running, " run") {
+		t.Errorf("running row missing run indicator: %q", running)
 	}
-	if strings.Contains(idle, "running") {
+	if strings.Contains(idle, " run") {
 		t.Errorf("idle row should not render running indicator: %q", idle)
 	}
 }
@@ -705,17 +679,6 @@ func TestViewIncludesGitPanelOnlyWhenToggled(t *testing.T) {
 	m.showGitPanel = true
 	if !strings.Contains(m.View(), "workspace files") {
 		t.Fatalf("git panel should appear after toggle:\n%s", m.View())
-	}
-}
-
-func TestRenderDotNegativeTick(t *testing.T) {
-	period := (dotTrack - 1) * 2
-	// Must not panic and must be modular: tick=-1 == tick=period-1.
-	if renderDot(-1) != renderDot(period-1) {
-		t.Errorf("negative tick should be modular")
-	}
-	if got := strings.Count(renderDot(-1), "."); got != 1 {
-		t.Errorf("negative tick dot count: got %d, want 1", got)
 	}
 }
 

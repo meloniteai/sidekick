@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/uriahlevy/hud/internal/daemon"
 	"github.com/uriahlevy/hud/internal/gitstats"
@@ -807,7 +808,10 @@ func renderEventRow(e daemon.EventEntry, width, maxLines int) []string {
 	}
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
-		out = append(out, padCell(line, width))
+		// Seal each row with a reset so an SGR that happens to straddle the
+		// wrap point (charm/log's level badge, a styled message segment) can't
+		// leak its colour into the panel border one cell to the right.
+		out = append(out, padCell(line, width)+ansi.ResetStyle)
 	}
 	return out
 }
@@ -854,24 +858,19 @@ func renderEventRowFallback(e daemon.EventEntry, width, maxLines int) []string {
 	return out
 }
 
+// wrapVisualLines hard-wraps s to width columns of *visible* output. It must
+// be ANSI-aware because charm/log's rendered lines contain SGR escapes; a
+// naive rune-by-rune split (e.g. relying on lipgloss.Width per rune) only
+// treats the ESC byte itself as zero-width and counts the rest of the
+// sequence as printable, which both undercounts the wrap budget and can
+// guillotine an SGR mid-sequence — that's exactly what caused the event log
+// panel to chop "INF" down to "I" and bleed cyan into the right border.
 func wrapVisualLines(s string, width int) []string {
 	if width <= 0 {
 		return nil
 	}
-	var rows []string
-	for _, line := range strings.Split(s, "\n") {
-		if line == "" {
-			rows = append(rows, "")
-			continue
-		}
-		for lipgloss.Width(line) > width {
-			head, tail := splitVisual(line, width)
-			rows = append(rows, head)
-			line = tail
-		}
-		rows = append(rows, line)
-	}
-	return rows
+	wrapped := ansi.Hardwrap(s, width, false)
+	return strings.Split(wrapped, "\n")
 }
 
 // ellipsisTail differs from truncate: it always appends "…" even when s
@@ -1019,7 +1018,7 @@ func renderStatusCell(v ipc.VerifierStatus, width, tick int) string {
 		// Pair the legacy bracketed dot (kept so the layout & tests stay
 		// stable) with a braille spinner glyph for a richer "working"
 		// signal; the row's foreground hue glides through magenta/cyan.
-		text := string(brailleSpinner(tick)) + " run " + plainDot(tick)
+		text := string(brailleSpinner(tick)) + " run"
 		return styledTableCell(text, width, runningGlow(tick))
 	}
 	var text string
@@ -1070,52 +1069,6 @@ func toggleLabel(i int) string {
 	}
 }
 
-// dotTrack is the number of positions in the ping-pong dot spinner. The dot
-// bounces left-to-right and back, completing one full cycle every
-// (dotTrack-1)*2 ticks.
-const dotTrack = 5
-
-// renderDot renders a bracketed ping-pong spinner: a single "." bounces
-// across a dotTrack-wide field. Result is always "[" + dotTrack cells + "]".
-func renderDot(tick int) string {
-	pos := dotPosition(tick)
-	var sb strings.Builder
-	sb.WriteByte('[')
-	for i := 0; i < dotTrack; i++ {
-		if i == pos {
-			sb.WriteString(styleRunning.Render("."))
-		} else {
-			sb.WriteByte(' ')
-		}
-	}
-	sb.WriteByte(']')
-	return sb.String()
-}
-
-func plainDot(tick int) string {
-	pos := dotPosition(tick)
-	var sb strings.Builder
-	sb.WriteByte('[')
-	for i := 0; i < dotTrack; i++ {
-		if i == pos {
-			sb.WriteByte('.')
-		} else {
-			sb.WriteByte(' ')
-		}
-	}
-	sb.WriteByte(']')
-	return sb.String()
-}
-
-func dotPosition(tick int) int {
-	period := (dotTrack - 1) * 2
-	phase := ((tick % period) + period) % period
-	pos := phase
-	if pos >= dotTrack {
-		pos = period - phase
-	}
-	return pos
-}
 
 func truncate(s string, n int) string {
 	return truncateWithSuffix(s, n, "…")
