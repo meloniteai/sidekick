@@ -144,6 +144,13 @@ Rubric body.
 		"Active goal: ship it",
 		"Session base ref ($SESSION_BASE_REF): abc123",
 		"Recently changed files",
+		// Protocol preamble lifted from skill bodies — these must come
+		// from the runtime, not the skill, so community skills can stay
+		// lens-only.
+		"## How to evaluate",
+		"git diff $SESSION_BASE_REF --stat",
+		"git diff $SESSION_BASE_REF",
+		"git status --porcelain",
 		`{"distance": <number 0.0..1.0>, "reason": "<one short sentence>"}`,
 	} {
 		if !strings.Contains(prompt, want) {

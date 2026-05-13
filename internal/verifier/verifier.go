@@ -487,6 +487,21 @@ Active goal: %s
 Session base ref ($SESSION_BASE_REF): %s
 Recently changed files (last write batch, for orientation only — score the cumulative diff, not this list): %s
 
+## How to evaluate
+
+You evaluate the cumulative work in the current session — every change
+since the session started, not just the most recent edit — through your
+lens (above) against the active goal.
+
+1. Run "git diff $SESSION_BASE_REF --stat" to size the change.
+2. Run "git diff $SESSION_BASE_REF" to read cumulative changes. For
+   large diffs, scope by directory or filetype relevant to your lens
+   (e.g. "git diff $SESSION_BASE_REF -- internal/auth/").
+3. Run "git status --porcelain" to find untracked files; read any that
+   look substantive — they are part of the session too.
+4. Score the resulting state, not the volume of work. A small, well-
+   placed change should score better than a large, sprawling one.
+
 ## Output contract (HUD verifier mode)
 
 After your evaluation, output exactly one final line of JSON, with no
