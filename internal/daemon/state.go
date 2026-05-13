@@ -43,10 +43,11 @@ const eventBufferCap = 500
 // source of truth that the TUI renders, the MCP server reads, and the
 // hook handlers mutate.
 type State struct {
-	mu             sync.RWMutex
-	goal           string
-	sessionBaseRef string
-	verifiers      map[string]ipc.VerifierStatus
+	mu              sync.RWMutex
+	goal            string
+	sessionBaseRef  string
+	sessionWorktree string
+	verifiers       map[string]ipc.VerifierStatus
 	order          []string
 	version        string
 	lastSocketAt   time.Time
@@ -133,9 +134,9 @@ func (s *State) Goal() string {
 	return s.goal
 }
 
-// SetSessionBaseRef records the git SHA HEAD pointed at when `hud start`
-// began. Verifiers diff the working tree against this ref to evaluate
-// cumulative session work, not just the latest write.
+// SetSessionBaseRef records the git SHA HEAD pointed at when the session
+// was anchored. Verifiers diff the working tree against this ref to
+// evaluate cumulative session work, not just the latest write.
 func (s *State) SetSessionBaseRef(ref string) {
 	s.mu.Lock()
 	s.sessionBaseRef = ref
@@ -147,6 +148,23 @@ func (s *State) SessionBaseRef() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.sessionBaseRef
+}
+
+// SetSessionWorktree records the absolute path to the git worktree the
+// session is anchored against. Verifier subprocesses run with this as
+// their working directory so `git diff $SESSION_BASE_REF` evaluates the
+// right tree regardless of where `hud start` was launched.
+func (s *State) SetSessionWorktree(path string) {
+	s.mu.Lock()
+	s.sessionWorktree = path
+	s.mu.Unlock()
+}
+
+// SessionWorktree returns the anchored worktree path, or "" if unset.
+func (s *State) SessionWorktree() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sessionWorktree
 }
 
 // SetVersion records the daemon binary version string for the header.

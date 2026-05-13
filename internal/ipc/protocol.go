@@ -96,8 +96,17 @@ type WriteData struct {
 }
 
 // GoalData is the payload for TypeGoal.
+//
+// Worktree and BaseRef are optional re-anchor fields populated by the
+// MCP server (and the `hud goal` CLI) from the caller's cwd. When
+// present the daemon overwrites the session anchor so verifiers diff
+// the right tree from the agent's perspective, not the human's
+// `hud start` perspective. Empty means "leave the existing anchor in
+// place" so legacy callers keep working.
 type GoalData struct {
-	Goal string `json:"goal"`
+	Goal     string `json:"goal"`
+	Worktree string `json:"worktree,omitempty"`
+	BaseRef  string `json:"base_ref,omitempty"`
 }
 
 // ExplainData is the payload for TypeExplain.

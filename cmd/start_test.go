@@ -21,7 +21,7 @@ func TestRunnerHandlerGoalDoesNotTriggerVerifiers(t *testing.T) {
 	defer r.Stop()
 	h := &runnerHandler{state: state, runner: r}
 
-	h.OnGoal("ship without eager verifier runs")
+	h.OnGoal("ship without eager verifier runs", "", "")
 	time.Sleep(100 * time.Millisecond)
 
 	if got := state.Goal(); got != "ship without eager verifier runs" {

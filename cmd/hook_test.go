@@ -101,5 +101,5 @@ type captureHandler struct {
 	writes chan string
 }
 
-func (h *captureHandler) OnWrite(file string) { h.writes <- file }
-func (h *captureHandler) OnGoal(string)       {}
+func (h *captureHandler) OnWrite(file string)      { h.writes <- file }
+func (h *captureHandler) OnGoal(_, _, _ string)    {}

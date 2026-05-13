@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -110,14 +112,47 @@ func setGoalHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	if goal == "" {
 		return nil, errors.New("goal argument is required")
 	}
-	data, err := ipc.MarshalData(ipc.GoalData{Goal: goal})
+	// The MCP server runs as a child of the agent, so its cwd is the
+	// agent's cwd — typically the worktree the agent is operating in.
+	// Resolve and ship both fields so the daemon re-anchors to that
+	// worktree's HEAD whenever the goal moves, even if `hud start` was
+	// launched elsewhere (e.g. the trunk).
+	worktree, baseRef := resolveSessionAnchor()
+	data, err := ipc.MarshalData(ipc.GoalData{
+		Goal:     goal,
+		Worktree: worktree,
+		BaseRef:  baseRef,
+	})
 	if err != nil {
 		return nil, err
 	}
 	if _, err := ipc.Send(ipc.Request{Type: ipc.TypeGoal, Source: ipc.SourceMCP, Data: data}); err != nil {
 		return nil, fmt.Errorf("hud daemon unreachable (is `hud start` running?): %w", err)
 	}
-	return mcp.NewToolResultJSON(map[string]any{"goal": goal})
+	return mcp.NewToolResultJSON(map[string]any{
+		"goal":     goal,
+		"worktree": worktree,
+		"base_ref": baseRef,
+	})
+}
+
+// resolveSessionAnchor returns the absolute worktree path and HEAD SHA of
+// the caller's cwd, or empty strings when the cwd is not in a git
+// repository. Empty values tell the daemon to leave the existing anchor
+// untouched rather than overwriting it with garbage.
+func resolveSessionAnchor() (worktree, baseRef string) {
+	top, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", ""
+	}
+	worktree = strings.TrimSpace(string(top))
+	head, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		// Worktree resolves but no commits — return worktree alone so
+		// the daemon still pins the right tree; base ref stays unset.
+		return worktree, ""
+	}
+	return worktree, strings.TrimSpace(string(head))
 }
 
 func explainHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

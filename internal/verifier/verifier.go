@@ -26,16 +26,19 @@ import (
 
 // Session is the context piped to verifier subprocesses on stdin.
 //
-// SessionBaseRef is the git SHA `HEAD` pointed at when `hud start` ran;
-// LLM-backed verifiers diff the working tree against it to score
-// cumulative session work rather than the last debounced write.
+// SessionBaseRef is the git SHA `HEAD` pointed at when the session was
+// anchored; SessionWorktree is the absolute path to that anchored git
+// worktree. LLM-backed verifiers diff the working tree at
+// SessionWorktree against SessionBaseRef to score cumulative session
+// work rather than the last debounced write.
 type Session struct {
-	Goal           string   `json:"goal"`
-	SessionBaseRef string   `json:"session_base_ref,omitempty"`
-	RecentDiff     string   `json:"recent_diff,omitempty"`
-	ChangedFiles   []string `json:"changed_files,omitempty"`
-	LastMessages   []string `json:"last_messages,omitempty"`
-	VerifierName   string   `json:"verifier_name"`
+	Goal            string   `json:"goal"`
+	SessionBaseRef  string   `json:"session_base_ref,omitempty"`
+	SessionWorktree string   `json:"session_worktree,omitempty"`
+	RecentDiff      string   `json:"recent_diff,omitempty"`
+	ChangedFiles    []string `json:"changed_files,omitempty"`
+	LastMessages    []string `json:"last_messages,omitempty"`
+	VerifierName    string   `json:"verifier_name"`
 }
 
 // Result is what a verifier subprocess prints on stdout.
@@ -165,7 +168,7 @@ func (v Verifier) verifyCommand(ctx context.Context, s Session) (Result, error) 
 	}
 	defer cancel()
 
-	stdout, stderr, err := runSubprocess(subCtx, v.Command, stdinJSON, verifierEnv(s))
+	stdout, stderr, err := runSubprocess(subCtx, v.Command, stdinJSON, verifierEnv(s), s.SessionWorktree)
 	if err != nil {
 		return Result{}, fmt.Errorf("verifier %s exited with error: %w (stderr: %s)",
 			v.Name, err, strings.TrimSpace(stderr))
@@ -192,7 +195,7 @@ func (v Verifier) verifyAgent(ctx context.Context, s Session) (Result, error) {
 	defer cancel()
 
 	start := time.Now()
-	stdout, stderr, err := runSubprocess(subCtx, cmd, []byte(prompt), verifierEnv(s))
+	stdout, stderr, err := runSubprocess(subCtx, cmd, []byte(prompt), verifierEnv(s), s.SessionWorktree)
 	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
 		return Result{}, fmt.Errorf("agent verifier %s exited with error: %w (stderr: %s)",
@@ -221,7 +224,7 @@ func (v Verifier) verifyBinary(ctx context.Context, s Session) (Result, error) {
 	}
 	defer cancel()
 
-	stdout, stderr, err := runSubprocess(subCtx, v.Binary.Command, stdinJSON, verifierEnv(s))
+	stdout, stderr, err := runSubprocess(subCtx, v.Binary.Command, stdinJSON, verifierEnv(s), s.SessionWorktree)
 	if err == nil {
 		reason := v.Binary.PassReason
 		if reason == "" {
@@ -258,9 +261,16 @@ func (v Verifier) prepare(ctx context.Context, s Session) ([]byte, context.Conte
 	return append(stdinJSON, '\n'), subCtx, cancel, nil
 }
 
-func runSubprocess(ctx context.Context, argv []string, stdin []byte, extraEnv []string) (string, string, error) {
+func runSubprocess(ctx context.Context, argv []string, stdin []byte, extraEnv []string, dir string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdin = bytes.NewReader(stdin)
+	if dir != "" {
+		// Pin the subprocess to the session-anchored worktree so verifier
+		// git commands evaluate the right tree regardless of where the
+		// daemon happens to be running. Empty falls through to the
+		// daemon's own cwd (preserves pre-anchor behaviour and tests).
+		cmd.Dir = dir
+	}
 	if len(extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), extraEnv...)
 	}
@@ -282,6 +292,7 @@ func runSubprocess(ctx context.Context, argv []string, stdin []byte, extraEnv []
 func verifierEnv(s Session) []string {
 	return []string{
 		"SESSION_BASE_REF=" + s.SessionBaseRef,
+		"SESSION_WORKTREE=" + s.SessionWorktree,
 		"HUD_VERIFIER=1", // prevents HUD hooks from overriding the main session goal
 	}
 }
@@ -476,6 +487,10 @@ func BuildAgentPrompt(v Verifier, s Session) (string, error) {
 	if base == "" {
 		base = "<unset; fall back to HEAD>"
 	}
+	worktree := s.SessionWorktree
+	if worktree == "" {
+		worktree = "<unset; fall back to cwd>"
+	}
 	return fmt.Sprintf(`%s
 
 ---
@@ -485,6 +500,7 @@ func BuildAgentPrompt(v Verifier, s Session) (string, error) {
 Verifier name: %s
 Active goal: %s
 Session base ref ($SESSION_BASE_REF): %s
+Session worktree ($SESSION_WORKTREE): %s
 Recently changed files (last write batch, for orientation only — score the cumulative diff, not this list): %s
 
 ## How to evaluate
@@ -493,12 +509,20 @@ You evaluate the cumulative work in the current session — every change
 since the session started, not just the most recent edit — through your
 lens (above) against the active goal.
 
-1. Run "git diff $SESSION_BASE_REF --stat" to size the change.
-2. Run "git diff $SESSION_BASE_REF" to read cumulative changes. For
-   large diffs, scope by directory or filetype relevant to your lens
-   (e.g. "git diff $SESSION_BASE_REF -- internal/auth/").
-3. Run "git status --porcelain" to find untracked files; read any that
-   look substantive — they are part of the session too.
+All git commands MUST target the session worktree explicitly via "git
+-C $SESSION_WORKTREE …", because the agent may be operating in a
+worktree separate from where your subprocess was launched. Running git
+without -C will evaluate the wrong tree and produce a misleading score.
+
+1. Run "git -C $SESSION_WORKTREE diff $SESSION_BASE_REF --stat" to size
+   the change.
+2. Run "git -C $SESSION_WORKTREE diff $SESSION_BASE_REF" to read
+   cumulative changes. For large diffs, scope by directory or filetype
+   relevant to your lens (e.g.
+   "git -C $SESSION_WORKTREE diff $SESSION_BASE_REF -- internal/auth/").
+3. Run "git -C $SESSION_WORKTREE status --porcelain" to find untracked
+   files; read any that look substantive — they are part of the session
+   too. Use absolute paths under $SESSION_WORKTREE when reading them.
 4. Score the resulting state, not the volume of work. A small, well-
    placed change should score better than a large, sprawling one.
 
@@ -542,7 +566,7 @@ The reason is the single most load-bearing observation — what should
 change the agent's next decision — not a summary of what changed.
 
 - No commentary after the JSON line.
-`, body, name, goal, base, files), nil
+`, body, name, goal, base, worktree, files), nil
 }
 
 func skillBody(path string) (string, error) {

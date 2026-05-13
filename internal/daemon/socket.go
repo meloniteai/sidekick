@@ -17,9 +17,14 @@ import (
 
 // EventHandler reacts to mutating client events. The daemon's own logic
 // (debouncer, verifier runner) is wired in by `hud start`.
+//
+// OnGoal optionally re-anchors the session: when worktree or baseRef
+// are non-empty the handler overwrites the corresponding daemon-state
+// values before kicking verifiers, so the next batch evaluates the
+// right tree from the agent's perspective.
 type EventHandler interface {
 	OnWrite(file string)
-	OnGoal(goal string)
+	OnGoal(goal, worktree, baseRef string)
 }
 
 // ErrDaemonRunning is returned by Listen when a probe of the existing
@@ -137,7 +142,7 @@ func (s *Server) dispatch(req ipc.Request) ipc.Response {
 		if err := json.Unmarshal(req.Data, &p); err != nil {
 			return errResp(err)
 		}
-		s.handler.OnGoal(p.Goal)
+		s.handler.OnGoal(p.Goal, p.Worktree, p.BaseRef)
 		return okData(struct{}{})
 	case ipc.TypeStatus:
 		return okData(s.state.Snapshot())

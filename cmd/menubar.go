@@ -30,11 +30,12 @@ func newMenubarCmd() *cobra.Command {
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			baseRef, err := captureSessionBaseRef()
+			baseRef, worktree, err := captureSessionAnchor()
 			if err != nil {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "[hud] session base ref: %s\n", baseRef)
+			fmt.Fprintf(os.Stderr, "[hud] session worktree: %s\n", worktree)
 
 			verifiers, quietPeriod, source, _, err := loadVerifiers(configPath)
 			if err != nil {
@@ -49,6 +50,7 @@ func newMenubarCmd() *cobra.Command {
 
 			state := daemon.NewState()
 			state.SetSessionBaseRef(baseRef)
+			state.SetSessionWorktree(worktree)
 			state.SetVersion(version)
 			runner := verifier.NewRunner(ctx, state, verifiers)
 			runner.SetQuietPeriod(quietPeriod)

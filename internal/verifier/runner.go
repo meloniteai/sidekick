@@ -279,11 +279,17 @@ func (r *Runner) runBatch(only string) {
 	r.mu.Unlock()
 
 	cwd, _ := os.Getwd()
+	worktree := r.state.SessionWorktree()
+	transcriptDir := worktree
+	if transcriptDir == "" {
+		transcriptDir = cwd
+	}
 	session := Session{
-		Goal:           r.state.Goal(),
-		SessionBaseRef: r.state.SessionBaseRef(),
-		ChangedFiles:   files,
-		LastMessages:   transcript.LastMessages(cwd, transcriptTurns),
+		Goal:            r.state.Goal(),
+		SessionBaseRef:  r.state.SessionBaseRef(),
+		SessionWorktree: worktree,
+		ChangedFiles:    files,
+		LastMessages:    transcript.LastMessages(transcriptDir, transcriptTurns),
 	}
 
 	var wg sync.WaitGroup
