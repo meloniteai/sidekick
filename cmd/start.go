@@ -100,7 +100,7 @@ func newStartCmd() *cobra.Command {
 			defer runner.Stop()
 
 			handler := &runnerHandler{state: state, runner: runner}
-			srv, err := daemon.Listen(sock, state, handler)
+			srv, err := acquireDaemonSocket(sock, state, handler, !headless)
 			if err != nil {
 				return err
 			}
@@ -169,6 +169,46 @@ func newStartCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&headless, "headless", false, "run only the daemon (no TUI); useful for tests")
 	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml (default: nearest hud.yaml above cwd, else demo verifiers)")
 	return cmd
+}
+
+// acquireDaemonSocket calls daemon.Listen and, if the socket is held by
+// a daemon that still answers a probe, offers an interactive "start
+// anyway" prompt that unlinks the old socket and retries. When
+// interactive is false (headless/non-TTY) the underlying error is
+// returned unchanged so callers see the same failure they did before.
+func acquireDaemonSocket(sock string, state *daemon.State, handler daemon.EventHandler, interactive bool) (*daemon.Server, error) {
+	srv, err := daemon.Listen(sock, state, handler)
+	if err == nil {
+		return srv, nil
+	}
+	if !interactive || !errors.Is(err, daemon.ErrDaemonRunning) {
+		return nil, err
+	}
+	var ok bool
+	form := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Another hud daemon is listening on this socket.").
+			Description(fmt.Sprintf(
+				"Socket: %s\n\nThis is usually a leftover from a previous hud that didn't exit cleanly.\nStart anyway will replace the old socket; any orphaned daemon process is left running but unreachable.",
+				sock,
+			)).
+			Affirmative("Start anyway").
+			Negative("Cancel").
+			Value(&ok),
+	)).WithTheme(hudtui.HuhTheme())
+	if formErr := form.Run(); formErr != nil {
+		if errors.Is(formErr, huh.ErrUserAborted) {
+			return nil, err
+		}
+		return nil, formErr
+	}
+	if !ok {
+		return nil, err
+	}
+	if rmErr := daemon.RemoveSocket(sock); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("remove old socket: %w", rmErr)
+	}
+	return daemon.Listen(sock, state, handler)
 }
 
 // runPicker shows the opt-in selection screen and returns the chosen
