@@ -176,9 +176,15 @@ func newStartCmd() *cobra.Command {
 func runPicker(available []verifier.Verifier) ([]verifier.Verifier, error) {
 	selected := make([]string, len(available))
 	opts := make([]huh.Option[string], len(available))
+	nameWidth := 0
+	for _, v := range available {
+		if n := len(v.Name); n > nameWidth {
+			nameWidth = n
+		}
+	}
 	for i, v := range available {
 		selected[i] = v.Name
-		label := fmt.Sprintf("%s  %s", v.Name, v.Direction)
+		label := fmt.Sprintf("%-*s  %s", nameWidth, v.Name, v.Direction)
 		opts[i] = huh.NewOption(label, v.Name).Selected(true)
 	}
 
