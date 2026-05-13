@@ -1,16 +1,19 @@
 # hud
 
-A live, compass-style HUD for agentic coding sessions.
+**A live compass for coding agents. Set a goal, plug in verifiers, watch the orbs.**
 
-`hud` runs alongside Claude Code (or any agent that speaks MCP) and renders
-each verifier — Architect, Test, Security, Deployment, … — on a 2D compass.
-Each verifier reports a `distance ∈ [0, 1]` from the goal: `0` means
-"satisfied", `1` means "maximally unsatisfied". As the agent edits files
-the HUD re-evaluates, and the agent itself can read the result via the
-`hud_status` and `hud_explain` MCP tools to course-correct.
+`hud` runs alongside Claude Code (or any agent that speaks MCP). You set a
+goal in plain English; you plug in verifiers — small rubrics or scripts that
+score how far the working tree is from that goal. After each file edit, hud
+re-runs them in parallel and renders the results as orbs on a 2D compass.
+Each verifier reports a `distance ∈ [0, 1]`: `0` means "satisfied", `1`
+means "maximally unsatisfied". The agent reads the compass via the
+`hud_status` and `hud_explain` MCP tools and course-corrects mid-session,
+instead of finding out at review time.
 
 > Status: hobbyist OSS MVP. Built in Go, talks to Claude Code via hooks +
-> a stdio MCP server.
+> a stdio MCP server. No training, no reward model — just verifiers your
+> agent reads while it codes.
 
 ---
 
