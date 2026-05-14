@@ -41,9 +41,10 @@ func TestLandingRenderShape(t *testing.T) {
 	}
 }
 
-// TestLandingDefaultsAllEnabled: hitting enter immediately should return the
-// full input set, matching the behaviour of the previous huh picker which
-// pre-selected everything.
+// TestLandingDefaultsAllEnabled: hitting enter on a fresh fixture (no
+// pre-disabled verifiers) returns every input verifier with Disabled=false.
+// The contract is "yaml is the source of truth"; an all-enabled yaml lands
+// on an all-enabled session.
 func TestLandingDefaultsAllEnabled(t *testing.T) {
 	l := NewLanding(landingFixture(), "0.1", "/sock", "/cwd")
 	l.width, l.height = 120, 40
@@ -53,15 +54,47 @@ func TestLandingDefaultsAllEnabled(t *testing.T) {
 	if !final.Confirmed() || final.Aborted() {
 		t.Fatalf("enter on defaults should confirm; confirmed=%v aborted=%v", final.Confirmed(), final.Aborted())
 	}
-	if got := len(final.Selection()); got != 3 {
-		t.Fatalf("default selection size = %d, want 3", got)
+	got := final.Verifiers()
+	if len(got) != 3 {
+		t.Fatalf("verifiers slice size = %d, want 3 (all rows always returned)", len(got))
+	}
+	for _, v := range got {
+		if v.Disabled {
+			t.Fatalf("default Disabled = true for %s, want false", v.Name)
+		}
+	}
+	if final.EnabledCount() != 3 {
+		t.Fatalf("EnabledCount = %d, want 3", final.EnabledCount())
 	}
 }
 
-// TestLandingToggleDeselects: space-toggling a row drops it from the
-// selection, and the remaining verifiers come back in input order — same
-// invariant the old filterPickerSelection helper used to guarantee.
-func TestLandingToggleDeselects(t *testing.T) {
+// TestLandingSeedsFromDisabledFlag: NewLanding mirrors each verifier's
+// Disabled flag onto the picker so re-launching with a previously disabled
+// row finds it pre-toggled off. This is the yaml→landing leg of the mirror.
+func TestLandingSeedsFromDisabledFlag(t *testing.T) {
+	vs := landingFixture()
+	vs[1].Disabled = true // Test
+	l := NewLanding(vs, "0.1", "/sock", "/cwd")
+	l.width, l.height = 120, 40
+
+	if l.EnabledCount() != 2 {
+		t.Fatalf("EnabledCount = %d, want 2 (Test seeded off)", l.EnabledCount())
+	}
+	next, _ := l.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	final := next.(Landing)
+	got := final.Verifiers()
+	if len(got) != 3 {
+		t.Fatalf("verifiers slice = %d, want 3 (disabled rows kept)", len(got))
+	}
+	if got[0].Disabled || !got[1].Disabled || got[2].Disabled {
+		t.Fatalf("disabled flags = [%v %v %v], want [false true false]", got[0].Disabled, got[1].Disabled, got[2].Disabled)
+	}
+}
+
+// TestLandingToggleMirrorsDisabled: space-toggling a row flips the Disabled
+// flag on the returned verifier rather than dropping the row. Disabled rows
+// stay in the slice so the runner/HUD can re-enable them without a restart.
+func TestLandingToggleMirrorsDisabled(t *testing.T) {
 	l := NewLanding(landingFixture(), "0.1", "/sock", "/cwd")
 	l.width, l.height = 120, 40
 
@@ -74,13 +107,18 @@ func TestLandingToggleDeselects(t *testing.T) {
 	if !final.Confirmed() {
 		t.Fatalf("enter should confirm after partial deselect")
 	}
-	sel := final.Selection()
-	if len(sel) != 2 || sel[0].Name != "Architect" || sel[1].Name != "Security" {
-		names := make([]string, len(sel))
-		for i, v := range sel {
-			names[i] = v.Name
-		}
-		t.Fatalf("selection = %v, want [Architect Security] (input order preserved)", names)
+	got := final.Verifiers()
+	if len(got) != 3 {
+		t.Fatalf("verifiers slice = %d, want 3 (input rows preserved)", len(got))
+	}
+	if got[0].Name != "Architect" || got[1].Name != "Test" || got[2].Name != "Security" {
+		t.Fatalf("order changed: %+v", got)
+	}
+	if got[0].Disabled || !got[1].Disabled || got[2].Disabled {
+		t.Fatalf("disabled flags after toggle = [%v %v %v], want [false true false]", got[0].Disabled, got[1].Disabled, got[2].Disabled)
+	}
+	if final.EnabledCount() != 2 {
+		t.Fatalf("EnabledCount = %d, want 2", final.EnabledCount())
 	}
 }
 

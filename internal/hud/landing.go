@@ -61,13 +61,14 @@ type Landing struct {
 	confirmed     bool
 }
 
-// NewLanding builds a Landing with every verifier pre-selected — same default
-// as the previous huh picker so users who just hit enter get the same set
-// they did before the refactor.
+// NewLanding builds a Landing seeded from each verifier's Disabled flag, so
+// the picker reflects the persisted hud.yaml state and a hit-enter user gets
+// the same set they ran last session. Users can still toggle freely; on
+// confirm the resulting toggle state is mirrored back to yaml by the caller.
 func NewLanding(verifiers []verifier.Verifier, version, socketPath, cwd string) Landing {
 	enabled := make([]bool, len(verifiers))
-	for i := range enabled {
-		enabled[i] = true
+	for i, v := range verifiers {
+		enabled[i] = !v.Disabled
 	}
 	return Landing{
 		verifiers:  verifiers,
@@ -122,17 +123,26 @@ func (l Landing) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return l, nil
 }
 
-// Selection returns the enabled subset of the input verifiers, preserving
-// input order. Empty when the user aborted.
-func (l Landing) Selection() []verifier.Verifier {
+// Verifiers returns the full input set in input order, with each entry's
+// Disabled flag rewritten to reflect the landing toggle state. Disabled rows
+// are kept (not filtered) so the runner can still surface them in the HUD
+// footer where the user can re-enable them mid-session without restarting.
+// Empty when the user aborted.
+func (l Landing) Verifiers() []verifier.Verifier {
+	if l.aborted {
+		return nil
+	}
 	out := make([]verifier.Verifier, 0, len(l.verifiers))
 	for i, v := range l.verifiers {
-		if i < len(l.enabled) && l.enabled[i] {
-			out = append(out, v)
-		}
+		v.Disabled = !(i < len(l.enabled) && l.enabled[i])
+		out = append(out, v)
 	}
 	return out
 }
+
+// EnabledCount reports how many landing rows are toggled on. Used by the
+// caller to enforce the MinSelected floor without iterating Verifiers().
+func (l Landing) EnabledCount() int { return l.selectedCount() }
 
 // Aborted reports whether the user dismissed the landing screen without
 // confirming a selection.
