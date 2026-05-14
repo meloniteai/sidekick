@@ -285,6 +285,61 @@ func TestTriggerVerifierImmediateRunsOnlySelectedVerifier(t *testing.T) {
 	}
 }
 
+// TestTriggerVerifierImmediateRunsInParallel guards the fix for the "hitting
+// r on one verifier blocks r on another" bug: two distinct verifiers must be
+// triggerable while one is still in flight.
+func TestTriggerVerifierImmediateRunsInParallel(t *testing.T) {
+	state := daemon.NewState()
+	slow := Verifier{
+		Name:      "Slow",
+		Direction: "N",
+		// Sleep so the first run is still in flight when we trigger the second.
+		Command: []string{"sh", "-c", `sleep 0.3; printf '{"distance":0.1,"reason":"slow"}\n'`},
+		Timeout: 5 * time.Second,
+	}
+	fast := Verifier{
+		Name:      "Fast",
+		Direction: "S",
+		Command:   []string{"sh", "-c", `printf '{"distance":0.2,"reason":"fast"}\n'`},
+		Timeout:   5 * time.Second,
+	}
+	r := NewRunner(context.Background(), state, []Verifier{slow, fast})
+	defer r.Stop()
+
+	if ok := r.TriggerVerifierImmediate("Slow"); !ok {
+		t.Fatal("first trigger should be accepted")
+	}
+	// Wait for Slow to be marked running before triggering Fast — otherwise
+	// the test could pass for the wrong reason (Slow finishing too quickly).
+	if !waitFor(2*time.Second, func() bool {
+		s, _ := state.Verifier("Slow")
+		return s.Running
+	}) {
+		t.Fatal("Slow did not start running")
+	}
+	if ok := r.TriggerVerifierImmediate("Fast"); !ok {
+		t.Fatal("second trigger should not be blocked while a different verifier is running")
+	}
+	if !waitFor(2*time.Second, func() bool {
+		s, _ := state.Verifier("Fast")
+		return !s.Running && s.Reason == "fast"
+	}) {
+		s, _ := state.Verifier("Fast")
+		t.Fatalf("Fast did not complete while Slow was in flight; reason=%q running=%v", s.Reason, s.Running)
+	}
+	// Re-triggering the same verifier while it's still running must be a no-op.
+	if ok := r.TriggerVerifierImmediate("Slow"); ok {
+		t.Fatal("re-triggering an in-flight verifier should be rejected")
+	}
+	if !waitFor(3*time.Second, func() bool {
+		s, _ := state.Verifier("Slow")
+		return !s.Running && s.Reason == "slow"
+	}) {
+		s, _ := state.Verifier("Slow")
+		t.Fatalf("Slow did not finish; reason=%q running=%v", s.Reason, s.Running)
+	}
+}
+
 func TestNewRunnerSeedsVerifierConfig(t *testing.T) {
 	state := daemon.NewState()
 	verifiers := []Verifier{
