@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/uriahlevy/hud/internal/verifier"
 )
 
 // TestVisualPreview renders a synthetic snapshot to stdout when
@@ -50,4 +53,23 @@ func TestVisualPreview(t *testing.T) {
 		anims: map[string]arrowAnim{},
 	}
 	fmt.Println(m.View())
+}
+
+// TestVisualPreviewLanding renders the landing/splash to stdout when
+// HUD_VISUAL=1 is set so we can eyeball the KIKAITE HUD banner and the
+// coral chrome. Sized for a typical 120-wide terminal.
+//
+//	HUD_VISUAL=1 go test -run TestVisualPreviewLanding ./internal/hud/ -v
+func TestVisualPreviewLanding(t *testing.T) {
+	if os.Getenv("HUD_VISUAL") == "" {
+		t.Skip("set HUD_VISUAL=1 to print a rendered frame")
+	}
+	vs := []verifier.Verifier{
+		{Name: "Architect", Direction: "N"},
+		{Name: "Test Engineer", Direction: "E"},
+		{Name: "Security", Direction: "S"},
+	}
+	l := NewLanding(vs, "0.1", "/Users/u/.hud/sockets/abc.sock", "/Users/u/repos/hud")
+	next, _ := l.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	fmt.Println(next.(Landing).View())
 }

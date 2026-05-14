@@ -34,17 +34,18 @@ var paletteItems = []paletteItem{
 	{label: "Toggle Event Log", shortcut: "ctrl+l", action: paletteActionToggleEventLog},
 }
 
-// Palette colors are calibrated against the Crush command-palette reference:
-// a saturated violet for the chrome (border, slashes, selection bar) and a
-// dim grey for chrome labels (filter prompt placeholder, shortcuts).
+// Palette colors share the KIKAITE coral accent family with the landing
+// screen so the command palette and the splash read as one product. Chrome
+// (border, slashes, selection bar) uses the saturated coral; titles and
+// prompts use the softer coral; secondary text stays dim grey.
 var (
-	stylePaletteBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("99")).Padding(1, 2)
-	stylePaletteTitle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
-	stylePaletteSlash       = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
-	stylePalettePrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
+	stylePaletteBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Padding(1, 2)
+	stylePaletteTitle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft))
+	stylePaletteSlash       = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral))
+	stylePalettePrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft))
 	stylePalettePlaceholder = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	stylePaletteShortcut    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	stylePaletteSelected    = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color("99")).Bold(true)
+	stylePaletteSelected    = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true)
 	stylePaletteHelp        = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	stylePaletteSeparator   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
