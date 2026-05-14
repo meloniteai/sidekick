@@ -56,6 +56,10 @@ type Runner struct {
 	// in-flight. KillBatch cancels it to terminate just the current batch
 	// without tearing down the runner (Stop is the full-shutdown path).
 	batchCancel context.CancelFunc
+	// singleCancels tracks in-flight per-verifier single-trigger runs so the
+	// user can fire "r" on several verifiers in parallel — each gets its own
+	// cancel so KillBatch can tear them down alongside any batch.
+	singleCancels map[string]context.CancelFunc
 	// killed is set when KillBatch fires mid-batch, so the post-batch
 	// reschedule path knows to drop any writes that landed during the kill
 	// instead of immediately starting a new batch.
@@ -71,12 +75,13 @@ type Runner struct {
 func NewRunner(parent context.Context, state *daemon.State, verifiers []Verifier) *Runner {
 	ctx, cancel := context.WithCancel(parent)
 	r := &Runner{
-		verifiers:    verifiers,
-		state:        state,
-		quietPeriod:  DefaultQuietPeriod,
-		changedFiles: map[string]struct{}{},
-		ctx:          ctx,
-		cancel:       cancel,
+		verifiers:     verifiers,
+		state:         state,
+		quietPeriod:   DefaultQuietPeriod,
+		changedFiles:  map[string]struct{}{},
+		singleCancels: map[string]context.CancelFunc{},
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 	for _, v := range verifiers {
 		state.UpsertVerifier(initialStatus(v))
@@ -188,6 +193,10 @@ func (r *Runner) KillBatch() {
 		r.killed = true
 		r.batchCancel()
 	}
+	for name, cancel := range r.singleCancels {
+		cancel()
+		delete(r.singleCancels, name)
+	}
 }
 
 // Trigger registers a changed file and ensures a batch run will happen no
@@ -234,30 +243,66 @@ func (r *Runner) TriggerImmediate() {
 	r.timer = time.AfterFunc(0, func() { r.runBatch("") })
 }
 
-// TriggerVerifierImmediate schedules a single verifier to run immediately,
-// bypassing the quiet period. It returns false when the verifier is unknown,
-// disabled, or another batch is already scheduled/running.
+// TriggerVerifierImmediate launches a single verifier in its own goroutine,
+// bypassing the quiet period and the global batch lock so the user can fire
+// several verifiers in parallel from the TUI. Returns false when the verifier
+// is unknown, disabled, or is already running (either as a single trigger or
+// as part of an in-flight batch).
 func (r *Runner) TriggerVerifierImmediate(name string) bool {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.timer != nil || r.running {
-		return false
-	}
+	var target Verifier
 	found := false
 	for _, v := range r.verifiers {
 		if v.Name == name {
+			target = v
 			found = true
 			break
 		}
 	}
 	if !found {
+		r.mu.Unlock()
 		return false
 	}
-	if cur, ok := r.state.Verifier(name); ok && cur.Disabled {
+	cur, ok := r.state.Verifier(name)
+	if !ok || cur.Disabled {
+		r.mu.Unlock()
 		return false
 	}
-	r.timer = time.AfterFunc(0, func() { r.runBatch(name) })
+	if _, busy := r.singleCancels[name]; busy {
+		r.mu.Unlock()
+		return false
+	}
+	if cur.Running {
+		// In flight as part of a batch — let that one complete.
+		r.mu.Unlock()
+		return false
+	}
+	ctx, cancel := context.WithCancel(r.ctx)
+	r.singleCancels[name] = cancel
+	r.mu.Unlock()
+
+	go r.runSingle(target, ctx)
 	return true
+}
+
+// runSingle executes one verifier outside of the batch machinery, so an
+// individual "r" trigger doesn't block on (or get blocked by) an unrelated
+// run. Session has no ChangedFiles because the user explicitly opted into
+// running just this one — drained files belong to the batch path.
+func (r *Runner) runSingle(v Verifier, ctx context.Context) {
+	defer func() {
+		r.mu.Lock()
+		delete(r.singleCancels, v.Name)
+		r.mu.Unlock()
+	}()
+
+	cwd, _ := os.Getwd()
+	session := Session{
+		Goal:           r.state.Goal(),
+		SessionBaseRef: r.state.SessionBaseRef(),
+		LastMessages:   transcript.LastMessages(cwd, transcriptTurns),
+	}
+	r.executeVerifier(ctx, v, session)
 }
 
 // RunNow runs all verifiers synchronously (used in tests).
@@ -297,69 +342,18 @@ func (r *Runner) runBatch(only string) {
 		if only != "" && v.Name != only {
 			continue
 		}
+		r.mu.Lock()
+		_, single := r.singleCancels[v.Name]
+		r.mu.Unlock()
+		if single {
+			// Already running individually via "r"; let that one own the slot
+			// so we don't double-mark Running or race on UpsertVerifier.
+			continue
+		}
 		wg.Add(1)
 		go func(v Verifier) {
 			defer wg.Done()
-			if cur, ok := r.state.Verifier(v.Name); ok && cur.Disabled {
-				return
-			}
-			r.state.MarkRunning(v.Name, true)
-			res, err := v.Verify(batchCtx, session)
-			cur, ok := r.state.Verifier(v.Name)
-			if !ok {
-				return
-			}
-			if cur.Disabled {
-				cur.Running = false
-				r.state.UpsertVerifier(cur)
-				return
-			}
-			cur.Running = false
-			cur.ComputedAt = time.Now()
-			switch {
-			case err != nil && batchCtx.Err() != nil:
-				// User-initiated stop: keep the previously displayed distance
-				// and just label the row so the kill is visible.
-				cur.Reason = "stopped"
-				// Status unchanged.
-				r.state.LogEvent(daemon.EventInfo, "verifier %s stopped", v.Name)
-			case err != nil:
-				cur.Reason = "error: " + err.Error()
-				cur.Distance = 1.0
-				cur.Status = ipc.StatusError
-				r.state.LogEvent(daemon.EventError, "verifier %s failed: %v", v.Name, err)
-			case res.Status == ipc.StatusUnknown:
-				// Verifier ran but couldn't score. Preserve the prior distance
-				// so the compass doesn't lie; just surface the reason+status.
-				cur.Reason = res.Reason
-				cur.Status = ipc.StatusUnknown
-				r.state.LogEvent(daemon.EventInfo, "verifier %s unknown: %s", v.Name, res.Reason)
-			default:
-				cur.Distance = res.Distance
-				cur.Reason = res.Reason
-				cur.Status = res.Status
-				if cur.Status == "" {
-					cur.Status = ipc.StatusOK
-				}
-				r.state.LogEvent(daemon.EventInfo, "verifier %s %s d=%.2f", v.Name, cur.Status, cur.Distance)
-			}
-			if res.Usage != nil {
-				cur.LastUsage = &ipc.AgentUsage{
-					Model:        res.Usage.Model,
-					InputTokens:  res.Usage.InputTokens,
-					OutputTokens: res.Usage.OutputTokens,
-					CacheReads:   res.Usage.CacheReads,
-					CacheWrites:  res.Usage.CacheWrites,
-					CostUSD:      res.Usage.CostUSD,
-					DurationMS:   res.Usage.DurationMS,
-				}
-			}
-			cur.History = appendHistory(cur.History, ipc.HistoryPoint{
-				Distance:   cur.Distance,
-				Status:     cur.Status,
-				ComputedAt: cur.ComputedAt,
-			})
-			r.state.UpsertVerifier(cur)
+			r.executeVerifier(batchCtx, v, session)
 		}(v)
 	}
 	wg.Wait()
@@ -382,4 +376,69 @@ func (r *Runner) runBatch(only string) {
 		r.scheduleLocked()
 	}
 	r.mu.Unlock()
+}
+
+// executeVerifier runs one verifier and folds its result into State. Shared
+// by the batch and single-trigger paths so they update state identically.
+func (r *Runner) executeVerifier(ctx context.Context, v Verifier, session Session) {
+	if cur, ok := r.state.Verifier(v.Name); ok && cur.Disabled {
+		return
+	}
+	r.state.MarkRunning(v.Name, true)
+	res, err := v.Verify(ctx, session)
+	cur, ok := r.state.Verifier(v.Name)
+	if !ok {
+		return
+	}
+	if cur.Disabled {
+		cur.Running = false
+		r.state.UpsertVerifier(cur)
+		return
+	}
+	cur.Running = false
+	cur.ComputedAt = time.Now()
+	switch {
+	case err != nil && ctx.Err() != nil:
+		// User-initiated stop: keep the previously displayed distance
+		// and just label the row so the kill is visible.
+		cur.Reason = "stopped"
+		// Status unchanged.
+		r.state.LogEvent(daemon.EventInfo, "verifier %s stopped", v.Name)
+	case err != nil:
+		cur.Reason = "error: " + err.Error()
+		cur.Distance = 1.0
+		cur.Status = ipc.StatusError
+		r.state.LogEvent(daemon.EventError, "verifier %s failed: %v", v.Name, err)
+	case res.Status == ipc.StatusUnknown:
+		// Verifier ran but couldn't score. Preserve the prior distance
+		// so the compass doesn't lie; just surface the reason+status.
+		cur.Reason = res.Reason
+		cur.Status = ipc.StatusUnknown
+		r.state.LogEvent(daemon.EventInfo, "verifier %s unknown: %s", v.Name, res.Reason)
+	default:
+		cur.Distance = res.Distance
+		cur.Reason = res.Reason
+		cur.Status = res.Status
+		if cur.Status == "" {
+			cur.Status = ipc.StatusOK
+		}
+		r.state.LogEvent(daemon.EventInfo, "verifier %s %s d=%.2f", v.Name, cur.Status, cur.Distance)
+	}
+	if res.Usage != nil {
+		cur.LastUsage = &ipc.AgentUsage{
+			Model:        res.Usage.Model,
+			InputTokens:  res.Usage.InputTokens,
+			OutputTokens: res.Usage.OutputTokens,
+			CacheReads:   res.Usage.CacheReads,
+			CacheWrites:  res.Usage.CacheWrites,
+			CostUSD:      res.Usage.CostUSD,
+			DurationMS:   res.Usage.DurationMS,
+		}
+	}
+	cur.History = appendHistory(cur.History, ipc.HistoryPoint{
+		Distance:   cur.Distance,
+		Status:     cur.Status,
+		ComputedAt: cur.ComputedAt,
+	})
+	r.state.UpsertVerifier(cur)
 }
