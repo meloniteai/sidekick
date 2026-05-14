@@ -271,14 +271,19 @@ func (m Model) renderHeader(totalW int) string {
 
 	var rows []string
 
-	// Row 1 — identity + session indicator. The wordmark animates with the
-	// model tick so the user gets an immediate "this thing is alive" cue
-	// even before any verifier has reported.
-	rows = append(rows,
-		flareBrand(m.tick, "HUD")+
-			"  "+styleHeaderLabel.Render("version: ")+ver+
-			"  "+styleHeaderLabel.Render("session: ")+styleSessionOn.Render("active"),
-	)
+	// Row 1 — session telemetry on the left, "KIKAITE HUD" brand on the
+	// right. The brand sits in the top-right corner (per the kikaite.ai
+	// marketing layout) and animates with the model tick so the user
+	// gets an immediate "this thing is alive" cue even before any
+	// verifier has reported.
+	leftCol := styleHeaderLabel.Render("version: ") + ver +
+		"  " + styleHeaderLabel.Render("session: ") + styleSessionOn.Render("active")
+	brand := flareBrand(m.tick, "KIKAITE HUD")
+	pad := contentW - lipgloss.Width(leftCol) - lipgloss.Width(brand)
+	if pad < 2 {
+		pad = 2
+	}
+	rows = append(rows, leftCol+strings.Repeat(" ", pad)+brand)
 
 	// Row 2 — telemetry: socket / mcp last-seen + verifier count + cumulative cost.
 	enabled := 0

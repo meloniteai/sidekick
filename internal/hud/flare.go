@@ -14,29 +14,32 @@ import (
 // alive when the user is staring at the compass.
 const flarePeriod = 30
 
-// hueAt returns an RGB hex string by walking the HSL colour wheel. The sat/lit
-// pair is dialed for a vivid-but-readable terminal palette: high enough to pop
-// against the dim grid, not so high that the orbs lose their distance-based
-// reds and greens.
-func hueAt(hue float64) string {
-	c := colorful.Hsl(math.Mod(math.Mod(hue, 360)+360, 360), 0.82, 0.62)
-	return c.Hex()
-}
-
-// flareBrand renders the HUD wordmark with a per-character hue sweep that
-// advances with the model tick. Each char gets its own hue offset so the
-// gradient appears to scroll horizontally across the text.
+// flareBrand renders the KIKAITE HUD wordmark as a per-character shimmer
+// that stays inside the brand coral band. Each char's lightness rides a
+// triangle wave offset by position so the gradient appears to scroll
+// horizontally — but the hue never leaves the coral range, so the brand
+// reads as a single identifiable color rather than a rainbow.
 func flareBrand(tick int, text string) string {
 	if text == "" {
 		return ""
 	}
 	runes := []rune(text)
-	step := 360.0 / flarePeriod
 	var b strings.Builder
 	for i, r := range runes {
-		hue := step*float64(tick) + float64(i)*22
+		// Phase advances with tick and char index; map to a 0→1→0
+		// triangle so each glyph breathes between the deep coral and
+		// a warmer highlight without drifting off-hue.
+		raw := float64(tick%flarePeriod)/flarePeriod + float64(i)*0.12
+		phase := raw - math.Floor(raw)
+		t := 1 - math.Abs(2*phase-1)
+		// Hue is fixed in the red-orange band (10°–18°) — narrow enough
+		// to read as one color even as t shifts the lightness.
+		hue := 10.0 + 8.0*t
+		sat := 0.78
+		lum := 0.50 + 0.16*t
+		c := colorful.Hsl(hue, sat, lum)
 		style := lipgloss.NewStyle().
-			Foreground(lipgloss.Color(hueAt(hue))).
+			Foreground(lipgloss.Color(c.Hex())).
 			Bold(true)
 		b.WriteString(style.Render(string(r)))
 	}

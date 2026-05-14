@@ -14,29 +14,38 @@ import (
 // hudBanner is the ANSI-Shadow block-letter wordmark drawn at the top of the
 // landing screen. Hand-drawn so we don't drag a figlet dependency in for one
 // six-line glyph string. The leading space lines it up with the inner padding.
-const hudBanner = ` ██╗  ██╗██╗   ██╗██████╗
- ██║  ██║██║   ██║██╔══██╗
- ███████║██║   ██║██║  ██║
- ██╔══██║██║   ██║██║  ██║
- ██║  ██║╚██████╔╝██████╔╝
- ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ `
+const hudBanner = ` ██╗  ██╗██╗██╗  ██╗ █████╗ ██╗████████╗███████╗    ██╗  ██╗██╗   ██╗██████╗
+ ██║ ██╔╝██║██║ ██╔╝██╔══██╗██║╚══██╔══╝██╔════╝    ██║  ██║██║   ██║██╔══██╗
+ █████╔╝ ██║█████╔╝ ███████║██║   ██║   █████╗      ███████║██║   ██║██║  ██║
+ ██╔═██╗ ██║██╔═██╗ ██╔══██║██║   ██║   ██╔══╝      ██╔══██║██║   ██║██║  ██║
+ ██║  ██╗██║██║  ██╗██║  ██║██║   ██║   ███████╗    ██║  ██║╚██████╔╝██████╔╝
+ ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚══════╝    ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ `
 
-// Landing colors echo the command palette (violet 99 chrome, magenta 141
-// accent, dim 240/245 secondary text) so the two screens read as one family.
-// Selection is the same solid violet bar the palette uses, and the OK/OFF
-// bullets borrow green/grey from the existing status badges.
+// brandCoral / brandCoralSoft form the KIKAITE accent family: the saturated
+// coral from kikaite.ai for chrome (border, selection bar, banner) and a
+// slightly lighter shade for secondary accents (titles, version pill) so
+// stacked elements still separate at a glance.
+const (
+	brandCoral     = "#E84B30"
+	brandCoralSoft = "#FF7A55"
+)
+
+// Landing colors are anchored to the KIKAITE coral palette so the splash
+// reads as the same brand the marketing site uses. Dim 240/245 stay for
+// secondary text and OK/OFF bullets keep their existing green/grey so
+// state cues survive the recolor.
 var (
-	styleLandingBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("99")).Padding(1, 2)
-	styleLandingBanner    = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
-	styleLandingVersion   = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+	styleLandingBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Padding(1, 2)
+	styleLandingBanner    = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Bold(true)
+	styleLandingVersion   = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft))
 	styleLandingLabel     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleLandingValue     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	styleLandingSeparator = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleLandingTitle     = lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
+	styleLandingTitle     = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft)).Bold(true)
 	styleLandingBulletOn  = lipgloss.NewStyle().Foreground(lipgloss.Color("84"))
 	styleLandingBulletOff = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	styleLandingDirection = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleLandingSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color("99")).Bold(true)
+	styleLandingSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true)
 	styleLandingHelp      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	styleLandingError     = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 )
@@ -266,12 +275,13 @@ func renderLandingVerifierRow(v verifier.Verifier, enabled, selected bool, nameW
 }
 
 // landingInnerWidth picks the content width for the landing modal. Sized
-// generously (up to 100 cells) so the socket path and banner don't wrap on
-// typical terminals; floors at 48 to keep the layout legible in narrow ones.
+// generously so the "KIKAITE HUD" banner (~76 cells) doesn't wrap on typical
+// terminals; floored at 84 to keep that banner intact and capped at 110 so
+// the modal still feels framed on ultra-wide terminals.
 func landingInnerWidth(termWidth int) int {
-	target := min(max(termWidth*8/10, 56), 100)
+	target := min(max(termWidth*8/10, 84), 110)
 	chrome := styleLandingBorder.GetHorizontalFrameSize()
-	return max(target-chrome, 48)
+	return max(target-chrome, 78)
 }
 
 // prettyPath collapses $HOME to "~" for compactness in user-facing paths.
