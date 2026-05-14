@@ -65,6 +65,45 @@ func goalGlyphAt(tick int) string {
 	return frames[((tick/2)%len(frames)+len(frames))%len(frames)]
 }
 
+// haloPhase is the same 0→1→0 triangle wave pulseStyle rides. Lifted into a
+// helper so the halo cells around the centre throb in lockstep with the
+// centre glyph instead of drifting out of phase.
+func haloPhase(tick int) float64 {
+	phase := float64(tick%flarePeriod) / flarePeriod
+	return 1 - math.Abs(2*phase-1)
+}
+
+// haloCellStyle returns the style for one of the cells surrounding the goal.
+// ringDist is the Chebyshev distance from centre (1 for the 8 immediate
+// neighbours; larger for outer rings). The cell tracks the centre hue but
+// rolls off in lightness with both phase and ringDist so the halo reads as
+// a soft outward glow rather than a competing disc.
+func haloCellStyle(tick int, ringDist int) lipgloss.Style {
+	t := haloPhase(tick)
+	dim := 1.0 / float64(ringDist+1)
+	lum := 0.18 + 0.52*t*dim
+	cold, _ := colorful.Hex("#4ad6ff")
+	warm, _ := colorful.Hex("#ff7ff0")
+	mixed := cold.BlendLab(warm, t).Clamped()
+	black, _ := colorful.Hex("#050510")
+	mixed = mixed.BlendLab(black, 1-lum).Clamped()
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(mixed.Hex()))
+	if ringDist == 1 {
+		style = style.Bold(true)
+	}
+	return style
+}
+
+// haloGlyph picks the unicode rune used for a halo cell at the given offset
+// from the centre. Cardinal neighbours get a thin dot; diagonal neighbours
+// get a heavier dot so the iris reads as faceted rather than gridded.
+func haloGlyph(dCol, dRow int) string {
+	if dCol == 0 || dRow == 0 {
+		return "·"
+	}
+	return "∙"
+}
+
 // sparkleGlyph returns one of a small set of sparkle runes, cycling with
 // tick so a "converged" orb appears to twinkle.
 func sparkleGlyph(tick int) rune {

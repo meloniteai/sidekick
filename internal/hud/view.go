@@ -78,10 +78,6 @@ const arrowTrailLen = 2
 // goalGlyph is the target the orbs converge on at the grid center.
 const goalGlyph = "◎"
 
-const (
-	axisCell = iota + 1
-)
-
 var verifierMarkerGlyphs = []rune{'▲', '◆', '■', '✚', '△', '◇', '□', '▽'}
 
 func verifierMarkerGlyph(index int) rune {
@@ -396,25 +392,13 @@ func (m Model) renderGrid(w, h int) string {
 		return ""
 	}
 	cells := make([][]rune, h)
-	kinds := make([][]int, h)
 	for r := range cells {
 		cells[r] = make([]rune, w)
-		kinds[r] = make([]int, w)
 		for c := range cells[r] {
 			cells[r][c] = ' '
 		}
 	}
 	cx, cy := w/2, h/2
-
-	// axis lines (subtle bearing reference)
-	for c := 0; c < w; c++ {
-		cells[cy][c] = '·'
-		kinds[cy][c] = axisCell
-	}
-	for r := 0; r < h; r++ {
-		cells[r][cx] = '·'
-		kinds[r][cx] = axisCell
-	}
 
 	// One compact marker per verifier is projected from Direction + Distance.
 	// The nearby label is offset and clamped inward so perimeter bearings stay
@@ -588,6 +572,14 @@ func (m Model) renderGrid(w, h int) string {
 			if labelHere {
 				continue
 			}
+			// Halo sits behind labels and arrows but in front of the static
+			// reticle/wind/needle layers. This is the "bigger strobe" — eight
+			// cells around the goal throb in lockstep with the centre pulse so
+			// the convergence cue is visible from peripheral vision.
+			if dc, dr := c-cx, r-cy; absInt(dc) <= 1 && absInt(dr) <= 1 {
+				sb.WriteString(haloCellStyle(m.tick, 1).Render(haloGlyph(dc, dr)))
+				continue
+			}
 			if glyph, ok := reticleGlyph(c, r, cx, cy, w, h); ok {
 				sb.WriteString(styleGoalDot.Render(string(glyph)))
 				continue
@@ -596,11 +588,7 @@ func (m Model) renderGrid(w, h int) string {
 				sb.WriteString(styleWind.Render(string(wch)))
 				continue
 			}
-			if kinds[r][c] == axisCell {
-				sb.WriteString(styleAxis.Render("·"))
-			} else {
-				sb.WriteRune(cells[r][c])
-			}
+			sb.WriteRune(cells[r][c])
 		}
 		if r < h-1 {
 			sb.WriteByte('\n')

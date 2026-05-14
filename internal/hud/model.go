@@ -97,11 +97,11 @@ type Model struct {
 // New returns an initialized Model.
 func New(state *daemon.State) Model {
 	return Model{
-		state:        state,
-		snapshot:     state.Snapshot(),
-		events:       state.Events(),
-		anims:        map[string]arrowAnim{},
-		orbs:         map[string]orbSpring{},
+		state:    state,
+		snapshot: state.Snapshot(),
+		events:   state.Events(),
+		anims:    map[string]arrowAnim{},
+		orbs:     map[string]orbSpring{},
 		// Critically damped so the orb settles onto its target without
 		// bouncing past it — overshoot would briefly paint a misleading
 		// "further from goal than it actually is" distance reading.
