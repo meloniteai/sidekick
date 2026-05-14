@@ -99,8 +99,13 @@ func newStartCmd() *cobra.Command {
 					return err
 				}
 				verifiers = selected
+				if loadedConfigPath != "" {
+					if err := mirrorDisabledToConfig(loadedConfigPath, verifiers); err != nil {
+						return fmt.Errorf("persist landing choices: %w", err)
+					}
+				}
 			}
-			fmt.Fprintf(os.Stderr, "[hud] enabled: %s\n", verifierNames(verifiers))
+			fmt.Fprintf(os.Stderr, "[hud] enabled: %s\n", verifierNames(enabledVerifiers(verifiers)))
 
 			state := daemon.NewState()
 			state.SetSessionBaseRef(baseRef)
@@ -224,11 +229,14 @@ func acquireDaemonSocket(sock string, state *daemon.State, handler daemon.EventH
 }
 
 // runLanding shows the start-of-session landing screen (HUD wordmark, version,
-// session socket, verifier multi-select) and returns the chosen subset.
-// Aborting with esc/ctrl+c is reported as a clean shutdown so the user sees
-// the same "aborted: no verifiers selected" message they used to get from the
-// huh picker. The landing screen itself lives in internal/hud so the visual
-// styling stays adjacent to the command palette it mirrors.
+// session socket, verifier multi-select) and returns the full verifier set
+// with each entry's Disabled flag aligned to the landing toggle state.
+// Disabled rows are intentionally kept in the slice so the HUD footer can
+// re-enable them mid-session without a restart. Aborting with esc/ctrl+c is
+// reported as a clean shutdown so the user sees the same "aborted: no
+// verifiers selected" message they used to get from the huh picker. The
+// landing screen itself lives in internal/hud so the visual styling stays
+// adjacent to the command palette it mirrors.
 func runLanding(available []verifier.Verifier, version, socketPath string) ([]verifier.Verifier, error) {
 	cwd, _ := os.Getwd()
 	model := hudtui.NewLanding(available, version, socketPath, cwd)
@@ -244,11 +252,36 @@ func runLanding(available []verifier.Verifier, version, socketPath string) ([]ve
 	if landing.Aborted() || !landing.Confirmed() {
 		return nil, fmt.Errorf("aborted: no verifiers selected")
 	}
-	out := landing.Selection()
-	if len(out) < hudtui.MinSelected {
-		return nil, fmt.Errorf("landing returned %d verifiers, need at least %d", len(out), hudtui.MinSelected)
+	if landing.EnabledCount() < hudtui.MinSelected {
+		return nil, fmt.Errorf("landing returned %d enabled verifiers, need at least %d", landing.EnabledCount(), hudtui.MinSelected)
 	}
-	return out, nil
+	return landing.Verifiers(), nil
+}
+
+// mirrorDisabledToConfig persists each verifier's Disabled flag back to
+// hud.yaml so the file always reflects the active session's choices. This
+// is the yaml→landing→yaml round trip that keeps the persisted config in
+// sync with what the user just confirmed.
+func mirrorDisabledToConfig(path string, verifiers []verifier.Verifier) error {
+	for _, v := range verifiers {
+		if err := config.SetVerifierDisabled(path, v.Name, v.Disabled); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// enabledVerifiers returns the subset of verifiers whose Disabled flag is
+// false. Used for the boot-time "[hud] enabled: ..." log so the operator
+// sees what will actually run, not what was offered.
+func enabledVerifiers(vs []verifier.Verifier) []verifier.Verifier {
+	out := make([]verifier.Verifier, 0, len(vs))
+	for _, v := range vs {
+		if !v.Disabled {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func verifierNames(vs []verifier.Verifier) string {
