@@ -24,30 +24,38 @@ const hudBanner = ` ██╗  ██╗██╗██╗  ██╗ ███�
 // brandCoral / brandCoralSoft form the KIKAITE accent family: the saturated
 // coral from kikaite.ai for chrome (border, selection bar, banner) and a
 // slightly lighter shade for secondary accents (titles, version pill) so
-// stacked elements still separate at a glance.
+// stacked elements still separate at a glance. brandBg is the warm graphite
+// that fills the inside of every framed surface — picked to read as a
+// deliberate "off-black" against the coral chrome on both the splash and the
+// main HUD without competing with the user's terminal theme.
 const (
 	brandCoral     = "#E84B30"
 	brandCoralSoft = "#FF7A55"
+	brandBg        = "#1A1612"
 )
 
 // Landing colors are anchored to the KIKAITE coral palette so the splash
 // reads as the same brand the marketing site uses. Dim 240/245 stay for
 // secondary text and OK/OFF bullets keep their existing green/grey so
-// state cues survive the recolor.
+// state cues survive the recolor. Every inner style sets Background to
+// brandBg so the embedded SGR resets don't punch through to terminal
+// black inside the framed modal — see brandBgColor in view.go for the
+// long-form note on why this is required.
 var (
-	styleLandingBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Padding(1, 2)
-	styleLandingBanner    = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Bold(true)
-	styleLandingVersion   = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft))
-	styleLandingLabel     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleLandingValue     = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	styleLandingSeparator = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleLandingTitle     = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft)).Bold(true)
-	styleLandingBulletOn  = lipgloss.NewStyle().Foreground(lipgloss.Color("84"))
-	styleLandingBulletOff = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleLandingDirection = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleLandingSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true)
-	styleLandingHelp      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleLandingError     = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	styleLandingBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(lipgloss.Color(brandBg)).Padding(1, 2)
+	styleLandingBanner    = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(lipgloss.Color(brandBg)).Bold(true)
+	styleLandingVersion   = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft)).Background(lipgloss.Color(brandBg))
+	styleLandingLabel     = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(brandBg))
+	styleLandingValue     = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color(brandBg))
+	styleLandingSeparator = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color(brandBg))
+	styleLandingTitle     = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft)).Background(lipgloss.Color(brandBg)).Bold(true)
+	styleLandingBulletOn  = lipgloss.NewStyle().Foreground(lipgloss.Color("84")).Background(lipgloss.Color(brandBg))
+	styleLandingBulletOff = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color(brandBg))
+	styleLandingDirection = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(brandBg))
+	// styleLandingSelected keeps its coral bg — that bar is the cursor.
+	styleLandingSelected = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true)
+	styleLandingHelp     = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(brandBg))
+	styleLandingError    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(brandBg)).Bold(true)
 )
 
 // Landing is the start-of-session screen: HUD wordmark + version pill, the
@@ -219,7 +227,7 @@ func (l Landing) View() string {
 	b.WriteString("\n")
 	b.WriteString(styleLandingHelp.Render("↑/↓ navigate · space toggle · a select all · enter start · esc abort"))
 
-	box := styleLandingBorder.Width(innerW + styleLandingBorder.GetHorizontalPadding()).Render(b.String())
+	box := styleLandingBorder.Width(innerW + styleLandingBorder.GetHorizontalPadding()).Render(reanchorBrandBg(b.String()))
 	if l.width == 0 || l.height == 0 {
 		return box
 	}

@@ -23,8 +23,8 @@ func TestRenderListSnakeGating(t *testing.T) {
 		},
 	}
 	lines := strings.Split(strings.TrimRight(m.renderList(80), "\n"), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("got %d lines, want 4: %q", len(lines), lines)
+	if len(lines) != 5 {
+		t.Fatalf("got %d lines, want 5 (title + col header + 2 rows + footer): %q", len(lines), lines)
 	}
 	var running, idle string
 	for _, ln := range lines {
@@ -222,21 +222,22 @@ func TestRenderListColumnsStayAlignedAndTruncated(t *testing.T) {
 
 	const width = 76
 	lines := strings.Split(strings.TrimRight(m.renderList(width), "\n"), "\n")
-	if got := len(lines); got != 4 {
-		t.Fatalf("got %d lines, want 4:\n%s", got, strings.Join(lines, "\n"))
+	if got := len(lines); got != 5 {
+		t.Fatalf("got %d lines, want 5 (title + col header + 2 rows + footer):\n%s", got, strings.Join(lines, "\n"))
 	}
 	layout := listLayoutFor(width)
 	statusStart := lipgloss.Width(listCursorPad) + layout.keyW + layout.nameW + layout.dirW + layout.typeW + 4*lipgloss.Width(listColumnGap)
 	reasonStart := statusStart + layout.statusW + lipgloss.Width(listColumnGap)
-	for row, line := range lines[:3] {
+	// lines[0] is the title banner; the column header + 2 verifier rows live at 1..3.
+	for row, line := range lines[1:4] {
 		if got := lipgloss.Width(line); got > width {
-			t.Fatalf("line %d width = %d, want <= %d: %q", row, got, width, line)
+			t.Fatalf("line %d width = %d, want <= %d: %q", row+1, got, width, line)
 		}
 		if lipgloss.Width(line) < reasonStart {
-			t.Fatalf("line %d too short to contain reason column at %d: %q", row, reasonStart, line)
+			t.Fatalf("line %d too short to contain reason column at %d: %q", row+1, reasonStart, line)
 		}
 	}
-	for _, line := range lines[1:3] {
+	for _, line := range lines[2:4] {
 		statusCol := visualSlice(line, statusStart, statusStart+layout.statusW)
 		reasonCol := visualSlice(line, reasonStart, width)
 		if strings.TrimSpace(statusCol) == "" {
@@ -395,7 +396,7 @@ func TestStatusWizardShowsFullVerifierStatus(t *testing.T) {
 	}
 }
 
-func TestViewWrapsVerifierBrowserInWhiteBorder(t *testing.T) {
+func TestViewWrapsVerifierBrowserInCoralBorder(t *testing.T) {
 	m := Model{
 		width:  100,
 		height: 30,
@@ -409,26 +410,32 @@ func TestViewWrapsVerifierBrowserInWhiteBorder(t *testing.T) {
 	out := m.View()
 
 	lines := strings.Split(out, "\n")
-	headerIdx := -1
+	titleIdx := -1
 	for i, ln := range lines {
-		if strings.Contains(ln, "key") && strings.Contains(ln, "verifier") {
-			headerIdx = i
+		if strings.Contains(ln, "Verifiers") && strings.Contains(ln, "/") {
+			titleIdx = i
 			break
 		}
 	}
-	if headerIdx < 1 {
-		t.Fatalf("verifier browser header not found in:\n%s", out)
+	if titleIdx < 1 {
+		t.Fatalf("verifier browser title row not found in:\n%s", out)
 	}
-	if !strings.Contains(lines[headerIdx-1], "╭") {
-		t.Fatalf("expected top border immediately above verifier browser header, got %q", lines[headerIdx-1])
+	if !strings.Contains(lines[titleIdx-1], "╭") {
+		t.Fatalf("expected top border immediately above verifier browser title row, got %q", lines[titleIdx-1])
 	}
 	if !strings.Contains(lines[len(lines)-1], "╰") {
 		t.Fatalf("expected bottom border on final line, got %q", lines[len(lines)-1])
 	}
 
-	want := lipgloss.NewStyle().BorderForeground(lipgloss.Color("15")).Border(lipgloss.RoundedBorder()).Render("")
+	// styleListBorder must share the splash/palette coral chrome plus the
+	// warm brand bg so all three surfaces read as one product.
+	want := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(brandCoral)).
+		Background(lipgloss.Color(brandBg)).
+		Render("")
 	if got := styleListBorder.Render(""); got != want {
-		t.Fatalf("styleListBorder must use a white rounded border: got %q want %q", got, want)
+		t.Fatalf("styleListBorder must use the brand coral border + warm bg: got %q want %q", got, want)
 	}
 }
 

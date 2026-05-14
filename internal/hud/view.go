@@ -13,36 +13,96 @@ import (
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
+// brandBgColor is the lipgloss.Color for brandBg, hoisted into a var so
+// every per-cell style can chain .Background(brandBgColor) without re-
+// allocating the conversion. We bake the brand bg into *all* styles that
+// render inside a framed surface because lipgloss embeds `\033[0m` reset
+// codes around each inner style — and a reset wipes the parent box's bg,
+// punching the terminal's real background through the rendered frame as
+// black patches. Setting the bg explicitly on every inner cell means the
+// trailing reset returns to the brand bg, not the terminal default.
+var brandBgColor = lipgloss.Color(brandBg)
+
+// brandBgSeq is the SGR sequence lipgloss emits when setting the brand
+// background under the currently-active color profile. We capture it once
+// and splice it back in after every embedded `\033[0m` reset inside framed
+// surfaces (via reanchorBrandBg) — without this re-anchor, inter-cell
+// gaps and trailing padding spaces show terminal-default black the moment
+// any inner style closes itself.
+var brandBgSeq = extractBgSeq(brandBgColor)
+
+func extractBgSeq(c lipgloss.Color) string {
+	const probe = "·"
+	rendered := lipgloss.NewStyle().Background(c).Render(probe)
+	idx := strings.Index(rendered, probe)
+	if idx <= 0 {
+		return ""
+	}
+	return rendered[:idx]
+}
+
+// reanchorBrandBg post-processes the inner content of a framed surface so
+// every inline `\033[0m` reset is immediately followed by re-anchoring the
+// brand bg. Apply it to the *inner* content (before passing to the box
+// border's .Render) so the box's own final reset still fires last and the
+// terminal returns to its default state at the box edge.
+func reanchorBrandBg(s string) string {
+	if brandBgSeq == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, "\x1b[0m", "\x1b[0m"+brandBgSeq)
+}
+
+// styleSpacerBg paints the gap rows between vertically stacked boxes so
+// the brand bg carries continuously from one frame to the next instead
+// of revealing the terminal's true bg in the inter-box seam.
+var styleSpacerBg = lipgloss.NewStyle().Background(brandBgColor)
+
+// brandSpacerRow returns a single brand-bg-painted blank row spanning
+// width cells. Used in View() to replace bare "\n" separators between
+// the header, compass, git panel, and verifier list boxes.
+func brandSpacerRow(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return styleSpacerBg.Render(strings.Repeat(" ", width))
+}
+
 var (
-	styleHeader        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	styleGrid          = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	styleGoalDot       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	styleAxis          = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleRunning       = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	styleVerifierLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("211")).Bold(true)
-	styleReason        = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleGoalLbl       = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	styleArrowOutHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
-	styleArrowOutTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("88"))
-	styleArrowInHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
-	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28"))
-	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Foreground(lipgloss.Color("252"))
-	styleListBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("15"))
-	styleHeaderLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleSessionOn     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
-	styleWind          = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Bold(true)
-	styleDisabled      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleHeader        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).Background(brandBgColor)
+	styleGrid          = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(brandBgColor).Padding(0, 1)
+	styleGoalDot       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Background(brandBgColor)
+	styleAxis          = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
+	styleRunning       = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Background(brandBgColor)
+	styleVerifierLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("211")).Background(brandBgColor).Bold(true)
+	styleReason        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
+	styleGoalLbl       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Background(brandBgColor)
+	styleArrowOutHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
+	styleArrowOutTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("88")).Background(brandBgColor)
+	styleArrowInHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
+	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28")).Background(brandBgColor)
+	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(brandBgColor).Padding(0, 1).Foreground(lipgloss.Color("252"))
+	styleListBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(brandBgColor)
+	styleListTitle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft)).Background(brandBgColor)
+	styleListSlash     = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor)
+	// styleListSelected keeps its coral bg — that bar is the cursor.
+	styleListSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true)
+	styleHeaderLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
+	styleSessionOn     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
+	styleWind          = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(brandBgColor).Bold(true)
+	styleDisabled      = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
+	// styleFooterKeys keeps its own grey chip bg for intentional contrast.
 	styleFooterKeys    = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238")).Bold(true).Padding(0, 1)
-	styleErrorBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
-	styleUnknownBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Bold(true)
-	styleStaleBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	stylePendingBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleRemoteBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	styleCostBadge     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleDiffAdded     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
-	styleDiffRemoved   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
-	styleDiffBinary    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	styleGitBranch     = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	styleErrorBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
+	styleUnknownBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor).Bold(true)
+	styleStaleBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(brandBgColor)
+	stylePendingBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
+	styleRemoteBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(brandBgColor)
+	styleCostBadge     = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
+	styleDiffAdded     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
+	styleDiffRemoved   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
+	styleDiffBinary    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(brandBgColor)
+	styleGitBranch     = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(brandBgColor).Bold(true)
 )
 
 // directionArrow points outward along each compass axis (away from goal toward
@@ -102,7 +162,7 @@ func orbStyle(d float64) lipgloss.Style {
 	default:
 		color = lipgloss.Color("9") // bright red — far
 	}
-	return lipgloss.NewStyle().Foreground(color).Bold(true)
+	return lipgloss.NewStyle().Foreground(color).Background(brandBgColor).Bold(true)
 }
 
 // View satisfies tea.Model.
@@ -147,9 +207,22 @@ func (m Model) View() string {
 			gridW = gridW - logW - 2
 		}
 	}
-	gridH := m.height - headerLines - 2 - listLines - gitLines
-	if gridH < 9 {
-		gridH = 9
+	// spacerRows is the count of brand-bg-painted blank rows we'll inject
+	// between vertically stacked boxes: one between header and compass and
+	// one between compass and verifier list, plus one between header and
+	// the git panel when that's toggled on. The compass's own top+bottom
+	// borders contribute the trailing "- 2".
+	spacerRows := 2
+	if m.showGitPanel {
+		spacerRows = 3
+	}
+	gridH := m.height - headerLines - spacerRows - 2 - listLines - gitLines
+	// 5 is the smallest compass that still places labels around all 8 wind
+	// markers; below that the layout collapses. The min absorbs the extra
+	// rows the "Verifiers ////" banner and inter-box spacers introduce on
+	// a 24-row terminal without pushing the view past the bottom edge.
+	if gridH < 5 {
+		gridH = 5
 	}
 	if gridW < 20 {
 		gridW = 20
@@ -158,25 +231,36 @@ func (m Model) View() string {
 		gridH-- // odd height keeps origin centered
 	}
 
+	// spacer is a brand-bg-painted blank row that bridges the seam between
+	// vertically stacked boxes so the warm graphite carries through the
+	// gap instead of dropping to terminal black for one row.
+	spacer := brandSpacerRow(m.width)
+
 	var b strings.Builder
 	b.WriteString(header)
+	b.WriteString("\n")
+	b.WriteString(spacer)
 	b.WriteString("\n")
 	if m.showGitPanel {
 		b.WriteString(m.renderGitPanel(m.width))
 		b.WriteString("\n")
+		b.WriteString(spacer)
+		b.WriteString("\n")
 	}
-	compass := styleGrid.Render(m.renderGrid(gridW, gridH))
+	compass := styleGrid.Render(reanchorBrandBg(m.renderGrid(gridW, gridH)))
 	if logW > 0 {
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, compass, "  ", m.renderEventLog(logW, gridH)))
 	} else {
 		b.WriteString(compass)
 	}
 	b.WriteString("\n")
+	b.WriteString(spacer)
+	b.WriteString("\n")
 	listInnerW := m.width - styleListBorder.GetHorizontalFrameSize()
 	if listInnerW < 1 {
 		listInnerW = 1
 	}
-	b.WriteString(styleListBorder.Render(m.renderList(listInnerW)))
+	b.WriteString(styleListBorder.Render(reanchorBrandBg(m.renderList(listInnerW))))
 	return b.String()
 }
 
@@ -231,7 +315,7 @@ func (m Model) renderGitPanel(maxWidth int) string {
 			rows = append(rows, renderGitFileRow(f, pathW, countW))
 		}
 	}
-	return styleListBorder.Render(strings.Join(rows, "\n"))
+	return styleListBorder.Render(reanchorBrandBg(strings.Join(rows, "\n")))
 }
 
 func renderGitFileRow(f gitstats.FileStat, pathW, countW int) string {
@@ -326,7 +410,7 @@ func (m Model) renderHeader(totalW int) string {
 	}
 	rows = append(rows, goalRow)
 
-	return styleHeaderBox.Width(styleW).Render(strings.Join(rows, "\n"))
+	return styleHeaderBox.Width(styleW).Render(reanchorBrandBg(strings.Join(rows, "\n")))
 }
 
 // renderGitHeaderRow renders the single-line git summary always shown in
@@ -690,19 +774,23 @@ func absInt(v int) int {
 
 func (m Model) listLineCount() int {
 	border := styleListBorder.GetVerticalFrameSize()
+	// title + column header + body + footer help.
 	if len(m.snapshot.Verifiers) == 0 {
-		return 3 + border
+		return 4 + border
 	}
-	return len(m.snapshot.Verifiers) + 2 + border
+	return len(m.snapshot.Verifiers) + 3 + border
 }
 
 func (m Model) renderList(maxWidth int) string {
 	if len(m.snapshot.Verifiers) == 0 {
-		return renderListHeader(maxWidth) + "\n" +
+		return renderListTitleRow(maxWidth) + "\n" +
+			renderListHeader(maxWidth) + "\n" +
 			styleReason.Render(truncate("(no verifiers configured)", maxWidth)) + "\n" +
 			m.renderFooterHelp(maxWidth)
 	}
 	var b strings.Builder
+	b.WriteString(renderListTitleRow(maxWidth))
+	b.WriteString("\n")
 	b.WriteString(renderListHeader(maxWidth))
 	b.WriteString("\n")
 	for i, v := range m.snapshot.Verifiers {
@@ -711,6 +799,16 @@ func (m Model) renderList(maxWidth int) string {
 	}
 	b.WriteString(m.renderFooterHelp(maxWidth))
 	return b.String()
+}
+
+// renderListTitleRow draws the "Verifiers /////" banner that anchors the
+// browser panel to the same visual family as the ctrl+P command palette: the
+// title word in soft coral, the trailing slashes filling the rest of the
+// inner width in saturated coral.
+func renderListTitleRow(innerW int) string {
+	title := "Verifiers "
+	slashCount := max(innerW-lipgloss.Width(title), 0)
+	return styleListTitle.Render(title) + styleListSlash.Render(strings.Repeat("/", slashCount))
 }
 
 func (m Model) renderFooterHelp(maxWidth int) string {
@@ -771,7 +869,7 @@ func (m Model) renderEventLog(width, contentH int) string {
 		rows = append(rows, padCell("", innerW))
 	}
 
-	return styleGrid.Render(strings.Join(rows, "\n"))
+	return styleGrid.Render(reanchorBrandBg(strings.Join(rows, "\n")))
 }
 
 // renderEventRow wraps the message across multiple rows up to maxLines.
@@ -916,11 +1014,30 @@ func renderListHeader(maxWidth int) string {
 
 func (m Model) renderListRow(i int, v ipc.VerifierStatus, maxWidth int) string {
 	layout := listLayoutFor(maxWidth)
-	cursor := " "
-	if i == m.selectedVerifier {
-		cursor = styleEditCursor.Render(">")
-	}
+	selected := i == m.selectedVerifier
 	label := "[" + toggleLabel(i) + "]"
+
+	if selected {
+		// Mirror the ctrl+P palette: build the row in plain text and paint
+		// the entire line in white-on-coral so the highlight reads as one
+		// solid bar. Per-cell colors are intentionally dropped here because
+		// the selected style overrides the row's foreground uniformly.
+		row := ">" +
+			tableCell(label, layout.keyW) + listColumnGap +
+			tableCell(v.Name, layout.nameW) + listColumnGap +
+			tableCell(v.Direction, layout.dirW) + listColumnGap +
+			tableCell(verifierType(v), layout.typeW) + listColumnGap +
+			tableCell(plainStatusText(v), layout.statusW)
+		if layout.reasonW > 0 {
+			row += listColumnGap + tableCell(v.Reason, layout.reasonW)
+		}
+		row = truncate(row, maxWidth)
+		if pad := maxWidth - lipgloss.Width(row); pad > 0 {
+			row += strings.Repeat(" ", pad)
+		}
+		return styleListSelected.Render(row)
+	}
+
 	name := styledTableCell(v.Name, layout.nameW, lipgloss.NewStyle())
 	kind := styledTableCell(verifierType(v), layout.typeW, lipgloss.NewStyle())
 	if v.Disabled {
@@ -930,7 +1047,7 @@ func (m Model) renderListRow(i int, v ipc.VerifierStatus, maxWidth int) string {
 
 	status := renderStatusCell(v, layout.statusW, m.tick)
 
-	row := cursor +
+	row := " " +
 		tableCell(label, layout.keyW) + listColumnGap +
 		name + listColumnGap +
 		tableCell(v.Direction, layout.dirW) + listColumnGap +
@@ -944,6 +1061,29 @@ func (m Model) renderListRow(i int, v ipc.VerifierStatus, maxWidth int) string {
 		row += listColumnGap + reason
 	}
 	return truncate(row, maxWidth)
+}
+
+// plainStatusText returns the verifier's status cell as plain text (no SGR
+// styling) for use inside the painted selection bar — applying status colors
+// there would fight the uniform white-on-coral highlight.
+func plainStatusText(v ipc.VerifierStatus) string {
+	if v.Running {
+		return "● run"
+	}
+	switch {
+	case v.Disabled:
+		return "off"
+	case v.Status == ipc.StatusError:
+		return "err  d=" + fmt.Sprintf("%.2f", v.Distance)
+	case v.Status == ipc.StatusUnknown:
+		return "?    d=" + fmt.Sprintf("%.2f", v.Distance)
+	case v.Status == ipc.StatusStale:
+		return "stale d=" + fmt.Sprintf("%.2f", v.Distance)
+	case v.Status == ipc.StatusPending:
+		return "-"
+	default:
+		return fmt.Sprintf("d=%.2f", v.Distance)
+	}
 }
 
 const (

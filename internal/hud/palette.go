@@ -37,17 +37,21 @@ var paletteItems = []paletteItem{
 // Palette colors share the KIKAITE coral accent family with the landing
 // screen so the command palette and the splash read as one product. Chrome
 // (border, slashes, selection bar) uses the saturated coral; titles and
-// prompts use the softer coral; secondary text stays dim grey.
+// prompts use the softer coral; secondary text stays dim grey. Every inner
+// style sets Background to brandBg so the embedded SGR resets don't punch
+// through to terminal black inside the framed modal — see brandBgColor in
+// view.go for the long-form note on why this is required.
 var (
-	stylePaletteBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Padding(1, 2)
-	stylePaletteTitle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft))
-	stylePaletteSlash       = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral))
-	stylePalettePrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft))
-	stylePalettePlaceholder = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	stylePaletteShortcut    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	stylePaletteSelected    = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true)
-	stylePaletteHelp        = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	stylePaletteSeparator   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	stylePaletteBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(lipgloss.Color(brandBg)).Padding(1, 2)
+	stylePaletteTitle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft)).Background(lipgloss.Color(brandBg))
+	stylePaletteSlash       = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(lipgloss.Color(brandBg))
+	stylePalettePrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft)).Background(lipgloss.Color(brandBg))
+	stylePalettePlaceholder = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color(brandBg))
+	stylePaletteShortcut    = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(brandBg))
+	// stylePaletteSelected keeps its coral bg — that bar is the cursor.
+	stylePaletteSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true)
+	stylePaletteHelp      = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(brandBg))
+	stylePaletteSeparator = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color(brandBg))
 )
 
 // Palette is the ctrl+p command palette: a centered overlay listing the four
@@ -73,7 +77,11 @@ func NewPalette() Palette {
 	ti.Focus()
 	ti.PromptStyle = stylePalettePrompt
 	ti.PlaceholderStyle = stylePalettePlaceholder
-	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	ti.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color(brandBg))
+	// Cursor inherits the brand bg too — bubbles/textinput defaults to a
+	// reverse-video block that would otherwise show as black-on-grey when
+	// the box bg gets reset by the inner cursor render.
+	ti.Cursor.Style = lipgloss.NewStyle().Background(lipgloss.Color(brandBg))
 	return Palette{filter: ti}
 }
 
@@ -195,7 +203,7 @@ func (p Palette) View() string {
 	b.WriteString("\n")
 	b.WriteString(stylePaletteHelp.Render("↑/↓ choose · enter confirm · esc cancel"))
 
-	box := stylePaletteBorder.Width(innerW + stylePaletteBorder.GetHorizontalPadding()).Render(b.String())
+	box := stylePaletteBorder.Width(innerW + stylePaletteBorder.GetHorizontalPadding()).Render(reanchorBrandBg(b.String()))
 	if p.width == 0 || p.height == 0 {
 		return box
 	}

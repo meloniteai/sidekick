@@ -40,6 +40,7 @@ func flareBrand(tick int, text string) string {
 		c := colorful.Hsl(hue, sat, lum)
 		style := lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.Hex())).
+			Background(brandBgColor).
 			Bold(true)
 		b.WriteString(style.Render(string(r)))
 	}
@@ -57,7 +58,7 @@ func pulseStyle(tick int) lipgloss.Style {
 	cold, _ := colorful.Hex("#4ad6ff")
 	warm, _ := colorful.Hex("#ff7ff0")
 	mixed := cold.BlendLab(warm, t).Clamped()
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(mixed.Hex())).Bold(true)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(mixed.Hex())).Background(brandBgColor).Bold(true)
 }
 
 // goalGlyphAt returns the glyph to draw at the centre reticle. The glyph
@@ -90,7 +91,7 @@ func haloCellStyle(tick int, ringDist int) lipgloss.Style {
 	mixed := cold.BlendLab(warm, t).Clamped()
 	black, _ := colorful.Hex("#050510")
 	mixed = mixed.BlendLab(black, 1-lum).Clamped()
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color(mixed.Hex()))
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(mixed.Hex())).Background(brandBgColor)
 	if ringDist == 1 {
 		style = style.Bold(true)
 	}
@@ -127,15 +128,15 @@ func orbStyleFlare(d float64, tick int) lipgloss.Style {
 		base, _ := colorful.Hex("#5fff5f")
 		hot, _ := colorful.Hex("#ffffff")
 		mix := base.BlendLab(hot, t).Clamped()
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(mix.Hex())).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(mix.Hex())).Background(brandBgColor).Bold(true)
 	case d <= 0.25:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
 	case d <= 0.50:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Background(brandBgColor).Bold(true)
 	case d <= 0.75:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Background(brandBgColor).Bold(true)
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
 	}
 }
 
@@ -153,7 +154,7 @@ func brailleSpinner(tick int) rune {
 func runningGlow(tick int) lipgloss.Style {
 	hue := 200 + 100*math.Sin(2*math.Pi*float64(tick%flarePeriod)/flarePeriod)
 	c := colorful.Hsl(hue, 0.75, 0.68)
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(c.Hex())).Bold(true)
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(c.Hex())).Background(brandBgColor).Bold(true)
 }
 
 // truecolorHex formats r,g,b ints into a #RRGGBB string. Kept as a helper
