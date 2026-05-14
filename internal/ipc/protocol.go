@@ -23,14 +23,30 @@ const (
 	envSock        = "HUD_SOCK"
 )
 
-// SocketPath returns the daemon socket path. Defaults to a repo-scoped
-// path under $HOME/.hud/sockets/<fingerprint>.sock so multiple projects
-// can run concurrent HUD daemons. Falls back to the legacy single-socket
-// $HOME/.hud/sock when the cwd is not a git repository (avoids breaking
-// the demo path that runs without a project).
+// SocketPath returns the daemon socket path for the process cwd. See
+// SocketPathFor for the full doc; this is the legacy parameterless entry
+// point used by daemon-side code (`hud start`, the menubar) and short-lived
+// CLI peers (`hud goal`, `hud hook`) that inherit the operator's real
+// shell cwd.
+func SocketPath() (string, error) {
+	return SocketPathFor("")
+}
+
+// SocketPathFor returns the daemon socket path resolved from the supplied
+// caller cwd. When cwd is empty the fingerprint is taken from the current
+// process cwd (legacy behaviour). When non-empty the fingerprint is taken
+// from `git -C cwd rev-parse --show-toplevel`, which is the right thing
+// for the MCP server: its process cwd is whatever the agent harness had
+// at spawn time and goes stale the moment the agent moves between
+// worktrees, but the agent itself always knows where it is and can pass
+// that path through.
+//
+// Falls back to the legacy single-socket $HOME/.hud/sock when no git
+// toplevel can be resolved (preserves the demo path that runs outside a
+// repository).
 //
 // Override with $HUD_SOCK for tests and unusual deployments.
-func SocketPath() (string, error) {
+func SocketPathFor(cwd string) (string, error) {
 	if p := os.Getenv(envSock); p != "" {
 		return p, nil
 	}
@@ -38,18 +54,25 @@ func SocketPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if fp := repoFingerprint(); fp != "" {
+	if fp := repoFingerprintFor(cwd); fp != "" {
 		return filepath.Join(home, ".hud", "sockets", fp+".sock"), nil
 	}
 	return filepath.Join(home, defaultSockRel), nil
 }
 
-// repoFingerprint returns a stable short hash of the git toplevel of the
-// current working directory, or "" when not in a repo. Worktrees of the
-// same repo share a fingerprint via `git rev-parse --show-superproject-working-tree`
-// fallback to --show-toplevel.
-func repoFingerprint() string {
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+// repoFingerprintFor returns a stable short hash of the git toplevel
+// resolved from `cwd` (when non-empty) or the current process cwd. Returns
+// "" when not in a repo. Worktrees of the same repo each get a distinct
+// fingerprint because `git rev-parse --show-toplevel` returns the
+// worktree's own path, which is exactly what we want — each worktree is
+// its own HUD session.
+func repoFingerprintFor(cwd string) string {
+	args := []string{"rev-parse", "--show-toplevel"}
+	cmd := exec.Command("git", args...)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
@@ -219,9 +242,18 @@ type StatusReply struct {
 	LastMCPAt        time.Time        `json:"last_mcp_at"`
 }
 
-// Send dials the daemon, writes one request, reads one response, and closes.
+// Send dials the daemon using the process cwd to pick the socket. Use
+// SendFrom from contexts where the process cwd is stale (notably the MCP
+// server, whose cwd is frozen at agent-harness spawn time).
 func Send(req Request) (Response, error) {
-	sock, err := SocketPath()
+	return SendFrom(req, "")
+}
+
+// SendFrom dials the daemon, writes one request, reads one response, and
+// closes. The socket is resolved from `cwd` (or the process cwd when cwd
+// is empty) — see SocketPathFor for the rationale.
+func SendFrom(req Request, cwd string) (Response, error) {
+	sock, err := SocketPathFor(cwd)
 	if err != nil {
 		return Response{}, err
 	}

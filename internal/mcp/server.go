@@ -32,6 +32,22 @@ func Run(ctx context.Context, version string) error {
 		mcp.WithOpenWorldHintAnnotation(false),
 	}
 
+	// cwdArg is added to every tool so the agent can tell the MCP server
+	// which worktree it is currently operating in. The MCP server's own
+	// process cwd is whatever the agent harness had at spawn time and goes
+	// stale the moment the agent moves between worktrees — without this
+	// hint, the per-repo socket fingerprint resolves against the wrong
+	// tree and the daemon either can't be reached or routes the call to
+	// the wrong session.
+	cwdArg := mcp.WithString("cwd",
+		mcp.Description(
+			"Absolute path to the agent's current working directory (typically "+
+				"the worktree the agent is editing in). Pass this on every call so "+
+				"the HUD server can find the right per-worktree daemon socket; the "+
+				"server's own process cwd is frozen at session start and goes stale "+
+				"when the agent switches worktrees. Omit only when not in a git repo."),
+	)
+
 	srv.AddTool(
 		mcp.NewTool("hud_status",
 			append([]mcp.ToolOption{
@@ -45,6 +61,7 @@ func Run(ctx context.Context, version string) error {
 						"reason fields reflect the previous run and may be stale. " +
 						"Wait a few seconds and call hud_status again to read fresh " +
 						"scores before acting on them."),
+				cwdArg,
 			}, readOnly...)...,
 		),
 		statusHandler,
@@ -64,6 +81,7 @@ func Run(ctx context.Context, version string) error {
 					mcp.Required(),
 					mcp.Description("Verifier name (e.g. \"Architect\", \"Test\", \"Security\")"),
 				),
+				cwdArg,
 			}, readOnly...)...,
 		),
 		explainHandler,
@@ -80,6 +98,7 @@ func Run(ctx context.Context, version string) error {
 				mcp.Required(),
 				mcp.Description("One short sentence describing what the agent is currently trying to achieve."),
 			),
+			cwdArg,
 			mcp.WithReadOnlyHintAnnotation(false),
 			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithIdempotentHintAnnotation(true),
@@ -94,8 +113,16 @@ func Run(ctx context.Context, version string) error {
 	return server.ServeStdio(srv)
 }
 
-func statusHandler(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	resp, err := ipc.Send(ipc.Request{Type: ipc.TypeStatus, Source: ipc.SourceMCP})
+// callerCwd extracts the optional "cwd" argument from a tool call. The
+// MCP server passes this through to ipc.SendFrom and the anchor resolver
+// so the agent's logical worktree wins over the MCP process's stale cwd.
+func callerCwd(req mcp.CallToolRequest) string {
+	cwd, _ := req.GetArguments()["cwd"].(string)
+	return strings.TrimSpace(cwd)
+}
+
+func statusHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	resp, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeStatus, Source: ipc.SourceMCP}, callerCwd(req))
 	if err != nil {
 		return nil, fmt.Errorf("hud daemon unreachable (is `hud start` running?): %w", err)
 	}
@@ -112,12 +139,12 @@ func setGoalHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	if goal == "" {
 		return nil, errors.New("goal argument is required")
 	}
-	// The MCP server runs as a child of the agent, so its cwd is the
-	// agent's cwd — typically the worktree the agent is operating in.
-	// Resolve and ship both fields so the daemon re-anchors to that
-	// worktree's HEAD whenever the goal moves, even if `hud start` was
-	// launched elsewhere (e.g. the trunk).
-	worktree, baseRef := resolveSessionAnchor()
+	// The agent passes its current worktree via the cwd arg. Anchoring
+	// from that path (not from the MCP process cwd, which is stale)
+	// ensures the daemon re-points at the right worktree when the goal
+	// moves, even if `hud start` was launched elsewhere (e.g. the trunk).
+	cwd := callerCwd(req)
+	worktree, baseRef := resolveSessionAnchor(cwd)
 	data, err := ipc.MarshalData(ipc.GoalData{
 		Goal:     goal,
 		Worktree: worktree,
@@ -126,7 +153,7 @@ func setGoalHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ipc.Send(ipc.Request{Type: ipc.TypeGoal, Source: ipc.SourceMCP, Data: data}); err != nil {
+	if _, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeGoal, Source: ipc.SourceMCP, Data: data}, cwd); err != nil {
 		return nil, fmt.Errorf("hud daemon unreachable (is `hud start` running?): %w", err)
 	}
 	return mcp.NewToolResultJSON(map[string]any{
@@ -136,17 +163,24 @@ func setGoalHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	})
 }
 
-// resolveSessionAnchor returns the absolute worktree path and HEAD SHA of
-// the caller's cwd, or empty strings when the cwd is not in a git
-// repository. Empty values tell the daemon to leave the existing anchor
-// untouched rather than overwriting it with garbage.
-func resolveSessionAnchor() (worktree, baseRef string) {
-	top, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+// resolveSessionAnchor returns the absolute worktree path and HEAD SHA
+// resolved from `cwd` when non-empty, or the process cwd otherwise. Empty
+// return values tell the daemon to leave the existing anchor untouched
+// rather than overwriting it with garbage.
+func resolveSessionAnchor(cwd string) (worktree, baseRef string) {
+	gitCmd := func(args ...string) ([]byte, error) {
+		c := exec.Command("git", args...)
+		if cwd != "" {
+			c.Dir = cwd
+		}
+		return c.Output()
+	}
+	top, err := gitCmd("rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", ""
 	}
 	worktree = strings.TrimSpace(string(top))
-	head, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	head, err := gitCmd("rev-parse", "HEAD")
 	if err != nil {
 		// Worktree resolves but no commits — return worktree alone so
 		// the daemon still pins the right tree; base ref stays unset.
@@ -165,7 +199,7 @@ func explainHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	if err != nil {
 		return nil, err
 	}
-	resp, err := ipc.Send(ipc.Request{Type: ipc.TypeExplain, Source: ipc.SourceMCP, Data: data})
+	resp, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeExplain, Source: ipc.SourceMCP, Data: data}, callerCwd(req))
 	if err != nil {
 		return nil, fmt.Errorf("hud daemon unreachable: %w", err)
 	}
