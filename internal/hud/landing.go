@@ -42,7 +42,7 @@ const (
 // black inside the framed modal — see brandBgColor in view.go for the
 // long-form note on why this is required.
 var (
-	styleLandingBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(lipgloss.Color(brandBg)).Padding(1, 2)
+	styleLandingBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(lipgloss.Color(brandBg)).Background(lipgloss.Color(brandBg)).Padding(1, 2)
 	styleLandingBanner    = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(lipgloss.Color(brandBg)).Bold(true)
 	styleLandingVersion   = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft)).Background(lipgloss.Color(brandBg))
 	styleLandingLabel     = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(brandBg))

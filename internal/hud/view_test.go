@@ -428,10 +428,12 @@ func TestViewWrapsVerifierBrowserInCoralBorder(t *testing.T) {
 	}
 
 	// styleListBorder must share the splash/palette coral chrome plus the
-	// warm brand bg so all three surfaces read as one product.
+	// warm brand bg on both the border cells and the inner content so the
+	// frame reads as one product with no terminal-black punching through.
 	want := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(brandCoral)).
+		BorderBackground(lipgloss.Color(brandBg)).
 		Background(lipgloss.Color(brandBg)).
 		Render("")
 	if got := styleListBorder.Render(""); got != want {

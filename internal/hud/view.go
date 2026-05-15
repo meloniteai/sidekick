@@ -53,24 +53,15 @@ func reanchorBrandBg(s string) string {
 	return strings.ReplaceAll(s, "\x1b[0m", "\x1b[0m"+brandBgSeq)
 }
 
-// styleSpacerBg paints the gap rows between vertically stacked boxes so
-// the brand bg carries continuously from one frame to the next instead
-// of revealing the terminal's true bg in the inter-box seam.
+// styleSpacerBg paints brand-bg blocks that bridge seams between adjacent
+// boxes — used for the 2-column gutter between the compass and the event
+// log so the warm graphite carries across instead of dropping to terminal
+// black.
 var styleSpacerBg = lipgloss.NewStyle().Background(brandBgColor)
-
-// brandSpacerRow returns a single brand-bg-painted blank row spanning
-// width cells. Used in View() to replace bare "\n" separators between
-// the header, compass, git panel, and verifier list boxes.
-func brandSpacerRow(width int) string {
-	if width <= 0 {
-		return ""
-	}
-	return styleSpacerBg.Render(strings.Repeat(" ", width))
-}
 
 var (
 	styleHeader        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).Background(brandBgColor)
-	styleGrid          = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(brandBgColor).Padding(0, 1)
+	styleGrid          = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor).Padding(0, 1)
 	styleGoalDot       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Background(brandBgColor)
 	styleAxis          = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
 	styleRunning       = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Background(brandBgColor)
@@ -81,8 +72,8 @@ var (
 	styleArrowOutTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("88")).Background(brandBgColor)
 	styleArrowInHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
 	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28")).Background(brandBgColor)
-	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(brandBgColor).Padding(0, 1).Foreground(lipgloss.Color("252"))
-	styleListBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(brandBgColor)
+	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor).Padding(0, 1).Foreground(lipgloss.Color("252"))
+	styleListBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor)
 	styleListTitle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft)).Background(brandBgColor)
 	styleListSlash     = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor)
 	// styleListSelected keeps its coral bg — that bar is the cursor.
@@ -207,20 +198,11 @@ func (m Model) View() string {
 			gridW = gridW - logW - 2
 		}
 	}
-	// spacerRows is the count of brand-bg-painted blank rows we'll inject
-	// between vertically stacked boxes: one between header and compass and
-	// one between compass and verifier list, plus one between header and
-	// the git panel when that's toggled on. The compass's own top+bottom
-	// borders contribute the trailing "- 2".
-	spacerRows := 2
-	if m.showGitPanel {
-		spacerRows = 3
-	}
-	gridH := m.height - headerLines - spacerRows - 2 - listLines - gitLines
+	gridH := m.height - headerLines - 2 - listLines - gitLines
 	// 5 is the smallest compass that still places labels around all 8 wind
-	// markers; below that the layout collapses. The min absorbs the extra
-	// rows the "Verifiers ////" banner and inter-box spacers introduce on
-	// a 24-row terminal without pushing the view past the bottom edge.
+	// markers; below that the layout collapses. The min keeps the compass
+	// usable on a 24-row terminal without pushing the view past the bottom
+	// edge once the "Verifiers ////" banner is accounted for.
 	if gridH < 5 {
 		gridH = 5
 	}
@@ -231,30 +213,28 @@ func (m Model) View() string {
 		gridH-- // odd height keeps origin centered
 	}
 
-	// spacer is a brand-bg-painted blank row that bridges the seam between
-	// vertically stacked boxes so the warm graphite carries through the
-	// gap instead of dropping to terminal black for one row.
-	spacer := brandSpacerRow(m.width)
-
 	var b strings.Builder
 	b.WriteString(header)
-	b.WriteString("\n")
-	b.WriteString(spacer)
 	b.WriteString("\n")
 	if m.showGitPanel {
 		b.WriteString(m.renderGitPanel(m.width))
 		b.WriteString("\n")
-		b.WriteString(spacer)
-		b.WriteString("\n")
 	}
 	compass := styleGrid.Render(reanchorBrandBg(m.renderGrid(gridW, gridH)))
 	if logW > 0 {
-		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, compass, "  ", m.renderEventLog(logW, gridH)))
+		// gutter is a 2-column brand-bg block sitting between compass and
+		// event log. JoinHorizontal pads shorter inputs with empty cells
+		// (terminal-default bg), so the gutter must be rendered at the same
+		// height as the boxes it bridges — otherwise its single styled row
+		// would paint just the top edge and leave the rest of the seam
+		// dropping to terminal black.
+		compassH := lipgloss.Height(compass)
+		gutterCell := styleSpacerBg.Render("  ")
+		gutter := strings.Repeat(gutterCell+"\n", compassH-1) + gutterCell
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, compass, gutter, m.renderEventLog(logW, gridH)))
 	} else {
 		b.WriteString(compass)
 	}
-	b.WriteString("\n")
-	b.WriteString(spacer)
 	b.WriteString("\n")
 	listInnerW := m.width - styleListBorder.GetHorizontalFrameSize()
 	if listInnerW < 1 {

@@ -42,7 +42,7 @@ var paletteItems = []paletteItem{
 // through to terminal black inside the framed modal — see brandBgColor in
 // view.go for the long-form note on why this is required.
 var (
-	stylePaletteBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(lipgloss.Color(brandBg)).Padding(1, 2)
+	stylePaletteBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(lipgloss.Color(brandBg)).Background(lipgloss.Color(brandBg)).Padding(1, 2)
 	stylePaletteTitle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft)).Background(lipgloss.Color(brandBg))
 	stylePaletteSlash       = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(lipgloss.Color(brandBg))
 	stylePalettePrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoralSoft)).Background(lipgloss.Color(brandBg))
