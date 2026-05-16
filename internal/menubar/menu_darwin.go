@@ -33,14 +33,15 @@ func init() {
 
 // Actions are invoked from native menu item selections.
 type Actions struct {
-	Trigger func()
-	StopRun func()
-	Quit    func()
+	Trigger       func()
+	StopRun       func()
+	SwitchSession func(worktree string) bool
+	Quit          func()
 }
 
 // Run starts a macOS status item and blocks until the AppKit run loop exits.
 // It does not create a window; all UI is rendered inside the status-bar menu.
-func Run(ctx context.Context, state *daemon.State, actions Actions) error {
+func Run(ctx context.Context, registry *daemon.Registry, actions Actions) error {
 	readPipe, writePipe, err := os.Pipe()
 	if err != nil {
 		return fmt.Errorf("create menu action pipe: %w", err)
@@ -50,8 +51,8 @@ func Run(ctx context.Context, state *daemon.State, actions Actions) error {
 
 	C.HUDSetActionFD(C.int(writePipe.Fd()))
 
-	go pumpActions(ctx, readPipe, actions)
-	go pumpMenu(ctx, state)
+	go pumpActions(ctx, readPipe, registry, actions)
+	go pumpMenu(ctx, registry)
 	go func() {
 		<-ctx.Done()
 		C.HUDStop()
@@ -62,7 +63,7 @@ func Run(ctx context.Context, state *daemon.State, actions Actions) error {
 	return nil
 }
 
-func pumpActions(ctx context.Context, r *os.File, actions Actions) {
+func pumpActions(ctx context.Context, r *os.File, registry *daemon.Registry, actions Actions) {
 	buf := []byte{0}
 	for {
 		if _, err := r.Read(buf); err != nil {
@@ -88,13 +89,22 @@ func pumpActions(ctx context.Context, r *os.File, actions Actions) {
 			}
 			C.HUDStop()
 			return
+		default:
+			action := int(buf[0])
+			if action >= actionSessionBase && actions.SwitchSession != nil {
+				idx := action - actionSessionBase
+				sessions := registry.Sessions()
+				if idx >= 0 && idx < len(sessions) {
+					actions.SwitchSession(sessions[idx].Worktree)
+				}
+			}
 		}
 	}
 }
 
-func pumpMenu(ctx context.Context, state *daemon.State) {
+func pumpMenu(ctx context.Context, registry *daemon.Registry) {
 	update := func() {
-		b, err := RenderJSON(state.Snapshot())
+		b, err := RenderJSON(registry.DisplayedSnapshot())
 		if err != nil {
 			return
 		}

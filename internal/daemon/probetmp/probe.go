@@ -13,8 +13,8 @@ import (
 
 type noopHandler struct{}
 
-func (noopHandler) OnWrite(string)        {}
-func (noopHandler) OnGoal(_, _, _ string) {}
+func (noopHandler) OnWrite(*daemon.State, string) {}
+func (noopHandler) OnGoal(*daemon.State, string)  {}
 
 func main() {
 	dir, err := os.MkdirTemp("", "hud-probe-*")
@@ -24,7 +24,8 @@ func main() {
 	defer os.RemoveAll(dir)
 	sock := filepath.Join(dir, "hud.sock")
 
-	s1, err := daemon.Listen(sock, daemon.NewState(), noopHandler{})
+	r1 := daemon.NewRegistry(daemon.NewState(), nil)
+	s1, err := daemon.Listen(sock, r1, noopHandler{})
 	if err != nil {
 		panic(err)
 	}
@@ -33,14 +34,14 @@ func main() {
 	go s1.Serve(ctx)
 	time.Sleep(50 * time.Millisecond)
 
-	_, err = daemon.Listen(sock, daemon.NewState(), noopHandler{})
+	_, err = daemon.Listen(sock, daemon.NewRegistry(daemon.NewState(), nil), noopHandler{})
 	fmt.Printf("second listen err: %v\n", err)
 	fmt.Printf("errors.Is(err, ErrDaemonRunning) = %v\n", errors.Is(err, daemon.ErrDaemonRunning))
 
 	if err := daemon.RemoveSocket(sock); err != nil {
 		panic(err)
 	}
-	s3, err := daemon.Listen(sock, daemon.NewState(), noopHandler{})
+	s3, err := daemon.Listen(sock, daemon.NewRegistry(daemon.NewState(), nil), noopHandler{})
 	fmt.Printf("retry-after-remove err: %v, srv=%v\n", err, s3 != nil)
 	if s3 != nil {
 		s3.Close()

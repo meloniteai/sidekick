@@ -24,9 +24,10 @@ func TestPaletteRenderShape(t *testing.T) {
 		"Type to filter",
 		"New Verifier",
 		"Edit Verifier",
+		"Switch Session",
 		"Toggle Git Changes",
 		"Toggle Event Log",
-		"ctrl+n", "ctrl+e", "ctrl+g", "ctrl+l",
+		"ctrl+n", "ctrl+e", "ctrl+w", "ctrl+g", "ctrl+l",
 		"↑/↓ choose", "enter confirm", "esc cancel",
 	} {
 		if !strings.Contains(out, want) {
@@ -49,15 +50,15 @@ func TestPaletteNavigationAndEnter(t *testing.T) {
 		t.Fatalf("first enter: got done=%v action=%d, want done=true action=%d", done, confirmed.Chosen(), paletteActionNewVerifier)
 	}
 
-	// Now from a fresh palette: down → down → enter should pick Toggle Git
-	// Changes (index 2), proving the cursor advances and clamps correctly.
+	// Now from a fresh palette: down → down → enter should pick Switch
+	// Session (index 2), proving the cursor advances and clamps correctly.
 	p = NewPalette()
 	p.SetSize(120, 40)
 	step1, _, _ := p.Update(tea.KeyMsg{Type: tea.KeyDown})
 	step2, _, _ := step1.Update(tea.KeyMsg{Type: tea.KeyDown})
 	final, _, done := step2.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if !done || final.Chosen() != paletteActionToggleGitPanel {
-		t.Fatalf("down,down,enter: got done=%v action=%d, want action=%d", done, final.Chosen(), paletteActionToggleGitPanel)
+	if !done || final.Chosen() != paletteActionSwitchSession {
+		t.Fatalf("down,down,enter: got done=%v action=%d, want action=%d", done, final.Chosen(), paletteActionSwitchSession)
 	}
 }
 
@@ -144,7 +145,8 @@ func TestPaletteDispatchTogglesGitPanel(t *testing.T) {
 	}
 	m = openPalette(t, m)
 
-	// "Toggle Git Changes" is the third item (index 2).
+	// "Toggle Git Changes" is the fourth item (index 3).
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -154,6 +156,42 @@ func TestPaletteDispatchTogglesGitPanel(t *testing.T) {
 	}
 	if !m.showGitPanel {
 		t.Fatalf("dispatch did not flip showGitPanel; got false, want true")
+	}
+}
+
+func TestPaletteDispatchOpensSessionSwitcher(t *testing.T) {
+	m := NewRegistry(testRegistryWithTwoSessions(t))
+	m.width, m.height = 120, 40
+	m = openPalette(t, m)
+
+	// "Switch Session" is the third item (index 2).
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if m.palette != nil {
+		t.Fatalf("palette should close after enter; still open")
+	}
+	if m.switcher == nil {
+		t.Fatalf("dispatch did not open session switcher")
+	}
+}
+
+func TestPaletteDispatchSwitchSessionChangesDisplayed(t *testing.T) {
+	reg := testRegistryWithTwoSessions(t)
+	m := NewRegistry(reg)
+	m.width, m.height = 120, 40
+	before := reg.DisplayedSession().SessionWorktree()
+	m = openPalette(t, m)
+
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = sessionSwitcherKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = sessionSwitcherKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if after := reg.DisplayedSession().SessionWorktree(); after == before {
+		t.Fatalf("displayed session did not change: %q", after)
 	}
 }
 
@@ -168,7 +206,8 @@ func TestPaletteDispatchTogglesEventLog(t *testing.T) {
 	}
 	m = openPalette(t, m)
 
-	// "Toggle Event Log" is the fourth item (index 3).
+	// "Toggle Event Log" is the fifth item (index 4).
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})

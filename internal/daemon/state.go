@@ -48,11 +48,11 @@ type State struct {
 	sessionBaseRef  string
 	sessionWorktree string
 	verifiers       map[string]ipc.VerifierStatus
-	order          []string
-	version        string
-	lastSocketAt   time.Time
-	lastMCPAt      time.Time
-	events         []EventEntry
+	order           []string
+	version         string
+	lastSocketAt    time.Time
+	lastMCPAt       time.Time
+	events          []EventEntry
 	// sessionEdits is the set of file paths reported via OnWrite this
 	// session. Stored as insertion-ordered to keep the per-file panel
 	// rendering stable across renders.
@@ -64,6 +64,10 @@ type State struct {
 	pending    EventEntry
 	hasPending bool
 }
+
+// Session is the per-worktree state unit owned by the daemon registry. State
+// remains as a compatibility name for existing tests and call sites.
+type Session = State
 
 // NewState returns a zeroed State.
 func NewState() *State {
@@ -305,10 +309,12 @@ func (s *State) Snapshot() ipc.StatusReply {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := ipc.StatusReply{
-		Goal:         s.goal,
-		Version:      s.version,
-		LastSocketAt: s.lastSocketAt,
-		LastMCPAt:    s.lastMCPAt,
+		Goal:           s.goal,
+		Version:        s.version,
+		LastSocketAt:   s.lastSocketAt,
+		LastMCPAt:      s.lastMCPAt,
+		Worktree:       s.sessionWorktree,
+		SessionBaseRef: s.sessionBaseRef,
 	}
 	var sum float64
 	var enabled int

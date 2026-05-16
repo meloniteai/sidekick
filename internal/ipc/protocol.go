@@ -69,8 +69,8 @@ func SocketPathFor(cwd string) (string, error) {
 // linked worktrees. This means the main repo and every worktree of it
 // collapse onto a single socket — `hud start` can run in the trunk while
 // an agent in a worktree (or a `hud hook` fired from that worktree)
-// transparently dials the same daemon. The daemon still re-anchors its
-// session worktree per-call via OnGoal so verifiers diff the right tree.
+// transparently dials the same daemon. The daemon routes each request to a
+// per-worktree session inside that shared socket.
 //
 // We intentionally do *not* use `--show-toplevel`: that returns the
 // worktree's own path and produced a distinct fingerprint per worktree,
@@ -120,6 +120,7 @@ func repoFingerprintFor(cwd string) string {
 type Request struct {
 	Type   string          `json:"type"`
 	Source string          `json:"source,omitempty"`
+	Cwd    string          `json:"cwd,omitempty"`
 	Data   json.RawMessage `json:"data,omitempty"`
 }
 
@@ -149,12 +150,9 @@ type WriteData struct {
 
 // GoalData is the payload for TypeGoal.
 //
-// Worktree and BaseRef are optional re-anchor fields populated by the
-// MCP server (and the `hud goal` CLI) from the caller's cwd. When
-// present the daemon overwrites the session anchor so verifiers diff
-// the right tree from the agent's perspective, not the human's
-// `hud start` perspective. Empty means "leave the existing anchor in
-// place" so legacy callers keep working.
+// Worktree and BaseRef are legacy optional fields. Current callers should
+// route with Request.Cwd; the daemon resolves that cwd to the per-worktree
+// session and captures the anchor itself.
 type GoalData struct {
 	Goal     string `json:"goal"`
 	Worktree string `json:"worktree,omitempty"`
@@ -261,14 +259,30 @@ type VerifierPermissions struct {
 // are stale and need to be re-read after a brief wait. The per-verifier
 // Running bool carries the same information row-by-row.
 type StatusReply struct {
-	Goal             string           `json:"goal"`
-	Verifiers        []VerifierStatus `json:"verifiers"`
-	OverallDistance  float64          `json:"overall_distance"`
-	AnyRunning       bool             `json:"any_running"`
-	RunningVerifiers []string         `json:"running_verifiers,omitempty"`
-	Version          string           `json:"version,omitempty"`
-	LastSocketAt     time.Time        `json:"last_socket_at"`
-	LastMCPAt        time.Time        `json:"last_mcp_at"`
+	Goal              string           `json:"goal"`
+	Verifiers         []VerifierStatus `json:"verifiers"`
+	OverallDistance   float64          `json:"overall_distance"`
+	AnyRunning        bool             `json:"any_running"`
+	RunningVerifiers  []string         `json:"running_verifiers,omitempty"`
+	Version           string           `json:"version,omitempty"`
+	LastSocketAt      time.Time        `json:"last_socket_at"`
+	LastMCPAt         time.Time        `json:"last_mcp_at"`
+	Worktree          string           `json:"worktree,omitempty"`
+	SessionBaseRef    string           `json:"session_base_ref,omitempty"`
+	SessionCount      int              `json:"session_count,omitempty"`
+	DisplayedWorktree string           `json:"displayed_worktree,omitempty"`
+	Sessions          []SessionSummary `json:"sessions,omitempty"`
+}
+
+// SessionSummary is a compact row for UIs that need to switch between
+// per-worktree sessions without fetching every verifier detail.
+type SessionSummary struct {
+	Worktree     string    `json:"worktree"`
+	Label        string    `json:"label,omitempty"`
+	Goal         string    `json:"goal,omitempty"`
+	AnyRunning   bool      `json:"any_running,omitempty"`
+	LastActivity time.Time `json:"last_activity"`
+	Displayed    bool      `json:"displayed,omitempty"`
 }
 
 // Send dials the daemon using the process cwd to pick the socket. Use
@@ -282,6 +296,10 @@ func Send(req Request) (Response, error) {
 // closes. The socket is resolved from `cwd` (or the process cwd when cwd
 // is empty) — see SocketPathFor for the rationale.
 func SendFrom(req Request, cwd string) (Response, error) {
+	cwd = strings.TrimSpace(cwd)
+	if req.Cwd == "" && cwd != "" {
+		req.Cwd = cwd
+	}
 	sock, err := SocketPathFor(cwd)
 	if err != nil {
 		return Response{}, err

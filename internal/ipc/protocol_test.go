@@ -1,6 +1,10 @@
 package ipc
 
 import (
+	"bufio"
+	"encoding/json"
+	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -55,5 +59,54 @@ func mustGit(t *testing.T, dir string, args ...string) {
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+}
+
+func TestSendFromStampsRequestCWD(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "hud.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	t.Setenv("HUD_SOCK", sock)
+
+	gotCh := make(chan Request, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer conn.Close()
+		line, err := bufio.NewReader(conn).ReadBytes('\n')
+		if err != nil {
+			errCh <- err
+			return
+		}
+		var req Request
+		if err := json.Unmarshal(line, &req); err != nil {
+			errCh <- err
+			return
+		}
+		gotCh <- req
+		_ = json.NewEncoder(conn).Encode(Response{OK: true})
+	}()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SendFrom(Request{Type: TypeStatus}, cwd); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-gotCh:
+		if got.Cwd != cwd {
+			t.Fatalf("request cwd = %q, want %q", got.Cwd, cwd)
+		}
+	case err := <-errCh:
+		t.Fatal(err)
 	}
 }

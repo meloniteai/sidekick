@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,26 +27,98 @@ import (
 // runnerHandler is the production EventHandler: writes trigger debounced
 // verifier runs; goal updates only flow into State.
 type runnerHandler struct {
-	state  *daemon.State
-	runner *verifier.Runner
+	runtimes *sessionRuntimeManager
 }
 
-func (h *runnerHandler) OnGoal(goal, worktree, baseRef string) {
-	h.state.SetGoal(goal)
-	// Re-anchor whenever the caller (typically the MCP server running as a
-	// child of the agent) tells us its perspective. Empty fields leave the
-	// existing anchor untouched so the bootstrap default from `hud start`
-	// keeps working until the first MCP set-goal arrives.
-	if worktree != "" {
-		h.state.SetSessionWorktree(worktree)
-	}
-	if baseRef != "" {
-		h.state.SetSessionBaseRef(baseRef)
+func (h *runnerHandler) OnGoal(session *daemon.State, goal string) {
+	session.SetGoal(goal)
+}
+func (h *runnerHandler) OnWrite(session *daemon.State, file string) {
+	session.RecordEdit(file)
+	if runner := h.runtimes.Runner(session); runner != nil {
+		runner.Trigger(file)
 	}
 }
-func (h *runnerHandler) OnWrite(file string) {
-	h.state.RecordEdit(file)
-	h.runner.Trigger(file)
+
+type sessionRuntime struct {
+	runner     *verifier.Runner
+	configPath string
+}
+
+type sessionRuntimeManager struct {
+	mu         sync.Mutex
+	ctx        context.Context
+	version    string
+	configPath string
+	runtimes   map[*daemon.State]sessionRuntime
+}
+
+func newSessionRuntimeManager(ctx context.Context, version, configPath string) *sessionRuntimeManager {
+	return &sessionRuntimeManager{
+		ctx:        ctx,
+		version:    version,
+		configPath: configPath,
+		runtimes:   map[*daemon.State]sessionRuntime{},
+	}
+}
+
+func (m *sessionRuntimeManager) NewSession(anchor daemon.SessionAnchor) (*daemon.State, error) {
+	verifiers, quietPeriod, _, loadedConfigPath, err := loadVerifiersFor(m.configPath, anchor.Worktree)
+	if err != nil {
+		return nil, err
+	}
+	if len(verifiers) < hudtui.MinSelected {
+		return nil, fmt.Errorf("at least %d verifiers must be configured (found %d)", hudtui.MinSelected, len(verifiers))
+	}
+	state := daemon.NewState()
+	state.SetSessionBaseRef(anchor.BaseRef)
+	state.SetSessionWorktree(anchor.Worktree)
+	state.SetVersion(m.version)
+	runner := verifier.NewRunner(m.ctx, state, verifiers)
+	runner.SetQuietPeriod(quietPeriod)
+	m.Register(state, runner, loadedConfigPath)
+	state.LogEvent(daemon.EventInfo, "created session for %s", anchor.Worktree)
+	return state, nil
+}
+
+func (m *sessionRuntimeManager) Register(state *daemon.State, runner *verifier.Runner, configPath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.runtimes[state] = sessionRuntime{runner: runner, configPath: configPath}
+}
+
+func (m *sessionRuntimeManager) Runner(state *daemon.State) *verifier.Runner {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.runtimes[state].runner
+}
+
+func (m *sessionRuntimeManager) ConfigPath(state *daemon.State) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.runtimes[state].configPath
+}
+
+func (m *sessionRuntimeManager) Stop(state *daemon.State) {
+	m.mu.Lock()
+	rt := m.runtimes[state]
+	delete(m.runtimes, state)
+	m.mu.Unlock()
+	if rt.runner != nil {
+		rt.runner.Stop()
+	}
+}
+
+func (m *sessionRuntimeManager) StopAll() {
+	m.mu.Lock()
+	states := make([]*daemon.State, 0, len(m.runtimes))
+	for s := range m.runtimes {
+		states = append(states, s)
+	}
+	m.mu.Unlock()
+	for _, s := range states {
+		m.Stop(s)
+	}
 }
 
 // demoVerifiers is what `hud start` instantiates when no hud.yaml is found.
@@ -86,6 +159,12 @@ func newStartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			sessionIdleTimeout := daemon.DefaultSessionIdleTimeout
+			if idle, set, err := loadSessionIdleTimeout(configPath, worktree); err != nil {
+				return err
+			} else if set {
+				sessionIdleTimeout = idle
+			}
 			if len(available) < hudtui.MinSelected {
 				return fmt.Errorf("at least %d verifiers must be configured (found %d in %s)",
 					hudtui.MinSelected, len(available), source)
@@ -114,10 +193,18 @@ func newStartCmd() *cobra.Command {
 			runner := verifier.NewRunner(ctx, state, verifiers)
 			runner.SetQuietPeriod(quietPeriod)
 			fmt.Fprintf(os.Stderr, "[hud] quiet period: %s\n", runner.QuietPeriod())
-			defer runner.Stop()
+			fmt.Fprintf(os.Stderr, "[hud] session idle timeout: %s\n", sessionIdleTimeout)
 
-			handler := &runnerHandler{state: state, runner: runner}
-			srv, err := acquireDaemonSocket(sock, state, handler, !headless)
+			runtimes := newSessionRuntimeManager(ctx, version, configPath)
+			runtimes.Register(state, runner, loadedConfigPath)
+			defer runtimes.StopAll()
+			registry := daemon.NewRegistry(state, runtimes.NewSession)
+			registry.SetCleanup(runtimes.Stop)
+			registry.SetIdleTimeout(sessionIdleTimeout)
+			go registry.StartGC(ctx, time.Minute)
+
+			handler := &runnerHandler{runtimes: runtimes}
+			srv, err := acquireDaemonSocket(sock, registry, handler, !headless)
 			if err != nil {
 				return err
 			}
@@ -132,44 +219,59 @@ func newStartCmd() *cobra.Command {
 			}
 
 			manualTrigger := func() {
-				state.SetGoal("unset")
-				runner.TriggerImmediate()
-				state.LogEvent(daemon.EventInfo, "all verifiers triggered")
+				session := registry.DisplayedSession()
+				session.SetGoal("unset")
+				if runner := runtimes.Runner(session); runner != nil {
+					runner.TriggerImmediate()
+				}
+				session.LogEvent(daemon.EventInfo, "all verifiers triggered")
 			}
 			reloadConfig := func() error {
-				if loadedConfigPath == "" {
+				session := registry.DisplayedSession()
+				path := runtimes.ConfigPath(session)
+				if path == "" {
 					return nil
 				}
-				next, quiet, _, _, err := loadVerifiers(loadedConfigPath)
+				next, quiet, _, _, err := loadVerifiersFor(path, session.SessionWorktree())
 				if err != nil {
-					state.LogEvent(daemon.EventError, "reload config failed: %v", err)
+					session.LogEvent(daemon.EventError, "reload config failed: %v", err)
 					return err
 				}
-				runner.ReplaceVerifiers(next)
-				runner.SetQuietPeriod(quiet)
-				state.LogEvent(daemon.EventInfo, "reloaded %d verifiers from %s", len(next), loadedConfigPath)
+				if runner := runtimes.Runner(session); runner != nil {
+					runner.ReplaceVerifiers(next)
+					runner.SetQuietPeriod(quiet)
+				}
+				session.LogEvent(daemon.EventInfo, "reloaded %d verifiers from %s", len(next), path)
 				return nil
 			}
 			p := tea.NewProgram(
-				hudtui.New(state).
+				hudtui.NewRegistry(registry).
 					WithManualTrigger(manualTrigger).
 					WithTriggerVerifier(func(name string) {
-						if ok := runner.TriggerVerifierImmediate(name); ok {
-							state.LogEvent(daemon.EventInfo, "verifier %s triggered", name)
+						session := registry.DisplayedSession()
+						if runner := runtimes.Runner(session); runner != nil && runner.TriggerVerifierImmediate(name) {
+							session.LogEvent(daemon.EventInfo, "verifier %s triggered", name)
 						}
 					}).
 					WithToggleVerifier(func(name string) {
-						disabled, ok := state.ToggleVerifierDisabled(name)
-						if !ok || loadedConfigPath == "" {
+						session := registry.DisplayedSession()
+						disabled, ok := session.ToggleVerifierDisabled(name)
+						path := runtimes.ConfigPath(session)
+						if !ok || path == "" {
 							return
 						}
-						if err := config.SetVerifierDisabled(loadedConfigPath, name, disabled); err != nil {
-							state.LogEvent(daemon.EventError, "persist verifier toggle failed: %v", err)
+						if err := config.SetVerifierDisabled(path, name, disabled); err != nil {
+							session.LogEvent(daemon.EventError, "persist verifier toggle failed: %v", err)
 							return
 						}
 					}).
-					WithStopAll(runner.KillBatch).
+					WithStopAll(func() {
+						if runner := runtimes.Runner(registry.DisplayedSession()); runner != nil {
+							runner.KillBatch()
+						}
+					}).
 					WithConfigEditor(loadedConfigPath).
+					WithConfigPathFunc(func() string { return runtimes.ConfigPath(registry.DisplayedSession()) }).
 					WithConfigSaved(reloadConfig),
 				tea.WithAltScreen(),
 			)
@@ -193,8 +295,8 @@ func newStartCmd() *cobra.Command {
 // anyway" prompt that unlinks the old socket and retries. When
 // interactive is false (headless/non-TTY) the underlying error is
 // returned unchanged so callers see the same failure they did before.
-func acquireDaemonSocket(sock string, state *daemon.State, handler daemon.EventHandler, interactive bool) (*daemon.Server, error) {
-	srv, err := daemon.Listen(sock, state, handler)
+func acquireDaemonSocket(sock string, registry *daemon.Registry, handler daemon.EventHandler, interactive bool) (*daemon.Server, error) {
+	srv, err := daemon.Listen(sock, registry, handler)
 	if err == nil {
 		return srv, nil
 	}
@@ -225,7 +327,7 @@ func acquireDaemonSocket(sock string, state *daemon.State, handler daemon.EventH
 	if rmErr := daemon.RemoveSocket(sock); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("remove old socket: %w", rmErr)
 	}
-	return daemon.Listen(sock, state, handler)
+	return daemon.Listen(sock, registry, handler)
 }
 
 // runLanding shows the start-of-session landing screen (HUD wordmark, version,
@@ -340,7 +442,11 @@ func captureSessionAnchor() (baseRef, worktree string, err error) {
 // quiet period) when no config exists. The returned string is a short
 // description of the source for logging.
 func loadVerifiers(configPath string) ([]verifier.Verifier, time.Duration, string, string, error) {
-	f, path, err := config.Load(configPath)
+	return loadVerifiersFor(configPath, "")
+}
+
+func loadVerifiersFor(configPath, startDir string) ([]verifier.Verifier, time.Duration, string, string, error) {
+	f, path, err := config.LoadFrom(configPath, startDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return demoVerifiers(), 0, "demo (no hud.yaml found)", "", nil
 	}
@@ -356,4 +462,15 @@ func loadVerifiers(configPath string) ([]verifier.Verifier, time.Duration, strin
 		return nil, 0, "", "", err
 	}
 	return vs, quiet, fmt.Sprintf("%d from %s", len(vs), path), path, nil
+}
+
+func loadSessionIdleTimeout(configPath, startDir string) (time.Duration, bool, error) {
+	f, _, err := config.LoadFrom(configPath, startDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return f.ResolveSessionIdleTimeout()
 }

@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	actionTrigger = 1
-	actionStop    = 2
-	actionQuit    = 3
+	actionTrigger     = 1
+	actionStop        = 2
+	actionQuit        = 3
+	actionSessionBase = 20
 )
 
 type payload struct {
@@ -35,11 +36,33 @@ func RenderJSON(s ipc.StatusReply) ([]byte, error) {
 		Title: statusTitle(s),
 		Items: []menuItem{
 			{Title: fmt.Sprintf("HUD active | version %s", fallback(s.Version, "dev")), Tone: toneForOverall(s)},
+			{Title: "Session: " + sessionText(s)},
 			{Title: "Goal: " + goalText(s.Goal)},
 			{Title: fmt.Sprintf("Socket %s | MCP %s | %d verifiers",
 				shortTime(s.LastSocketAt), shortTime(s.LastMCPAt), len(s.Verifiers))},
 			{Separator: true},
 		},
+	}
+	if len(s.Sessions) > 1 {
+		p.Items = append(p.Items, menuItem{Title: "Switch session"})
+		for i, session := range s.Sessions {
+			title := session.Label
+			if title == "" {
+				title = session.Worktree
+			}
+			if session.Displayed {
+				title = "✓ " + title
+			} else {
+				title = "  " + title
+			}
+			p.Items = append(p.Items, menuItem{
+				Title:   title,
+				Enabled: true,
+				Action:  actionSessionBase + i,
+				Tone:    boolTone(session.Displayed, "accent", "muted"),
+			})
+		}
+		p.Items = append(p.Items, menuItem{Separator: true})
 	}
 
 	if len(s.Verifiers) == 0 {
@@ -65,6 +88,26 @@ func RenderJSON(s ipc.StatusReply) ([]byte, error) {
 		menuItem{Title: "Quit HUD", Enabled: true, Action: actionQuit},
 	)
 	return json.Marshal(p)
+}
+
+func sessionText(s ipc.StatusReply) string {
+	label := ""
+	for _, row := range s.Sessions {
+		if row.Displayed {
+			label = row.Label
+			break
+		}
+	}
+	if label == "" {
+		label = s.Worktree
+	}
+	if label == "" {
+		return "default"
+	}
+	if s.SessionCount > 1 {
+		return fmt.Sprintf("%s (%d)", label, s.SessionCount)
+	}
+	return label
 }
 
 func statusTitle(s ipc.StatusReply) string {

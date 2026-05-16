@@ -157,7 +157,8 @@ func forward(reqType string, data any) error {
 		fmt.Fprintf(os.Stderr, "[hud hook] marshal: %v\n", err)
 		return nil
 	}
-	if _, err := ipc.Send(ipc.Request{Type: reqType, Data: rawData}); err != nil {
+	cwd, _ := os.Getwd()
+	if _, err := ipc.SendFrom(ipc.Request{Type: reqType, Data: rawData}, cwd); err != nil {
 		fmt.Fprintf(os.Stderr, "[hud hook] daemon unreachable: %v\n", err)
 	}
 	return nil

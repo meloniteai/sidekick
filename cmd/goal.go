@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 
@@ -24,7 +25,8 @@ func newGoalCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = ipc.Send(ipc.Request{Type: ipc.TypeGoal, Data: data})
+			cwd, _ := os.Getwd()
+			_, err = ipc.SendFrom(ipc.Request{Type: ipc.TypeGoal, Data: data}, cwd)
 			return err
 		},
 	}

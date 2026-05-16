@@ -365,3 +365,40 @@ func TestResolveQuietPeriod(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveSessionIdleTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+		set  bool
+		bad  bool
+	}{
+		{"unset", "verifiers: [{name: A, direction: N, command: [\"x\"]}]", "0s", false, false},
+		{"explicit", "session_idle_timeout: 30m\nverifiers: [{name: A, direction: N, command: [\"x\"]}]", "30m0s", true, false},
+		{"disabled", "session_idle_timeout: 0s\nverifiers: [{name: A, direction: N, command: [\"x\"]}]", "0s", true, false},
+		{"bad", "session_idle_timeout: nope\nverifiers: [{name: A, direction: N, command: [\"x\"]}]", "0s", true, true},
+		{"negative", "session_idle_timeout: -1s\nverifiers: [{name: A, direction: N, command: [\"x\"]}]", "0s", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeTemp(t, tc.raw)
+			f, _, err := Load(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, set, err := f.ResolveSessionIdleTimeout()
+			if tc.bad {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if set != tc.set || got.String() != tc.want {
+				t.Fatalf("got %s set=%v, want %s set=%v", got, set, tc.want, tc.set)
+			}
+		})
+	}
+}

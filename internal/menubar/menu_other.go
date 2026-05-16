@@ -10,11 +10,12 @@ import (
 )
 
 type Actions struct {
-	Trigger func()
-	StopRun func()
-	Quit    func()
+	Trigger       func()
+	StopRun       func()
+	SwitchSession func(worktree string) bool
+	Quit          func()
 }
 
-func Run(ctx context.Context, state *daemon.State, actions Actions) error {
+func Run(ctx context.Context, registry *daemon.Registry, actions Actions) error {
 	return errors.New("hud menubar is only available on macOS")
 }

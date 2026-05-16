@@ -24,8 +24,12 @@ type File struct {
 	// verifiers (LLM calls are expensive). Bursts of file edits inside the
 	// window are coalesced; the next batch fires once the window elapses,
 	// so we never miss a change. Empty → use the runtime default.
-	QuietPeriod string         `yaml:"quiet_period,omitempty"`
-	Verifiers   []VerifierSpec `yaml:"verifiers"`
+	QuietPeriod string `yaml:"quiet_period,omitempty"`
+	// SessionIdleTimeout controls how long an inactive non-default worktree
+	// session remains in memory. Empty means the daemon default; "0" disables
+	// idle GC.
+	SessionIdleTimeout string         `yaml:"session_idle_timeout,omitempty"`
+	Verifiers          []VerifierSpec `yaml:"verifiers"`
 }
 
 // VerifierSpec mirrors verifier.Verifier with YAML tags.
@@ -99,9 +103,15 @@ var validDirections = map[string]bool{
 // Load reads hud.yaml from `path`. If `path` is empty, it walks upward from
 // cwd looking for `hud.yaml`. Returns (nil, os.ErrNotExist) if not found.
 func Load(path string) (*File, string, error) {
+	return LoadFrom(path, "")
+}
+
+// LoadFrom reads hud.yaml from `path`, or walks upward from startDir when path
+// is empty. Empty startDir preserves Load's process-cwd behaviour.
+func LoadFrom(path, startDir string) (*File, string, error) {
 	if path == "" {
 		var err error
-		path, err = findUpwards("hud.yaml")
+		path, err = findUpwardsFrom("hud.yaml", startDir)
 		if err != nil {
 			return nil, "", err
 		}
@@ -182,6 +192,23 @@ func (f *File) ResolveQuietPeriod() (time.Duration, error) {
 		return 0, fmt.Errorf("quiet_period must be non-negative, got %s", d)
 	}
 	return d, nil
+}
+
+// ResolveSessionIdleTimeout parses the optional root-level
+// session_idle_timeout field. Empty returns 0 so callers can keep their
+// runtime default; the literal duration 0 disables idle GC.
+func (f *File) ResolveSessionIdleTimeout() (time.Duration, bool, error) {
+	if f.SessionIdleTimeout == "" {
+		return 0, false, nil
+	}
+	d, err := time.ParseDuration(f.SessionIdleTimeout)
+	if err != nil {
+		return 0, true, fmt.Errorf("bad session_idle_timeout %q: %w", f.SessionIdleTimeout, err)
+	}
+	if d < 0 {
+		return 0, true, fmt.Errorf("session_idle_timeout must be non-negative, got %s", d)
+	}
+	return d, true, nil
 }
 
 // ValidateStructural runs Resolve's field-level checks (required fields,
@@ -547,7 +574,17 @@ func resolveLocalPath(configDir, p string) string {
 // findUpwards searches for `name` starting at cwd and walking up to the
 // filesystem root.
 func findUpwards(name string) (string, error) {
+	return findUpwardsFrom(name, "")
+}
+
+func findUpwardsFrom(name, startDir string) (string, error) {
 	dir, err := os.Getwd()
+	if startDir != "" {
+		dir = startDir
+	} else if err != nil {
+		return "", err
+	}
+	dir, err = filepath.Abs(dir)
 	if err != nil {
 		return "", err
 	}

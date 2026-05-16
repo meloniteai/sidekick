@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -72,7 +73,13 @@ func TestForwardWriteReachesDaemon(t *testing.T) {
 	h := &captureHandler{writes: make(chan string, 1)}
 	sock := t.TempDir() + "/hud.sock"
 	state := daemon.NewState()
-	srv, err := daemon.Listen(sock, state, h)
+	if cwd, err := os.Getwd(); err == nil {
+		if anchor, ok := daemon.ResolveAnchor(cwd); ok {
+			state.SetSessionWorktree(anchor.Worktree)
+		}
+	}
+	registry := daemon.NewRegistry(state, nil)
+	srv, err := daemon.Listen(sock, registry, h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,5 +108,5 @@ type captureHandler struct {
 	writes chan string
 }
 
-func (h *captureHandler) OnWrite(file string)      { h.writes <- file }
-func (h *captureHandler) OnGoal(_, _, _ string)    {}
+func (h *captureHandler) OnWrite(_ *daemon.State, file string) { h.writes <- file }
+func (h *captureHandler) OnGoal(_ *daemon.State, _ string)     {}

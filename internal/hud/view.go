@@ -77,28 +77,28 @@ var (
 	// in-header ANSI-shadow "HUD" wordmark is rendered with the same
 	// solid coral on warm graphite, bold, no animation — so the splash
 	// and the main HUD share one wordmark identity.
-	styleHeaderBrand   = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor).Bold(true)
-	styleListBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor)
-	styleListTitle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft)).Background(brandBgColor)
-	styleListSlash     = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor)
+	styleHeaderBrand = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor).Bold(true)
+	styleListBorder  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor)
+	styleListTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft)).Background(brandBgColor)
+	styleListSlash   = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor)
 	// styleListSelected keeps its coral bg — that bar is the cursor.
-	styleListSelected  = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true)
-	styleHeaderLabel   = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
-	styleSessionOn     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
-	styleWind          = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(brandBgColor).Bold(true)
-	styleDisabled      = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
+	styleListSelected = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true)
+	styleHeaderLabel  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
+	styleSessionOn    = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
+	styleWind         = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(brandBgColor).Bold(true)
+	styleDisabled     = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
 	// styleFooterKeys keeps its own grey chip bg for intentional contrast.
-	styleFooterKeys    = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238")).Bold(true).Padding(0, 1)
-	styleErrorBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
-	styleUnknownBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor).Bold(true)
-	styleStaleBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(brandBgColor)
-	stylePendingBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
-	styleRemoteBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(brandBgColor)
-	styleCostBadge     = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
-	styleDiffAdded     = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
-	styleDiffRemoved   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
-	styleDiffBinary    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(brandBgColor)
-	styleGitBranch     = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(brandBgColor).Bold(true)
+	styleFooterKeys   = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238")).Bold(true).Padding(0, 1)
+	styleErrorBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
+	styleUnknownBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor).Bold(true)
+	styleStaleBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(brandBgColor)
+	stylePendingBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
+	styleRemoteBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(brandBgColor)
+	styleCostBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
+	styleDiffAdded    = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
+	styleDiffRemoved  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
+	styleDiffBinary   = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(brandBgColor)
+	styleGitBranch    = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(brandBgColor).Bold(true)
 )
 
 // directionArrow points outward along each compass axis (away from goal toward
@@ -165,6 +165,9 @@ func orbStyle(d float64) lipgloss.Style {
 func (m Model) View() string {
 	if m.palette != nil {
 		return m.palette.View()
+	}
+	if m.switcher != nil {
+		return m.switcher.View()
 	}
 	if m.status != nil {
 		return m.status.View()
@@ -364,9 +367,15 @@ func (m Model) renderHeader(totalW int) string {
 	const gutter = 2
 
 	leftW := max(contentW-brandW-gutter, 0)
+	sessionText := "active"
+	if m.snapshot.SessionCount > 1 {
+		sessionText = fmt.Sprintf("%s (%d)", daemon.WorktreeLabel(m.snapshot.DisplayedWorktree), m.snapshot.SessionCount)
+	} else if m.snapshot.Worktree != "" {
+		sessionText = daemon.WorktreeLabel(m.snapshot.Worktree)
+	}
 	leftLines := append(
 		[]string{styleHeaderLabel.Render("version: ") + ver +
-			"  " + styleHeaderLabel.Render("session: ") + styleSessionOn.Render("active")},
+			"  " + styleHeaderLabel.Render("session: ") + styleSessionOn.Render(sessionText)},
 		m.headerTelemetryRows(leftW)...,
 	)
 
@@ -857,7 +866,7 @@ func renderListTitleRow(innerW int) string {
 }
 
 func (m Model) renderFooterHelp(maxWidth int) string {
-	text := "keys: up/down select | enter status | space toggle | r run one | t all | esc stop | q quit | 1-9/0 toggle | ctrl+p commands"
+	text := "keys: up/down select | enter status | space toggle | r run one | t all | esc stop | ctrl+w sessions | q quit | 1-9/0 toggle | ctrl+p commands"
 	if m.footerNotice != "" && m.tick < m.footerNoticeUntil {
 		text = m.footerNotice
 	}
@@ -1255,7 +1264,6 @@ func toggleLabel(i int) string {
 		return " "
 	}
 }
-
 
 func truncate(s string, n int) string {
 	return truncateWithSuffix(s, n, "…")
