@@ -35,14 +35,14 @@ func SocketPath() (string, error) {
 // SocketPathFor returns the daemon socket path resolved from the supplied
 // caller cwd. When cwd is empty the fingerprint is taken from the current
 // process cwd (legacy behaviour). When non-empty the fingerprint is taken
-// from `git -C cwd rev-parse --show-toplevel`, which is the right thing
+// from `git -C cwd rev-parse --git-common-dir`, which is the right thing
 // for the MCP server: its process cwd is whatever the agent harness had
 // at spawn time and goes stale the moment the agent moves between
 // worktrees, but the agent itself always knows where it is and can pass
 // that path through.
 //
 // Falls back to the legacy single-socket $HOME/.hud/sock when no git
-// toplevel can be resolved (preserves the demo path that runs outside a
+// common dir can be resolved (preserves the demo path that runs outside a
 // repository).
 //
 // Override with $HUD_SOCK for tests and unusual deployments.
@@ -60,15 +60,24 @@ func SocketPathFor(cwd string) (string, error) {
 	return filepath.Join(home, defaultSockRel), nil
 }
 
-// repoFingerprintFor returns a stable short hash of the git toplevel
+// repoFingerprintFor returns a stable short hash identifying the git repo
 // resolved from `cwd` (when non-empty) or the current process cwd. Returns
-// "" when not in a repo. Worktrees of the same repo each get a distinct
-// fingerprint because `git rev-parse --show-toplevel` returns the
-// worktree's own path, which is exactly what we want — each worktree is
-// its own HUD session.
+// "" when not in a repo.
+//
+// The fingerprint hashes the absolute `git rev-parse --git-common-dir`
+// path, which is the *shared* .git directory across a repo and all of its
+// linked worktrees. This means the main repo and every worktree of it
+// collapse onto a single socket — `hud start` can run in the trunk while
+// an agent in a worktree (or a `hud hook` fired from that worktree)
+// transparently dials the same daemon. The daemon still re-anchors its
+// session worktree per-call via OnGoal so verifiers diff the right tree.
+//
+// We intentionally do *not* use `--show-toplevel`: that returns the
+// worktree's own path and produced a distinct fingerprint per worktree,
+// stranding worktree-side clients whenever the HUD daemon lived in the
+// trunk (or vice versa, e.g. after a HUD restart from a different cwd).
 func repoFingerprintFor(cwd string) string {
-	args := []string{"rev-parse", "--show-toplevel"}
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
@@ -76,11 +85,31 @@ func repoFingerprintFor(cwd string) string {
 	if err != nil {
 		return ""
 	}
-	root := strings.TrimSpace(string(out))
-	if root == "" {
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(root))
+	// `--git-common-dir` returns a path relative to the command's working
+	// directory (e.g. ".git" when run inside the toplevel) when invoked
+	// from the main repo, but an *absolute realpath* when invoked from a
+	// linked worktree. Normalize both into an absolute, symlink-free
+	// canonical path so the trunk and its worktrees hash identically —
+	// otherwise the symlink layer that macOS imposes on /var/folders,
+	// /tmp, etc. silently produces two different fingerprints for the
+	// same .git directory.
+	abs := raw
+	if !filepath.IsAbs(abs) {
+		base := cwd
+		if base == "" {
+			base, _ = os.Getwd()
+		}
+		abs = filepath.Join(base, raw)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	abs = filepath.Clean(abs)
+	sum := sha256.Sum256([]byte(abs))
 	return hex.EncodeToString(sum[:])[:12]
 }
 

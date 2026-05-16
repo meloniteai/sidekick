@@ -36,16 +36,20 @@ func Run(ctx context.Context, version string) error {
 	// which worktree it is currently operating in. The MCP server's own
 	// process cwd is whatever the agent harness had at spawn time and goes
 	// stale the moment the agent moves between worktrees — without this
-	// hint, the per-repo socket fingerprint resolves against the wrong
-	// tree and the daemon either can't be reached or routes the call to
-	// the wrong session.
+	// hint we can't resolve the repo's shared socket from a worktree, and
+	// the OnGoal re-anchor that points verifiers at the agent's tree
+	// would diff the wrong worktree.
 	cwdArg := mcp.WithString("cwd",
 		mcp.Description(
 			"Absolute path to the agent's current working directory (typically "+
 				"the worktree the agent is editing in). Pass this on every call so "+
-				"the HUD server can find the right per-worktree daemon socket; the "+
-				"server's own process cwd is frozen at session start and goes stale "+
-				"when the agent switches worktrees. Omit only when not in a git repo."),
+				"the HUD server can resolve the repo's shared daemon socket and "+
+				"re-anchor verifiers against the right worktree. One HUD daemon "+
+				"serves a repo and all of its linked worktrees, so `hud start` may "+
+				"live in the trunk while the agent works in a worktree. The MCP "+
+				"server's own process cwd is frozen at session start and goes "+
+				"stale when the agent switches worktrees. Omit only when not in a "+
+				"git repo."),
 	)
 
 	srv.AddTool(
