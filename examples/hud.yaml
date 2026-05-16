@@ -18,6 +18,15 @@ verifiers:
       model: haiku
       thinking: low
       skill: ./skills/architect/SKILL.md
+  - name: Verbose & Junk Code
+    type: agent
+    direction: NE
+    timeout: 90s
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/verbose-junk-code/SKILL.md
   - name: Test
     type: agent
     direction: E
@@ -27,6 +36,15 @@ verifiers:
       model: haiku
       thinking: low
       skill: ./skills/test/SKILL.md
+  - name: Scope
+    type: agent
+    direction: SE
+    timeout: 90s
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/scope/SKILL.md
   - name: Security
     type: agent
     direction: S
@@ -36,6 +54,15 @@ verifiers:
       model: haiku
       thinking: low
       skill: ./skills/security/SKILL.md
+  - name: No Storytelling
+    type: agent
+    direction: SW
+    timeout: 90s
+    llm:
+      agent: claude
+      model: haiku
+      thinking: low
+      skill: ./skills/no-storytelling/SKILL.md
   - name: Deployment
     type: agent
     direction: W
