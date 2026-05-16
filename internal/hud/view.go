@@ -82,6 +82,11 @@ var (
 	styleArrowInHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
 	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28")).Background(brandBgColor)
 	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(brandBgColor).Padding(0, 1).Foreground(lipgloss.Color("252"))
+	// styleHeaderBrand mirrors styleLandingBanner from the splash: the
+	// in-header ANSI-shadow "KIKAITE HUD" wordmark is rendered with the
+	// same solid coral on warm graphite, bold, no animation — so the
+	// splash and the main HUD share one wordmark identity.
+	styleHeaderBrand   = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor).Bold(true)
 	styleListBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).Background(brandBgColor)
 	styleListTitle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft)).Background(brandBgColor)
 	styleListSlash     = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor)
@@ -339,9 +344,25 @@ func defaultString(s, fallback string) string {
 	return s
 }
 
-// renderHeader builds the framed metadata box at the top of the screen. The
-// box stretches to the same total width as the grid so it visually anchors
-// over the compass below it.
+// hudHeaderBanner is the compact ANSI-shadow "HUD" wordmark stamped on
+// the right side of the main HUD header. Same chunky block aesthetic as
+// the splash banner for brand continuity, but trimmed to the three-letter
+// short form and compressed to 4 rows so it sits inside the existing
+// header band without adding vertical space (and so the view still fits
+// the classic 80×24 terminal). The splash keeps the full 6-row
+// "KIKAITE HUD" since it owns its own screen.
+const hudHeaderBanner = `██╗  ██╗██╗   ██╗██████╗
+███████║██║   ██║██║  ██║
+██║  ██║╚██████╔╝██████╔╝
+╚═╝  ╚═╝ ╚═════╝ ╚═════╝ `
+
+// renderHeader builds the framed metadata box at the top of the screen.
+// The box stretches to the same total width as the grid so it visually
+// anchors over the compass below. The right column hosts the ANSI-shadow
+// "HUD" wordmark — same font as the splash banner, just the short form so
+// it fits beside the telemetry without dominating. Sized to fit on
+// 80-cell-or-wider terminals; on narrower widths lipgloss clips the
+// banner from the right rather than spawning a separate fallback.
 func (m Model) renderHeader(totalW int) string {
 	if totalW < 28 {
 		totalW = 28
@@ -353,23 +374,73 @@ func (m Model) renderHeader(totalW int) string {
 		ver = "dev"
 	}
 
+	bannerLines := strings.Split(hudHeaderBanner, "\n")
+	brandW := 0
+	for _, ln := range bannerLines {
+		if w := lipgloss.Width(ln); w > brandW {
+			brandW = w
+		}
+	}
+	const gutter = 2
+
+	leftW := max(contentW-brandW-gutter, 0)
+	leftLines := append(
+		[]string{styleHeaderLabel.Render("version: ") + ver +
+			"  " + styleHeaderLabel.Render("session: ") + styleSessionOn.Render("active")},
+		m.headerTelemetryRows(leftW)...,
+	)
+
+	// Compose rows manually: pad each metadata line to leftW, lay down
+	// the gutter, then stamp the banner line styled coral. Banner lines
+	// are padded to brandW so trailing spaces stay inside the brand bg.
+	rows := make([]string, len(bannerLines))
+	for i, bl := range bannerLines {
+		var left string
+		if i < len(leftLines) {
+			left = leftLines[i]
+		}
+		left = padToWidth(left, leftW)
+		banner := styleHeaderBrand.Render(padBannerLine(bl, brandW))
+		rows[i] = left + strings.Repeat(" ", gutter) + banner
+	}
+	return styleHeaderBox.Width(styleW).Render(reanchorBrandBg(strings.Join(rows, "\n")))
+}
+
+// padToWidth right-pads s with spaces so it occupies exactly width cells.
+// Truncates if s already exceeds width so the side-by-side layout never
+// lets a long row push the banner column.
+func padToWidth(s string, width int) string {
+	w := lipgloss.Width(s)
+	if w == width {
+		return s
+	}
+	if w > width {
+		return truncate(s, width)
+	}
+	return s + strings.Repeat(" ", width-w)
+}
+
+// padBannerLine right-pads a banner row with spaces so each ANSI-shadow
+// row has the same cell width before it's wrapped in the brand style;
+// without this the trailing-space line and the wider rows render with
+// different widths and trailing-space gaps break the brand bg.
+func padBannerLine(s string, width int) string {
+	w := lipgloss.Width(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
+}
+
+// headerTelemetryRows returns the non-version rows of the header: socket /
+// mcp last-seen + verifier count + cumulative cost, the optional git
+// workspace summary, and the goal row. Each row is truncated to colW so
+// the side-by-side layout doesn't wrap the metadata column under the
+// banner block. Pulled out so side-by-side and compact layouts share one
+// source of truth for what the column contains.
+func (m Model) headerTelemetryRows(colW int) []string {
 	var rows []string
 
-	// Row 1 — session telemetry on the left, "KIKAITE HUD" brand on the
-	// right. The brand sits in the top-right corner (per the kikaite.ai
-	// marketing layout) and animates with the model tick so the user
-	// gets an immediate "this thing is alive" cue even before any
-	// verifier has reported.
-	leftCol := styleHeaderLabel.Render("version: ") + ver +
-		"  " + styleHeaderLabel.Render("session: ") + styleSessionOn.Render("active")
-	brand := flareBrand(m.tick, "KIKAITE HUD")
-	pad := contentW - lipgloss.Width(leftCol) - lipgloss.Width(brand)
-	if pad < 2 {
-		pad = 2
-	}
-	rows = append(rows, leftCol+strings.Repeat(" ", pad)+brand)
-
-	// Row 2 — telemetry: socket / mcp last-seen + verifier count + cumulative cost.
 	enabled := 0
 	var totalCostUSD float64
 	var totalTokens int
@@ -386,31 +457,25 @@ func (m Model) renderHeader(totalW int) string {
 	if totalCostUSD > 0 || totalTokens > 0 {
 		costSummary = "  " + styleHeaderLabel.Render("agent run: ") + styleCostBadge.Render(formatCost(totalCostUSD, totalTokens))
 	}
-	rows = append(rows,
-		styleHeaderLabel.Render("last socket: ")+formatTimestamp(m.snapshot.LastSocketAt)+
-			"  "+styleHeaderLabel.Render("last mcp: ")+formatTimestamp(m.snapshot.LastMCPAt)+
-			"  "+styleHeaderLabel.Render("verifiers: ")+fmt.Sprintf("%d/%d", enabled, len(m.snapshot.Verifiers))+
-			costSummary,
-	)
+	telemetry := styleHeaderLabel.Render("last socket: ") + formatTimestamp(m.snapshot.LastSocketAt) +
+		"  " + styleHeaderLabel.Render("last mcp: ") + formatTimestamp(m.snapshot.LastMCPAt) +
+		"  " + styleHeaderLabel.Render("verifiers: ") + fmt.Sprintf("%d/%d", enabled, len(m.snapshot.Verifiers)) +
+		costSummary
+	rows = append(rows, truncate(telemetry, colW))
 
-	// Row 3 — git workspace summary: worktree, branch, +added/-removed.
-	// Skipped when no git context has been detected (tests, demo runs) so
-	// the header doesn't gain a permanently empty row.
-	if git := m.renderGitHeaderRow(contentW); git != "" {
+	if git := m.renderGitHeaderRow(colW); git != "" {
 		rows = append(rows, git)
 	}
 
-	// Goal summary, single line, truncated to fit.
 	goal := m.snapshot.Goal
 	goalRow := styleGoalLbl.Render("goal: ")
 	if goal == "" {
 		goalRow += styleReason.Render("(none — submit a prompt or run `hud goal ...`)")
 	} else {
-		goalRow += truncate(goal, contentW-len("goal: ")-2)
+		goalRow += truncate(goal, colW-len("goal: ")-2)
 	}
 	rows = append(rows, goalRow)
-
-	return styleHeaderBox.Width(styleW).Render(reanchorBrandBg(strings.Join(rows, "\n")))
+	return rows
 }
 
 // renderGitHeaderRow renders the single-line git summary always shown in
