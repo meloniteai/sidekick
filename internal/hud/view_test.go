@@ -573,7 +573,11 @@ func TestRenderHeaderFields(t *testing.T) {
 			},
 		},
 	}
-	out := m.renderHeader(80)
+	// 100 cells is the floor where the metadata column still fits all
+	// fields alongside the ~25-cell HUD banner; below that the
+	// "verifiers: N/M" tail truncates by design (user told us "truncate
+	// if it doesn't fit when sizing down" rather than swapping layouts).
+	out := m.renderHeader(100)
 	for _, want := range []string{
 		"version: ", "dev",
 		"session: ", "active",
@@ -592,7 +596,7 @@ func TestRenderHeaderFields(t *testing.T) {
 
 	// Zero-value timestamps must still render (em-dash placeholder), not
 	// blow up the layout.
-	empty := Model{width: 120, height: 40, snapshot: ipc.StatusReply{}}.renderHeader(80)
+	empty := Model{width: 120, height: 40, snapshot: ipc.StatusReply{}}.renderHeader(100)
 	if !strings.Contains(empty, "—") {
 		t.Errorf("zero-time header should show em-dash placeholder; got:\n%s", empty)
 	}
@@ -621,6 +625,25 @@ func TestRenderHeaderShowsGitSummaryWhenWorkspacePresent(t *testing.T) {
 	for _, want := range []string{"git: ", "hud", "main", "+42", "-7", "2 files", "(g to expand)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git header missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderHeaderShowsBlockBannerInRightColumn pins the header banner:
+// the right column hosts the compact ANSI-shadow "HUD" wordmark (same
+// font as the splash banner, short form). The banner is fixed-size, not
+// responsive, so a couple of unmistakable glyph sequences should appear
+// on every terminal wide enough to fit the box at all.
+func TestRenderHeaderShowsBlockBannerInRightColumn(t *testing.T) {
+	m := Model{
+		width:    120,
+		height:   40,
+		snapshot: ipc.StatusReply{Goal: "banner in header"},
+	}
+	out := m.renderHeader(120)
+	for _, want := range []string{"██╗", "╚═╝", "███████║"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("header missing banner glyph %q in:\n%s", want, out)
 		}
 	}
 }

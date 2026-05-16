@@ -3,7 +3,6 @@ package hud
 import (
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/lucasb-eyer/go-colorful"
@@ -13,39 +12,6 @@ import (
 // this is roughly 4 seconds — slow enough not to seizure, fast enough to feel
 // alive when the user is staring at the compass.
 const flarePeriod = 30
-
-// flareBrand renders the KIKAITE HUD wordmark as a per-character shimmer
-// that stays inside the brand coral band. Each char's lightness rides a
-// triangle wave offset by position so the gradient appears to scroll
-// horizontally — but the hue never leaves the coral range, so the brand
-// reads as a single identifiable color rather than a rainbow.
-func flareBrand(tick int, text string) string {
-	if text == "" {
-		return ""
-	}
-	runes := []rune(text)
-	var b strings.Builder
-	for i, r := range runes {
-		// Phase advances with tick and char index; map to a 0→1→0
-		// triangle so each glyph breathes between the deep coral and
-		// a warmer highlight without drifting off-hue.
-		raw := float64(tick%flarePeriod)/flarePeriod + float64(i)*0.12
-		phase := raw - math.Floor(raw)
-		t := 1 - math.Abs(2*phase-1)
-		// Hue is fixed in the red-orange band (10°–18°) — narrow enough
-		// to read as one color even as t shifts the lightness.
-		hue := 10.0 + 8.0*t
-		sat := 0.78
-		lum := 0.50 + 0.16*t
-		c := colorful.Hsl(hue, sat, lum)
-		style := lipgloss.NewStyle().
-			Foreground(lipgloss.Color(c.Hex())).
-			Background(brandBgColor).
-			Bold(true)
-		b.WriteString(style.Render(string(r)))
-	}
-	return b.String()
-}
 
 // pulseStyle returns a style whose foreground breathes between two colours
 // over flarePeriod ticks. Used for the centre goal glyph so it visibly
