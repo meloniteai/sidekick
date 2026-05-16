@@ -50,12 +50,12 @@ type Workspace struct {
 //
 // A short per-command timeout keeps a hung git process from blocking the
 // TUI tick loop.
-func Fetch(ctx context.Context, baseRef string, extraFiles []string) Workspace {
+func Fetch(ctx context.Context, worktree, baseRef string, extraFiles []string) Workspace {
 	var ws Workspace
-	ws.WorktreeName = worktreeName(ctx)
-	ws.Branch = currentBranch(ctx)
+	ws.WorktreeName = worktreeName(ctx, worktree)
+	ws.Branch = currentBranch(ctx, worktree)
 	ws.BaseRefUnset = baseRef == ""
-	files := diffNumstat(ctx, baseRef)
+	files := diffNumstat(ctx, worktree, baseRef)
 
 	known := map[string]int{}
 	for i, f := range files {
@@ -100,40 +100,44 @@ func Fetch(ctx context.Context, baseRef string, extraFiles []string) Workspace {
 
 // withTimeout runs `git args...` with a 1.5s cap so the TUI never blocks on
 // a slow git invocation. Empty output is returned on any error.
-func gitRun(ctx context.Context, args ...string) string {
+func gitRun(ctx context.Context, worktree string, args ...string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		return ""
 	}
 	cctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
-	out, err := exec.CommandContext(cctx, "git", args...).Output()
+	cmd := exec.CommandContext(cctx, "git", args...)
+	if strings.TrimSpace(worktree) != "" {
+		cmd.Dir = worktree
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimRight(string(out), "\n")
 }
 
-func worktreeName(ctx context.Context) string {
-	top := gitRun(ctx, "rev-parse", "--show-toplevel")
+func worktreeName(ctx context.Context, worktree string) string {
+	top := gitRun(ctx, worktree, "rev-parse", "--show-toplevel")
 	if top == "" {
 		return ""
 	}
 	return filepath.Base(top)
 }
 
-func currentBranch(ctx context.Context) string {
+func currentBranch(ctx context.Context, worktree string) string {
 	// --abbrev-ref returns "HEAD" when detached; the user still wants to know
 	// they're detached, so we pass the literal "HEAD" through unchanged.
-	return gitRun(ctx, "rev-parse", "--abbrev-ref", "HEAD")
+	return gitRun(ctx, worktree, "rev-parse", "--abbrev-ref", "HEAD")
 }
 
 // diffNumstat runs `git diff --numstat <baseRef>` and parses the rows.
 // Format per line: "<added>\t<removed>\t<path>". Binary files use "-\t-".
-func diffNumstat(ctx context.Context, baseRef string) []FileStat {
+func diffNumstat(ctx context.Context, worktree, baseRef string) []FileStat {
 	if baseRef == "" {
 		return nil
 	}
-	out := gitRun(ctx, "diff", "--numstat", baseRef)
+	out := gitRun(ctx, worktree, "diff", "--numstat", baseRef)
 	if out == "" {
 		return nil
 	}

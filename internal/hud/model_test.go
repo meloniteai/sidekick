@@ -1,6 +1,8 @@
 package hud
 
 import (
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,6 +25,81 @@ func TestToggleKeyIndex(t *testing.T) {
 	}
 	if _, ok := toggleKeyIndex("x"); ok {
 		t.Fatal("non-toggle key should not match")
+	}
+}
+
+func TestModelCtrlWOpensSessionSwitcher(t *testing.T) {
+	reg := testRegistryWithTwoSessions(t)
+	m := NewRegistry(reg)
+	m.width, m.height = 120, 40
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	got := next.(Model)
+	if got.switcher == nil {
+		t.Fatal("ctrl+w should open session switcher")
+	}
+}
+
+func TestModelSessionSwitcherChangesDisplayedSession(t *testing.T) {
+	reg := testRegistryWithTwoSessions(t)
+	m := NewRegistry(reg)
+	m.width, m.height = 120, 40
+	before := reg.DisplayedSession().SessionWorktree()
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	m = next.(Model)
+	m = sessionSwitcherKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = sessionSwitcherKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	after := reg.DisplayedSession().SessionWorktree()
+	if after == before {
+		t.Fatalf("displayed session did not change: %q", after)
+	}
+	if m.switcher != nil {
+		t.Fatal("switcher should close after selection")
+	}
+}
+
+func testRegistryWithTwoSessions(t *testing.T) *daemon.Registry {
+	t.Helper()
+	trunk := t.TempDir()
+	testGit(t, trunk, "init", "-q", "-b", "main")
+	testGit(t, trunk, "commit", "--allow-empty", "-q", "-m", "init")
+	wt := filepath.Join(t.TempDir(), "wt")
+	testGit(t, trunk, "worktree", "add", "-q", wt)
+
+	defaultState := daemon.NewState()
+	defaultState.SetSessionWorktree(trunk)
+	defaultState.SetGoal("trunk")
+	reg := daemon.NewRegistry(defaultState, func(anchor daemon.SessionAnchor) (*daemon.State, error) {
+		s := daemon.NewState()
+		s.SetSessionWorktree(anchor.Worktree)
+		s.SetSessionBaseRef(anchor.BaseRef)
+		s.SetGoal("worktree")
+		return s, nil
+	})
+	if _, err := reg.SessionForCWD(wt); err != nil {
+		t.Fatal(err)
+	}
+	return reg
+}
+
+func sessionSwitcherKey(t *testing.T, m Model, msg tea.KeyMsg) Model {
+	t.Helper()
+	next, _ := m.Update(msg)
+	out, ok := next.(Model)
+	if !ok {
+		t.Fatalf("Update did not return Model")
+	}
+	return out
+}
+
+func testGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
 	}
 }
 

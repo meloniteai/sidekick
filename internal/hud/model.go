@@ -60,6 +60,7 @@ type arrowAnim struct {
 // State (in-process), so there is no IPC overhead for the TUI itself.
 type Model struct {
 	state             *daemon.State
+	registry          *daemon.Registry
 	snapshot          ipc.StatusReply
 	events            []daemon.EventEntry
 	showEventLog      bool
@@ -79,6 +80,7 @@ type Model struct {
 	editor            *EditWizard
 	status            *StatusWizard
 	palette           *Palette
+	switcher          *SessionSwitcher
 	// anims is keyed by verifier name. We seed an entry on first observation
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
@@ -92,6 +94,7 @@ type Model struct {
 	// do that on every render frame.
 	workspace        gitstats.Workspace
 	workspaceFetchAt int
+	configPathFunc   func() string
 }
 
 // New returns an initialized Model.
@@ -107,6 +110,16 @@ func New(state *daemon.State) Model {
 		// "further from goal than it actually is" distance reading.
 		orbSpringCfg: harmonica.NewSpring(tickInterval.Seconds(), 7.0, 1.0),
 	}
+}
+
+// NewRegistry returns a Model backed by the daemon's multi-session registry.
+func NewRegistry(registry *daemon.Registry) Model {
+	state := registry.DisplayedSession()
+	m := New(state)
+	m.registry = registry
+	m.snapshot = registry.DisplayedSnapshot()
+	m.events = state.Events()
+	return m
 }
 
 // WithManualTrigger sets a callback invoked when the user presses 't' on the
@@ -146,6 +159,13 @@ func (m Model) WithConfigEditor(configPath string) Model {
 	return m
 }
 
+// WithConfigPathFunc lets multi-session hosts provide the hud.yaml path for
+// the currently displayed session.
+func (m Model) WithConfigPathFunc(fn func() string) Model {
+	m.configPathFunc = fn
+	return m
+}
+
 // WithConfigSaved sets a callback invoked after the edit wizard saves
 // hud.yaml metadata.
 func (m Model) WithConfigSaved(fn func() error) Model {
@@ -175,9 +195,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.palette != nil {
 			m.palette.SetSize(msg.Width, msg.Height)
 		}
+		if m.switcher != nil {
+			m.switcher.width = msg.Width
+			m.switcher.height = msg.Height
+		}
 	case tickMsg:
-		m.snapshot = m.state.Snapshot()
-		m.events = m.state.Events()
+		m.snapshot = m.currentSnapshot()
+		m.events = m.currentEvents()
 		m.clampSelectedVerifier()
 		m.refreshStatusWizard()
 		m.tick++
@@ -201,6 +225,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.palette = &next
 		return m, cmd
 	}
+	if m.switcher != nil {
+		next, cmd, done := m.switcher.Update(msg)
+		if done {
+			if worktree := next.Chosen(); worktree != "" && m.registry != nil {
+				m.registry.SwitchDisplayed(worktree)
+				m.snapshot = m.currentSnapshot()
+				m.events = m.currentEvents()
+				m.selectedVerifier = 0
+				m.workspaceFetchAt = 0
+				m.refreshWorkspace()
+			}
+			m.switcher = nil
+			return m, cmd
+		}
+		m.switcher = &next
+		return m, cmd
+	}
 	if m.status != nil {
 		next, cmd, done := m.status.Update(msg)
 		if done {
@@ -219,15 +260,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			next.saved = false
-			if m.state != nil {
-				m.snapshot = m.state.Snapshot()
-			}
+			m.snapshot = m.currentSnapshot()
 		}
 		if done {
 			m.editor = nil
-			if m.state != nil {
-				m.snapshot = m.state.Snapshot()
-			}
+			m.snapshot = m.currentSnapshot()
 			return m, cmd
 		}
 		m.editor = &next
@@ -242,6 +279,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			p := NewPalette()
 			p.SetSize(m.width, m.height)
 			m.palette = &p
+			return m, nil
+		case "ctrl+w":
+			m.openSessionSwitcher()
 			return m, nil
 		case "t":
 			if m.onManualTrigger != nil {
@@ -271,7 +311,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			editor.height = m.height
 			m.editor = &editor
 		case "n", "ctrl+n":
-			editor := NewCreateWizard(m.configPath)
+			editor := NewCreateWizard(m.currentConfigPath())
 			editor.width = m.width
 			editor.height = m.height
 			m.editor = &editor
@@ -332,10 +372,8 @@ func (m *Model) toggleVerifierByName(name string) {
 		return
 	}
 	m.onToggleVerifier(name)
-	if m.state != nil {
-		m.snapshot = m.state.Snapshot()
-		m.clampSelectedVerifier()
-	}
+	m.snapshot = m.currentSnapshot()
+	m.clampSelectedVerifier()
 	if v, ok := m.verifierByName(name); ok {
 		state := "enabled"
 		if v.Disabled {
@@ -360,10 +398,11 @@ func (m *Model) setFooterNotice(message string) {
 }
 
 func (m Model) newEditWizard() EditWizard {
+	configPath := m.currentConfigPath()
 	if v, ok := m.selectedStatus(); ok {
-		return NewEditWizardFor(m.configPath, v.Name)
+		return NewEditWizardFor(configPath, v.Name)
 	}
-	return NewEditWizard(m.configPath)
+	return NewEditWizard(configPath)
 }
 
 func (m *Model) refreshStatusWizard() {
@@ -404,7 +443,7 @@ func tick() tea.Cmd {
 func (m *Model) dispatchPaletteAction(action paletteAction) {
 	switch action {
 	case paletteActionNewVerifier:
-		editor := NewCreateWizard(m.configPath)
+		editor := NewCreateWizard(m.currentConfigPath())
 		editor.width = m.width
 		editor.height = m.height
 		m.editor = &editor
@@ -419,20 +458,65 @@ func (m *Model) dispatchPaletteAction(action paletteAction) {
 		m.refreshWorkspace()
 	case paletteActionToggleEventLog:
 		m.showEventLog = !m.showEventLog
+	case paletteActionSwitchSession:
+		m.openSessionSwitcher()
 	}
+}
+
+func (m *Model) openSessionSwitcher() {
+	if m.registry == nil {
+		return
+	}
+	switcher := NewSessionSwitcher(m.registry.Sessions())
+	switcher.width = m.width
+	switcher.height = m.height
+	m.switcher = &switcher
+}
+
+func (m Model) currentState() *daemon.State {
+	if m.registry != nil {
+		return m.registry.DisplayedSession()
+	}
+	return m.state
+}
+
+func (m Model) currentSnapshot() ipc.StatusReply {
+	if m.registry != nil {
+		return m.registry.DisplayedSnapshot()
+	}
+	if m.state == nil {
+		return ipc.StatusReply{}
+	}
+	return m.state.Snapshot()
+}
+
+func (m Model) currentEvents() []daemon.EventEntry {
+	state := m.currentState()
+	if state == nil {
+		return nil
+	}
+	return state.Events()
+}
+
+func (m Model) currentConfigPath() string {
+	if m.configPathFunc != nil {
+		return m.configPathFunc()
+	}
+	return m.configPath
 }
 
 // refreshWorkspace refetches git workspace metadata when enough ticks have
 // passed since the last fetch. The first call after construction always
 // fetches (workspaceFetchAt == 0).
 func (m *Model) refreshWorkspace() {
-	if m.state == nil {
+	state := m.currentState()
+	if state == nil {
 		return
 	}
 	if m.workspaceFetchAt != 0 && m.tick-m.workspaceFetchAt < gitRefreshTicks {
 		return
 	}
-	m.workspace = gitstats.Fetch(context.Background(), m.state.SessionBaseRef(), m.state.SessionEdits())
+	m.workspace = gitstats.Fetch(context.Background(), state.SessionWorktree(), state.SessionBaseRef(), state.SessionEdits())
 	m.workspaceFetchAt = m.tick
 	if m.workspaceFetchAt == 0 {
 		// Reserve 0 as the "never fetched" sentinel so the tick==0 case still

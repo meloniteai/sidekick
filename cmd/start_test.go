@@ -22,9 +22,11 @@ func TestRunnerHandlerGoalDoesNotTriggerVerifiers(t *testing.T) {
 	}
 	r := verifier.NewRunner(context.Background(), state, []verifier.Verifier{v})
 	defer r.Stop()
-	h := &runnerHandler{state: state, runner: r}
+	runtimes := newSessionRuntimeManager(context.Background(), "test", "")
+	runtimes.Register(state, r, "")
+	h := &runnerHandler{runtimes: runtimes}
 
-	h.OnGoal("ship without eager verifier runs", "", "")
+	h.OnGoal(state, "ship without eager verifier runs")
 	time.Sleep(100 * time.Millisecond)
 
 	if got := state.Goal(); got != "ship without eager verifier runs" {
@@ -35,7 +37,7 @@ func TestRunnerHandlerGoalDoesNotTriggerVerifiers(t *testing.T) {
 		t.Fatalf("goal set should not compute verifier; computed=%s reason=%q", s.ComputedAt, s.Reason)
 	}
 
-	h.OnWrite("cmd/start.go")
+	h.OnWrite(state, "cmd/start.go")
 	if !waitForStartTest(2*time.Second, func() bool {
 		s, _ := state.Verifier("Counter")
 		return !s.Running && s.Reason == "ok"
@@ -118,4 +120,3 @@ func waitForStartTest(timeout time.Duration, cond func() bool) bool {
 	}
 	return cond()
 }
-

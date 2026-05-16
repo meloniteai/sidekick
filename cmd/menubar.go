@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -37,9 +38,15 @@ func newMenubarCmd() *cobra.Command {
 			fmt.Fprintf(os.Stderr, "[hud] session base ref: %s\n", baseRef)
 			fmt.Fprintf(os.Stderr, "[hud] session worktree: %s\n", worktree)
 
-			verifiers, quietPeriod, source, _, err := loadVerifiers(configPath)
+			verifiers, quietPeriod, source, loadedConfigPath, err := loadVerifiers(configPath)
 			if err != nil {
 				return err
+			}
+			sessionIdleTimeout := daemon.DefaultSessionIdleTimeout
+			if idle, set, err := loadSessionIdleTimeout(configPath, worktree); err != nil {
+				return err
+			} else if set {
+				sessionIdleTimeout = idle
 			}
 			if len(verifiers) < hudtui.MinSelected {
 				return fmt.Errorf("at least %d verifiers must be configured (found %d in %s)",
@@ -55,10 +62,18 @@ func newMenubarCmd() *cobra.Command {
 			runner := verifier.NewRunner(ctx, state, verifiers)
 			runner.SetQuietPeriod(quietPeriod)
 			fmt.Fprintf(os.Stderr, "[hud] quiet period: %s\n", runner.QuietPeriod())
-			defer runner.Stop()
+			fmt.Fprintf(os.Stderr, "[hud] session idle timeout: %s\n", sessionIdleTimeout)
 
-			handler := &runnerHandler{state: state, runner: runner}
-			srv, err := acquireDaemonSocket(sock, state, handler, true)
+			runtimes := newSessionRuntimeManager(ctx, version, configPath)
+			runtimes.Register(state, runner, loadedConfigPath)
+			defer runtimes.StopAll()
+			registry := daemon.NewRegistry(state, runtimes.NewSession)
+			registry.SetCleanup(runtimes.Stop)
+			registry.SetIdleTimeout(sessionIdleTimeout)
+			go registry.StartGC(ctx, time.Minute)
+
+			handler := &runnerHandler{runtimes: runtimes}
+			srv, err := acquireDaemonSocket(sock, registry, handler, true)
 			if err != nil {
 				return err
 			}
@@ -69,13 +84,21 @@ func newMenubarCmd() *cobra.Command {
 			fmt.Fprintf(os.Stderr, "[hud] listening on %s (menubar)\n", sock)
 
 			manualTrigger := func() {
-				state.SetGoal("manual trigger, goal unknown")
-				runner.TriggerImmediate()
+				session := registry.DisplayedSession()
+				session.SetGoal("manual trigger, goal unknown")
+				if runner := runtimes.Runner(session); runner != nil {
+					runner.TriggerImmediate()
+				}
 			}
-			runErr := menubar.Run(ctx, state, menubar.Actions{
+			runErr := menubar.Run(ctx, registry, menubar.Actions{
 				Trigger: manualTrigger,
-				StopRun: runner.KillBatch,
-				Quit:    cancel,
+				StopRun: func() {
+					if runner := runtimes.Runner(registry.DisplayedSession()); runner != nil {
+						runner.KillBatch()
+					}
+				},
+				SwitchSession: registry.SwitchDisplayed,
+				Quit:          cancel,
 			})
 			cancel()
 			if err := <-serveErr; err != nil && runErr == nil {

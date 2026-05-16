@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -16,7 +17,8 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Print the current HUD status as JSON (debug)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resp, err := ipc.Send(ipc.Request{Type: ipc.TypeStatus})
+			cwd, _ := os.Getwd()
+			resp, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeStatus}, cwd)
 			if err != nil {
 				return err
 			}

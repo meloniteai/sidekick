@@ -15,16 +15,12 @@ import (
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
-// EventHandler reacts to mutating client events. The daemon's own logic
-// (debouncer, verifier runner) is wired in by `hud start`.
-//
-// OnGoal optionally re-anchors the session: when worktree or baseRef
-// are non-empty the handler overwrites the corresponding daemon-state
-// values before kicking verifiers, so the next batch evaluates the
-// right tree from the agent's perspective.
+// EventHandler reacts to mutating client events for a routed worktree session.
+// The daemon's own logic (debouncer, verifier runner) is wired in by
+// `hud start`.
 type EventHandler interface {
-	OnWrite(file string)
-	OnGoal(goal, worktree, baseRef string)
+	OnWrite(session *State, file string)
+	OnGoal(session *State, goal string)
 }
 
 // ErrDaemonRunning is returned by Listen when a probe of the existing
@@ -43,7 +39,7 @@ func RemoveSocket(sockPath string) error {
 
 // Server hosts the Unix-socket JSON-line protocol.
 type Server struct {
-	state    *State
+	registry *Registry
 	handler  EventHandler
 	listener net.Listener
 
@@ -53,7 +49,7 @@ type Server struct {
 
 // Listen creates a Unix socket at the given path, removing any stale socket
 // file. The caller must close the returned Server with Close().
-func Listen(sockPath string, state *State, handler EventHandler) (*Server, error) {
+func Listen(sockPath string, registry *Registry, handler EventHandler) (*Server, error) {
 	if err := os.MkdirAll(filepath.Dir(sockPath), 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir socket dir: %w", err)
 	}
@@ -69,7 +65,7 @@ func Listen(sockPath string, state *State, handler EventHandler) (*Server, error
 		return nil, fmt.Errorf("chmod socket: %w", err)
 	}
 	s := &Server{
-		state:    state,
+		registry: registry,
 		handler:  handler,
 		listener: l,
 		doneCh:   make(chan struct{}),
@@ -121,7 +117,6 @@ func (s *Server) handle(conn net.Conn) {
 		writeErr(conn, fmt.Errorf("bad request json: %w", err))
 		return
 	}
-	s.state.MarkSocketActivity(req.Source == ipc.SourceMCP)
 	resp := s.dispatch(req)
 	_ = json.NewEncoder(conn).Encode(resp)
 }
@@ -135,23 +130,47 @@ func (s *Server) dispatch(req ipc.Request) ipc.Response {
 		if err := json.Unmarshal(req.Data, &p); err != nil {
 			return errResp(err)
 		}
-		s.handler.OnWrite(p.File)
+		session, err := s.registry.SessionForCWD(req.Cwd)
+		if err != nil {
+			return errResp(err)
+		}
+		session.MarkSocketActivity(req.Source == ipc.SourceMCP)
+		s.handler.OnWrite(session, p.File)
 		return okData(struct{}{})
 	case ipc.TypeGoal:
 		var p ipc.GoalData
 		if err := json.Unmarshal(req.Data, &p); err != nil {
 			return errResp(err)
 		}
-		s.handler.OnGoal(p.Goal, p.Worktree, p.BaseRef)
+		cwd := req.Cwd
+		if cwd == "" {
+			cwd = p.Worktree
+		}
+		session, err := s.registry.GoalSessionForCWD(cwd)
+		if err != nil {
+			return errResp(err)
+		}
+		session.MarkSocketActivity(req.Source == ipc.SourceMCP)
+		s.handler.OnGoal(session, p.Goal)
 		return okData(struct{}{})
 	case ipc.TypeStatus:
-		return okData(s.state.Snapshot())
+		session, err := s.registry.SessionForCWD(req.Cwd)
+		if err != nil {
+			return errResp(err)
+		}
+		session.MarkSocketActivity(req.Source == ipc.SourceMCP)
+		return okData(s.registry.EnrichSnapshot(session.Snapshot()))
 	case ipc.TypeExplain:
 		var p ipc.ExplainData
 		if err := json.Unmarshal(req.Data, &p); err != nil {
 			return errResp(err)
 		}
-		v, ok := s.state.Verifier(p.Verifier)
+		session, err := s.registry.SessionForCWD(req.Cwd)
+		if err != nil {
+			return errResp(err)
+		}
+		session.MarkSocketActivity(req.Source == ipc.SourceMCP)
+		v, ok := session.Verifier(p.Verifier)
 		if !ok {
 			return errResp(fmt.Errorf("verifier %q not found", p.Verifier))
 		}
