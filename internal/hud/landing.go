@@ -234,23 +234,25 @@ func (l Landing) View() string {
 	return lipgloss.Place(l.width, l.height, lipgloss.Center, lipgloss.Center, box)
 }
 
-// renderLandingBanner draws the wordmark with the version pill anchored on the
-// first line's trailing edge — same visual idea as the Crush reference, just
-// without the slash decoration the user explicitly ruled out.
+// renderLandingBanner draws the wordmark with the version pill on its own
+// row above the banner, right-aligned to innerW. The pill used to sit on
+// the trailing edge of banner line 1, but that made line 1 wider than the
+// other 5 banner rows; on narrow terminals the extra cells wrapped and the
+// pill spilled onto banner line 2, overlapping the wordmark. Keeping it on
+// a dedicated row means the 6 banner rows stay uniform width and clip
+// together when the terminal is narrower than the wordmark.
 func renderLandingBanner(innerW int, version string) string {
 	lines := strings.Split(hudBanner, "\n")
-	pill := ""
-	if version != "" {
-		pill = "v" + version
-	}
 	var b strings.Builder
+	if version != "" {
+		pill := "v" + version
+		pad := max(innerW-lipgloss.Width(pill), 0)
+		b.WriteString(strings.Repeat(" ", pad))
+		b.WriteString(styleLandingVersion.Render(pill))
+		b.WriteString("\n")
+	}
 	for i, ln := range lines {
-		styled := styleLandingBanner.Render(ln)
-		if i == 0 && pill != "" {
-			pad := max(innerW-lipgloss.Width(ln)-lipgloss.Width(pill), 1)
-			styled += strings.Repeat(" ", pad) + styleLandingVersion.Render(pill)
-		}
-		b.WriteString(styled)
+		b.WriteString(styleLandingBanner.Render(ln))
 		if i < len(lines)-1 {
 			b.WriteString("\n")
 		}
