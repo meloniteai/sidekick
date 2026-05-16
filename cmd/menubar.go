@@ -69,7 +69,7 @@ func newMenubarCmd() *cobra.Command {
 			fmt.Fprintf(os.Stderr, "[hud] listening on %s (menubar)\n", sock)
 
 			manualTrigger := func() {
-				state.SetGoal("manual trigger, goal unknown")
+				state.SetGoal("unset")
 				runner.TriggerImmediate()
 			}
 			runErr := menubar.Run(ctx, state, menubar.Actions{

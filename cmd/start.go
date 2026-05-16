@@ -132,7 +132,7 @@ func newStartCmd() *cobra.Command {
 			}
 
 			manualTrigger := func() {
-				state.SetGoal("manual trigger, goal unknown")
+				state.SetGoal("unset")
 				runner.TriggerImmediate()
 				state.LogEvent(daemon.EventInfo, "all verifiers triggered")
 			}
