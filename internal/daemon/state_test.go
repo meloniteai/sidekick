@@ -74,6 +74,36 @@ func TestSessionEditsReturnsCopy(t *testing.T) {
 	}
 }
 
+func TestLockGoalIgnoresSubsequentSetGoal(t *testing.T) {
+	state := NewState()
+	state.LockGoal("ship oauth")
+	if got := state.Goal(); got != "ship oauth" {
+		t.Fatalf("locked goal: got %q, want %q", got, "ship oauth")
+	}
+	if !state.GoalLocked() {
+		t.Fatal("GoalLocked: got false after LockGoal")
+	}
+	state.SetGoal("agent-supplied detour")
+	if got := state.Goal(); got != "ship oauth" {
+		t.Fatalf("post-SetGoal: got %q, want locked goal %q", got, "ship oauth")
+	}
+	if snap := state.Snapshot(); !snap.GoalLocked {
+		t.Fatal("Snapshot.GoalLocked: got false, want true")
+	}
+}
+
+func TestSetGoalWorksWhenUnlocked(t *testing.T) {
+	state := NewState()
+	state.SetGoal("first")
+	state.SetGoal("second")
+	if got := state.Goal(); got != "second" {
+		t.Fatalf("unlocked SetGoal: got %q, want %q", got, "second")
+	}
+	if state.GoalLocked() {
+		t.Fatal("unlocked GoalLocked: got true, want false")
+	}
+}
+
 func TestToggleVerifierDisabledKeepsVerifierVisible(t *testing.T) {
 	state := NewState()
 	state.UpsertVerifier(ipc.VerifierStatus{Name: "Architect", Distance: 0.4, Reason: "ok", Running: true})

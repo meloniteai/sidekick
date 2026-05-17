@@ -136,6 +136,7 @@ func demoVerifiers() []verifier.Verifier {
 func newStartCmd() *cobra.Command {
 	var headless bool
 	var configPath string
+	var startGoal string
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the HUD daemon and TUI",
@@ -190,6 +191,10 @@ func newStartCmd() *cobra.Command {
 			state.SetSessionBaseRef(baseRef)
 			state.SetSessionWorktree(worktree)
 			state.SetVersion(version)
+			if trimmed := strings.TrimSpace(startGoal); trimmed != "" {
+				state.LockGoal(trimmed)
+				fmt.Fprintf(os.Stderr, "[hud] goal locked to: %s\n", trimmed)
+			}
 			runner := verifier.NewRunner(ctx, state, verifiers)
 			runner.SetQuietPeriod(quietPeriod)
 			fmt.Fprintf(os.Stderr, "[hud] quiet period: %s\n", runner.QuietPeriod())
@@ -287,6 +292,7 @@ func newStartCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&headless, "headless", false, "run only the daemon (no TUI); useful for tests")
 	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml (default: nearest hud.yaml above cwd, else demo verifiers)")
+	cmd.Flags().StringVar(&startGoal, "goal", "", "pin the session goal up-front; the agent's hud_set_goal calls become no-ops while this is set")
 	return cmd
 }
 

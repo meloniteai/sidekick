@@ -260,6 +260,7 @@ type VerifierPermissions struct {
 // Running bool carries the same information row-by-row.
 type StatusReply struct {
 	Goal              string           `json:"goal"`
+	GoalLocked        bool             `json:"goal_locked,omitempty"`
 	Verifiers         []VerifierStatus `json:"verifiers"`
 	OverallDistance   float64          `json:"overall_distance"`
 	AnyRunning        bool             `json:"any_running"`
@@ -283,6 +284,15 @@ type SessionSummary struct {
 	AnyRunning   bool      `json:"any_running,omitempty"`
 	LastActivity time.Time `json:"last_activity"`
 	Displayed    bool      `json:"displayed,omitempty"`
+}
+
+// GoalAck is returned by TypeGoal so the caller (MCP server or CLI) can
+// see what the daemon actually retained. When Locked is true the daemon
+// rejected the goal update (a startup-locked goal is in force) and Goal
+// is the locked value the agent should keep using.
+type GoalAck struct {
+	Goal   string `json:"goal"`
+	Locked bool   `json:"locked,omitempty"`
 }
 
 // Send dials the daemon using the process cwd to pick the socket. Use
