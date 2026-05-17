@@ -12,12 +12,21 @@ import (
 	"github.com/uriahlevy/hud/internal/config"
 )
 
+// isolateGlobalConfig points HUD_GLOBAL_CONFIG at a path inside dir that
+// won't exist, so config.Load can't fall back to the user's real
+// ~/.hud/hud.yaml when no local hud.yaml is present.
+func isolateGlobalConfig(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HUD_GLOBAL_CONFIG", filepath.Join(dir, "no-global.yaml"))
+}
+
 // drive runs the cobra add command with --local against a scripted stdin in
 // a temp dir. Returns the resulting hud.yaml (parsed) and the captured
 // stdout, so tests can assert on both the YAML state and what the user saw.
 func drive(t *testing.T, scriptedStdin string, args ...string) (*config.File, string) {
 	t.Helper()
 	dir := t.TempDir()
+	isolateGlobalConfig(t, dir)
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -177,6 +186,7 @@ func TestLocalAddWizardBinaryWithPermissions(t *testing.T) {
 func TestLocalAddWizardRejectsDuplicateName(t *testing.T) {
 	// Pre-populate hud.yaml with an existing verifier.
 	dir := t.TempDir()
+	isolateGlobalConfig(t, dir)
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	if err := os.Chdir(dir); err != nil {
@@ -246,6 +256,7 @@ func TestLocalAddWizardAbortOnConfirmNo(t *testing.T) {
 	}, "\n")
 
 	dir := t.TempDir()
+	isolateGlobalConfig(t, dir)
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	if err := os.Chdir(dir); err != nil {
@@ -269,6 +280,7 @@ func TestLocalAddWizardAbortOnConfirmNo(t *testing.T) {
 
 func TestLocalAddRejectsMissingURLWithoutLocal(t *testing.T) {
 	dir := t.TempDir()
+	isolateGlobalConfig(t, dir)
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	if err := os.Chdir(dir); err != nil {
@@ -289,6 +301,7 @@ func TestLocalAddRejectsMissingURLWithoutLocal(t *testing.T) {
 
 func TestLocalAddRejectsURLWithLocalFlag(t *testing.T) {
 	dir := t.TempDir()
+	isolateGlobalConfig(t, dir)
 	cwd, _ := os.Getwd()
 	t.Cleanup(func() { _ = os.Chdir(cwd) })
 	if err := os.Chdir(dir); err != nil {
