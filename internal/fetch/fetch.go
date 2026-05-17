@@ -83,7 +83,11 @@ func Resolve(p Pin) (string, error) {
 	if !strings.EqualFold(got, p.SHA256) {
 		return "", fmt.Errorf("sha256 mismatch fetching %s: got %s, expected %s", p.URL, got, p.SHA256)
 	}
-	if err := writeAtomic(cached, body, 0o644); err != nil {
+	// 0o755 (not 0o644) because command/binary verifiers exec the
+	// cached file directly via os/exec — an unfortunate +x on a SKILL.md
+	// is harmless, but a missing +x on a script is a hard failure with
+	// a permission-denied at runtime.
+	if err := writeAtomic(cached, body, 0o755); err != nil {
 		return "", fmt.Errorf("write cache %s: %w", cached, err)
 	}
 	return cached, nil
