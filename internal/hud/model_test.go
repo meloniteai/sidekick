@@ -11,23 +11,6 @@ import (
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
-func TestToggleKeyIndex(t *testing.T) {
-	for key, want := range map[string]int{
-		"1": 0,
-		"2": 1,
-		"9": 8,
-		"0": 9,
-	} {
-		got, ok := toggleKeyIndex(key)
-		if !ok || got != want {
-			t.Fatalf("toggleKeyIndex(%q) = %d, %v; want %d, true", key, got, ok, want)
-		}
-	}
-	if _, ok := toggleKeyIndex("x"); ok {
-		t.Fatal("non-toggle key should not match")
-	}
-}
-
 func TestModelCtrlWOpensSessionSwitcher(t *testing.T) {
 	reg := testRegistryWithTwoSessions(t)
 	m := NewRegistry(reg)
@@ -119,7 +102,7 @@ func TestModelToggleGitPanelKey(t *testing.T) {
 	}
 }
 
-func TestModelToggleVerifierKey(t *testing.T) {
+func TestModelIgnoresNumericVerifierToggleKeys(t *testing.T) {
 	state := daemon.NewState()
 	state.UpsertVerifier(ipc.VerifierStatus{Name: "Architect", Direction: "N", Distance: 0.4})
 	state.UpsertVerifier(ipc.VerifierStatus{Name: "Test", Direction: "E", Distance: 0.5})
@@ -133,11 +116,23 @@ func TestModelToggleVerifierKey(t *testing.T) {
 	if got[0].Disabled {
 		t.Fatal("first verifier should remain enabled")
 	}
-	if !got[1].Disabled {
-		t.Fatal("second verifier should be disabled")
+	if got[1].Disabled {
+		t.Fatal("numeric keys should not toggle verifiers")
 	}
-	if next.(Model).footerNotice != "Test disabled" {
-		t.Fatalf("footerNotice = %q, want Test disabled", next.(Model).footerNotice)
+	if next.(Model).footerNotice != "" {
+		t.Fatalf("numeric keys should not set a footer notice, got %q", next.(Model).footerNotice)
+	}
+}
+
+func TestModelIgnoresNonSpaceVerifierToggleAliases(t *testing.T) {
+	state := daemon.NewState()
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Architect", Direction: "N", Distance: 0.4})
+	m := New(state).WithToggleVerifier(func(name string) { state.ToggleVerifierDisabled(name) })
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	got := next.(Model).snapshot.Verifiers
+	if got[0].Disabled {
+		t.Fatal("x should not toggle verifiers; space is the only toggle shortcut")
 	}
 }
 
@@ -216,7 +211,7 @@ func TestModelFooterNoticeExpires(t *testing.T) {
 	state.UpsertVerifier(ipc.VerifierStatus{Name: "Test", Direction: "E", Distance: 0.5})
 	m := New(state).WithToggleVerifier(func(name string) { state.ToggleVerifierDisabled(name) })
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
 	m = next.(Model)
 	if m.footerNotice == "" {
 		t.Fatal("toggle should set a transient footer notice")
