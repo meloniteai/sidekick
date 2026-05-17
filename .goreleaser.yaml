@@ -43,9 +43,11 @@ snapshot:
   version_template: "{{ .Version }}-SNAPSHOT"
 
 release:
-  github:
-    owner: meloniteai
-    name: kikaite-hud
+  # Owner/name are auto-detected from GITHUB_REPOSITORY (set by GHA) and
+  # the git remote. Hardcoding them breaks after a repo rename: GitHub
+  # returns 307 on POST uploads to the old name without a Location header,
+  # so asset uploads silently fail even though the release object gets
+  # created under the new name. Better to trust the env.
   draft: false
   prerelease: auto
 

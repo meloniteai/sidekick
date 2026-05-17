@@ -2,10 +2,10 @@
 # hud installer.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/meloniteai/kikaite-hud/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/meloniteai/sidekick/main/install.sh | bash
 #
 # Environment overrides:
-#   HUD_REPO         override the GitHub repo (default: meloniteai/kikaite-hud)
+#   HUD_REPO         override the GitHub repo (default: meloniteai/sidekick)
 #   HUD_VERSION      install a specific version, e.g. 0.2 (default: latest release)
 #   HUD_INSTALL_DIR  install the binary into this directory instead of the auto-picked one
 #   HUD_SKIP_AGENTS  if set, do not run `hud install` after dropping the binary
@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-REPO="${HUD_REPO:-meloniteai/kikaite-hud}"
+REPO="${HUD_REPO:-meloniteai/sidekick}"
 BIN="hud"
 
 # ---- Palette (matches the TUI brand from internal/hud/landing.go) ----
