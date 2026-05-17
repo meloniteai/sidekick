@@ -45,12 +45,30 @@ var createVerifierTypes = []createVerifierType{
 	{kind: createTypeBinary, label: "binary", summary: "map command exit status to pass/fail distance"},
 }
 
+// Retained for status_wizard.go, which still uses the older full-bleed framing.
 var (
-	styleEditBox    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	styleEditTitle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	styleEditHelp   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	styleEditCursor = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	styleEditSaved  = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	styleEditBox   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	styleEditTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	styleEditHelp  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+)
+
+// editorSurface anchors every inner cell to the brand bg so SGR resets don't
+// punch terminal-default black through the framed modal — see brandBgColor
+// in view.go for the long-form note.
+var editorSurface = lipgloss.NewStyle().Background(lipgloss.Color(brandBg))
+
+var (
+	styleEditorBorder    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(lipgloss.Color(brandBg)).Background(lipgloss.Color(brandBg)).Padding(1, 2)
+	styleEditorTitle     = editorSurface.Bold(true).Foreground(lipgloss.Color(brandCoralSoft))
+	styleEditorSlash     = editorSurface.Foreground(lipgloss.Color(brandCoral))
+	styleEditorHelp      = editorSurface.Foreground(lipgloss.Color("245"))
+	styleEditorSeparator = editorSurface.Foreground(lipgloss.Color("240"))
+	styleEditorMessage   = editorSurface.Foreground(lipgloss.Color("84"))
+	styleEditorError     = editorSurface.Foreground(lipgloss.Color("9")).Bold(true)
+	styleEditorLineNo    = editorSurface.Foreground(lipgloss.Color("240"))
+	styleEditorContent   = editorSurface.Foreground(lipgloss.Color("252"))
+	styleEditorFileLabel = editorSurface.Foreground(lipgloss.Color(brandCoralSoft))
+	styleEditorEmpty     = editorSurface.Foreground(lipgloss.Color("245"))
 )
 
 // EditWizard is the in-TUI verifier editor. It intentionally writes only on
@@ -736,41 +754,59 @@ func (w EditWizard) draftSkillPathForWrite() (string, error) {
 	return absPath, nil
 }
 
-// View renders the wizard as a full-screen replacement for the compass.
+// View renders the wizard as a centered popup that mirrors the palette and
+// session switcher chrome (ctrl+p / ctrl+w).
 func (w EditWizard) View() string {
-	width := w.width
-	if width < 60 {
-		width = 60
-	}
-	contentW := width - styleEditBox.GetHorizontalFrameSize() - styleEditBox.GetHorizontalPadding()
-	if contentW < 20 {
-		contentW = 20
-	}
+	innerW := editorInnerWidth(w.width)
 
 	var b strings.Builder
-	b.WriteString(styleEditTitle.Render(w.title()))
+	b.WriteString(renderEditorTitleRow(w.title(), innerW))
+	b.WriteString("\n\n")
+	b.WriteString(styleEditorHelp.Render(w.help()))
 	b.WriteString("\n")
-	b.WriteString(styleEditHelp.Render(w.help()))
+	b.WriteString(styleEditorSeparator.Render(strings.Repeat("─", innerW)))
 	b.WriteString("\n\n")
 
 	switch w.phase {
 	case editSelect:
-		b.WriteString(w.renderSelect(contentW))
+		b.WriteString(w.renderSelect(innerW))
 	case editMetadata, editSkill, editCreateBasics, editCreateConfig, editCreateSkill:
-		b.WriteString(w.renderEditor(contentW))
+		b.WriteString(w.renderEditor(innerW))
 	case editCreateType:
-		b.WriteString(w.renderCreateTypes(contentW))
+		b.WriteString(w.renderCreateTypes(innerW))
 	}
 
 	if w.message != "" {
 		b.WriteString("\n")
-		b.WriteString(styleEditSaved.Render(w.message))
+		b.WriteString(styleEditorMessage.Render(w.message))
 	}
 	if w.errMsg != "" {
 		b.WriteString("\n")
-		b.WriteString(stylePickerError.Render(w.errMsg))
+		b.WriteString(styleEditorError.Render(w.errMsg))
 	}
-	return styleEditBox.Width(width - styleEditBox.GetHorizontalFrameSize()).Render(b.String())
+
+	box := styleEditorBorder.Width(innerW + styleEditorBorder.GetHorizontalPadding()).Render(reanchorBrandBg(b.String()))
+	if w.width == 0 || w.height == 0 {
+		return box
+	}
+	return lipgloss.Place(w.width, w.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// editorInnerWidth picks a wider clamp than paletteInnerWidth (40–72) so
+// the YAML/Markdown body has room without sprawling on ultra-wide terminals.
+func editorInnerWidth(termWidth int) int {
+	if termWidth <= 0 {
+		termWidth = 100
+	}
+	target := min(max(termWidth*8/10, 72), 110)
+	chrome := styleEditorBorder.GetHorizontalFrameSize()
+	return max(target-chrome, 60)
+}
+
+func renderEditorTitleRow(title string, innerW int) string {
+	label := title + " "
+	slashCount := max(innerW-lipgloss.Width(label), 0)
+	return styleEditorTitle.Render(label) + styleEditorSlash.Render(strings.Repeat("/", slashCount))
 }
 
 func (w EditWizard) title() string {
@@ -823,7 +859,7 @@ func (w EditWizard) help() string {
 
 func (w EditWizard) renderSelect(width int) string {
 	if len(w.file.Verifiers) == 0 {
-		return styleReason.Render("(no verifiers configured)")
+		return styleEditorEmpty.Render("(no verifiers configured)")
 	}
 	if w.selectForm == nil {
 		return ""
@@ -847,14 +883,17 @@ func (w EditWizard) renderEditor(width int) string {
 		rows = 28
 	}
 	if w.phase == editSkill && w.skillPath() != "" {
-		pathLine := styleHeaderLabel.Render("file: ") + truncate(w.skillPath(), width-len("file: "))
-		return pathLine + "\n" + w.text.View(width, rows-1)
+		return renderEditorFileLine(w.skillPath(), width) + "\n" + w.text.View(width, rows-1)
 	}
 	if w.phase == editCreateSkill && w.draftSkillPath() != "" {
-		pathLine := styleHeaderLabel.Render("file: ") + truncate(w.draftSkillPath(), width-len("file: "))
-		return pathLine + "\n" + w.text.View(width, rows-1)
+		return renderEditorFileLine(w.draftSkillPath(), width) + "\n" + w.text.View(width, rows-1)
 	}
 	return w.text.View(width, rows)
+}
+
+func renderEditorFileLine(path string, width int) string {
+	label := "file: "
+	return styleEditorFileLabel.Render(label) + styleEditorContent.Render(truncate(path, width-lipgloss.Width(label)))
 }
 
 func createTypeIndex(kind string) int {
@@ -1046,8 +1085,8 @@ func (b *textBuffer) View(width, rows int) string {
 			line = insertCursor(line, b.col)
 		}
 		prefix := fmt.Sprintf("%3d ", i+1)
-		out.WriteString(styleHeaderLabel.Render(prefix))
-		out.WriteString(truncate(line, width-lipgloss.Width(prefix)))
+		out.WriteString(styleEditorLineNo.Render(prefix))
+		out.WriteString(styleEditorContent.Render(truncate(line, width-lipgloss.Width(prefix))))
 		if i < end-1 {
 			out.WriteByte('\n')
 		}
