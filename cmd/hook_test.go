@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -104,9 +106,101 @@ func TestForwardWriteReachesDaemon(t *testing.T) {
 	}
 }
 
+func TestForwardWriteRoutesAbsoluteWorktreeFile(t *testing.T) {
+	trunk, wt := testRepoWithWorktree(t)
+	h := &worktreeCaptureHandler{writes: make(chan routedWrite, 1)}
+	sock := t.TempDir() + "/hud.sock"
+	state := daemon.NewState()
+	state.SetSessionWorktree(trunk)
+	registry := daemon.NewRegistry(state, func(anchor daemon.SessionAnchor) (*daemon.State, error) {
+		s := daemon.NewState()
+		s.SetSessionWorktree(anchor.Worktree)
+		s.SetSessionBaseRef(anchor.BaseRef)
+		return s, nil
+	})
+	srv, err := daemon.Listen(sock, registry, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer srv.Close()
+	go func() {
+		_ = srv.Serve(ctx)
+	}()
+	t.Setenv("HUD_SOCK", sock)
+	t.Chdir(trunk)
+
+	file := filepath.Join(wt, "cmd", "hook.go")
+	if err := forwardWrite(file); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-h.writes:
+		if got.worktree != wt {
+			t.Fatalf("write routed to %q, want %q", got.worktree, wt)
+		}
+		if got.file != file {
+			t.Fatalf("write file = %q, want %q", got.file, file)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("daemon did not receive write")
+	}
+}
+
+func TestHookRouteCWDUsesNearestExistingParent(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "new", "nested", "file.go")
+	if got := hookRouteCWD(file); got != dir {
+		t.Fatalf("hookRouteCWD(%q) = %q, want %q", file, got, dir)
+	}
+}
+
 type captureHandler struct {
 	writes chan string
 }
 
 func (h *captureHandler) OnWrite(_ *daemon.State, file string) { h.writes <- file }
 func (h *captureHandler) OnGoal(_ *daemon.State, _ string)     {}
+
+type routedWrite struct {
+	worktree string
+	file     string
+}
+
+type worktreeCaptureHandler struct {
+	writes chan routedWrite
+}
+
+func (h *worktreeCaptureHandler) OnWrite(s *daemon.State, file string) {
+	h.writes <- routedWrite{worktree: s.SessionWorktree(), file: file}
+}
+func (h *worktreeCaptureHandler) OnGoal(_ *daemon.State, _ string) {}
+
+func testRepoWithWorktree(t *testing.T) (string, string) {
+	t.Helper()
+	trunk := t.TempDir()
+	testGit(t, trunk, "init", "-q", "-b", "main")
+	testGit(t, trunk, "commit", "--allow-empty", "-q", "-m", "init")
+	wt := filepath.Join(t.TempDir(), "wt")
+	testGit(t, trunk, "worktree", "add", "-q", wt)
+	return canonicalForTest(t, trunk), canonicalForTest(t, wt)
+}
+
+func canonicalForTest(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", path, err)
+	}
+	return resolved
+}
+
+func testGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -45,7 +46,7 @@ logged to stderr and the command always exits 0.`,
 					return forward(ipc.TypeWrite, ipc.WriteData{})
 				}
 				for _, file := range files {
-					if err := forward(ipc.TypeWrite, ipc.WriteData{File: file}); err != nil {
+					if err := forwardWrite(file); err != nil {
 						return err
 					}
 				}
@@ -151,13 +152,38 @@ func patchFiles(patch string) []string {
 	return files
 }
 
+func forwardWrite(file string) error {
+	return forwardFrom(ipc.TypeWrite, ipc.WriteData{File: file}, hookRouteCWD(file))
+}
+
+func hookRouteCWD(file string) string {
+	cwd, _ := os.Getwd()
+	file = strings.TrimSpace(file)
+	if file == "" || !filepath.IsAbs(file) {
+		return cwd
+	}
+	if info, err := os.Stat(file); err == nil && info.IsDir() {
+		return file
+	}
+	for dir := filepath.Dir(file); dir != "." && dir != string(filepath.Separator); dir = filepath.Dir(dir) {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return cwd
+}
+
 func forward(reqType string, data any) error {
+	cwd, _ := os.Getwd()
+	return forwardFrom(reqType, data, cwd)
+}
+
+func forwardFrom(reqType string, data any, cwd string) error {
 	rawData, err := ipc.MarshalData(data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[hud hook] marshal: %v\n", err)
 		return nil
 	}
-	cwd, _ := os.Getwd()
 	if _, err := ipc.SendFrom(ipc.Request{Type: reqType, Data: rawData}, cwd); err != nil {
 		fmt.Fprintf(os.Stderr, "[hud hook] daemon unreachable: %v\n", err)
 	}
