@@ -831,7 +831,11 @@ func (m Model) renderFooterHelp(maxWidth int) string {
 	if innerW < 1 {
 		innerW = 1
 	}
-	return styleFooterKeys.Render(truncate(text, innerW))
+	body := truncate(text, innerW)
+	if pad := innerW - lipgloss.Width(body); pad > 0 {
+		body += strings.Repeat(" ", pad)
+	}
+	return styleFooterKeys.Render(body)
 }
 
 // renderEventLog draws the toggleable side panel listing recent timestamped
