@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func newHookCmd() *cobra.Command {
@@ -22,7 +22,7 @@ func newHookCmd() *cobra.Command {
 Supported events:
   write  - file/tool write happened; triggers verifier recomputation
 
-Goals are set by the agent itself via the hud_set_goal MCP tool.
+Goals are set by the agent itself via the sidekick_set_goal MCP tool.
 
 Hooks must succeed silently and never block the agent, so any error here is
 logged to stderr and the command always exits 0.`,
@@ -37,7 +37,7 @@ logged to stderr and the command always exits 0.`,
 			case "write":
 				files, err := hookFiles(raw)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "[hud hook] ignoring non-JSON stdin: %v\n", err)
+					fmt.Fprintf(os.Stderr, "[sidekick hook] ignoring non-JSON stdin: %v\n", err)
 				}
 				if len(files) == 0 {
 					// Codex hook payloads are still evolving. If the hook
@@ -52,7 +52,7 @@ logged to stderr and the command always exits 0.`,
 				}
 				return nil
 			default:
-				fmt.Fprintf(os.Stderr, "[hud hook] unknown event %q\n", event)
+				fmt.Fprintf(os.Stderr, "[sidekick hook] unknown event %q\n", event)
 				return nil
 			}
 		},
@@ -181,11 +181,11 @@ func forward(reqType string, data any) error {
 func forwardFrom(reqType string, data any, cwd string) error {
 	rawData, err := ipc.MarshalData(data)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[hud hook] marshal: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[sidekick hook] marshal: %v\n", err)
 		return nil
 	}
 	if _, err := ipc.SendFrom(ipc.Request{Type: reqType, Data: rawData}, cwd); err != nil {
-		fmt.Fprintf(os.Stderr, "[hud hook] daemon unreachable: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[sidekick hook] daemon unreachable: %v\n", err)
 	}
 	return nil
 }

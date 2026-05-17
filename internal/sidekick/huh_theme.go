@@ -1,11 +1,11 @@
-package hud
+package sidekick
 
 import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// HuhTheme returns the huh theme that matches the rest of the HUD compass:
+// HuhTheme returns the huh theme that matches the rest of the Sidekick compass:
 // blue (12) for titles and selectors, green (10) for selected options,
 // red (9) for validation errors, and grey (245) for help/description text.
 // Built from huh.ThemeBase rather than ThemeCharm so we don't inherit the

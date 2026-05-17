@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func TestSocketDispatchRoutesGoalStatusExplainByCWD(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func newGoalCmd() *cobra.Command {
@@ -34,7 +34,7 @@ func newGoalCmd() *cobra.Command {
 
 // resolveGoalAnchor returns the cwd's git toplevel and HEAD SHA so the
 // daemon can re-anchor the session to the caller's perspective when
-// `hud goal` is invoked from a worktree. Empty values fall through and
+// `sidekick goal` is invoked from a worktree. Empty values fall through and
 // the daemon keeps the existing anchor in place.
 func resolveGoalAnchor() (worktree, baseRef string) {
 	top, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()

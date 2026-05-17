@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"os/exec"
@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/uriahlevy/hud/internal/daemon"
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func TestModelCtrlWOpensSessionSwitcher(t *testing.T) {

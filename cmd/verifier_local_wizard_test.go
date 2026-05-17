@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/uriahlevy/hud/internal/config"
+	"github.com/meloniteai/sidekick/internal/config"
 )
 
 // drive feeds a stream of key presses through the wizard model and returns
@@ -45,7 +45,7 @@ func driveWizard(t *testing.T, m *localWizardModel, keys string) *localWizardMod
 // step counter so the user knows where they are in the flow.
 func TestLocalWizardChromeMatchesPalette(t *testing.T) {
 	f := &config.File{}
-	m := newLocalWizardModel(f, "/tmp/hud.yaml", "", "", "", "", false)
+	m := newLocalWizardModel(f, "/tmp/sidekick.yaml", "", "", "", "", false)
 	// Window-size to force a sane layout.
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
@@ -69,7 +69,7 @@ func TestLocalWizardChromeMatchesPalette(t *testing.T) {
 // step with the YAML preview embedded in the description.
 func TestLocalWizardWalksAgentBranch(t *testing.T) {
 	f := &config.File{}
-	m := newLocalWizardModel(f, "/tmp/hud.yaml", "MyAgent", "NE", "agent", "", false)
+	m := newLocalWizardModel(f, "/tmp/sidekick.yaml", "MyAgent", "NE", "agent", "", false)
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	// Walk: Name(enter) → Direction(enter) → Type(enter) → AgentName(enter)
@@ -99,7 +99,7 @@ func TestLocalWizardWalksAgentBranch(t *testing.T) {
 // ones (Binary command, Pass reason, Fail reason).
 func TestLocalWizardTypeChoiceSwitchesBranch(t *testing.T) {
 	f := &config.File{}
-	m := newLocalWizardModel(f, "/tmp/hud.yaml", "", "", "", "", false)
+	m := newLocalWizardModel(f, "/tmp/sidekick.yaml", "", "", "", "", false)
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	// Name(enter) → Direction(enter) → Type: ↓↓ to land on binary, then enter.
@@ -118,7 +118,7 @@ func TestLocalWizardTypeChoiceSwitchesBranch(t *testing.T) {
 // emits a Quit command, mirroring the palette's "esc cancel" contract.
 func TestLocalWizardEscAborts(t *testing.T) {
 	f := &config.File{}
-	m := newLocalWizardModel(f, "/tmp/hud.yaml", "", "", "", "", false)
+	m := newLocalWizardModel(f, "/tmp/sidekick.yaml", "", "", "", "", false)
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -137,7 +137,7 @@ func TestLocalWizardEscAborts(t *testing.T) {
 // handles save).
 func TestLocalWizardSkipsConfirmWhenYesFlag(t *testing.T) {
 	f := &config.File{}
-	m := newLocalWizardModel(f, "/tmp/hud.yaml", "Auto", "E", "command", "", true)
+	m := newLocalWizardModel(f, "/tmp/sidekick.yaml", "Auto", "E", "command", "", true)
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	for _, s := range m.steps {
@@ -153,7 +153,7 @@ func TestLocalWizardSkipsConfirmWhenYesFlag(t *testing.T) {
 // users can't read the option descriptions.
 func TestLocalWizardWrapsLongSummary(t *testing.T) {
 	f := &config.File{}
-	m := newLocalWizardModel(f, "/tmp/hud.yaml", "", "", "", "", false)
+	m := newLocalWizardModel(f, "/tmp/sidekick.yaml", "", "", "", "", false)
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	// Advance to the type step.
 	m = driveWizard(t, m, "\n\n")
@@ -177,7 +177,7 @@ func TestLocalWizardWrapsLongSummary(t *testing.T) {
 }
 
 // TestLocalWizardWidensModalCap raises the question: does the wizard's
-// own inner-width helper actually allow a roomier modal than the in-HUD
+// own inner-width helper actually allow a roomier modal than the in-Sidekick
 // palette's tight 72-cell cap? Tests the helper directly so a future
 // width tweak doesn't silently shrink the wizard back below 80 cells —
 // the point at which the type-step summaries start wrapping awkwardly.
@@ -192,7 +192,7 @@ func TestLocalWizardWidensModalCap(t *testing.T) {
 // Name step. Mirrors what the text wizard does.
 func TestLocalWizardNameDuplicateRejects(t *testing.T) {
 	f := &config.File{Verifiers: []config.VerifierSpec{{Name: "Existing", Direction: "N", Type: "command", Command: []string{"./x.sh"}}}}
-	m := newLocalWizardModel(f, "/tmp/hud.yaml", "Existing", "", "", "", false)
+	m := newLocalWizardModel(f, "/tmp/sidekick.yaml", "Existing", "", "", "", false)
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	// Enter on the Name step with the pre-filled duplicate value.

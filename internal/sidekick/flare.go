@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"fmt"

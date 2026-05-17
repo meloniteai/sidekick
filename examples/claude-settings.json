@@ -4,14 +4,14 @@
       {
         "matcher": "Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
-          { "type": "command", "command": "hud hook write" }
+          { "type": "command", "command": "sidekick hook write" }
         ]
       }
     ]
   },
   "mcpServers": {
-    "hud": {
-      "command": "hud",
+    "sidekick": {
+      "command": "sidekick",
       "args": ["mcp"]
     }
   }

@@ -1,4 +1,4 @@
-// Package install wires hud into the user's agent clients (Claude Code,
+// Package install wires sidekick into the user's agent clients (Claude Code,
 // Codex). It exposes pure functions for detection, JSON hook-merging, and
 // skill installation so the cmd-side cobra command stays a thin shell.
 package install
@@ -96,7 +96,7 @@ func SkillDirs(home, name string, agent Agent) []string {
 
 // WriteSkill writes a single SKILL.md (and any sibling files passed in
 // `extra`) under every dir returned by SkillDirs for the agent. Existing
-// files are overwritten — re-running hud install picks up the latest
+// files are overwritten — re-running sidekick install picks up the latest
 // skill content shipped with the upgraded binary.
 //
 // `body` is the SKILL.md contents. `extra` is an optional map of relative
@@ -138,7 +138,7 @@ type HookEntry struct {
 // HookExec is one command inside a HookEntry.
 type HookExec struct {
 	Type    string `json:"type"`              // always "command"
-	Command string `json:"command"`           // e.g. "hud hook write"
+	Command string `json:"command"`           // e.g. "sidekick hook write"
 	Timeout int    `json:"timeout,omitempty"` // seconds; omitted = agent default
 }
 
@@ -150,18 +150,18 @@ type HookConfig struct {
 	Command string
 }
 
-// HudPostToolUseClaude is the canonical Claude wiring.
-var HudPostToolUseClaude = HookConfig{
+// SidekickPostToolUseClaude is the canonical Claude wiring.
+var SidekickPostToolUseClaude = HookConfig{
 	Event:   "PostToolUse",
 	Matcher: "Write|Edit|MultiEdit|NotebookEdit",
-	Command: "hud hook write",
+	Command: "sidekick hook write",
 }
 
-// HudPostToolUseCodex is the canonical Codex wiring (adds apply_patch).
-var HudPostToolUseCodex = HookConfig{
+// SidekickPostToolUseCodex is the canonical Codex wiring (adds apply_patch).
+var SidekickPostToolUseCodex = HookConfig{
 	Event:   "PostToolUse",
 	Matcher: "apply_patch|Write|Edit|MultiEdit|NotebookEdit",
-	Command: "hud hook write",
+	Command: "sidekick hook write",
 }
 
 // MergeHook deep-merges a single hook config into the given settings JSON.
@@ -271,7 +271,7 @@ func MergeHookFile(path string, cfg HookConfig) (bool, error) {
 	return true, nil
 }
 
-// RegisterMCP shells out to the agent's own CLI to register the hud MCP
+// RegisterMCP shells out to the agent's own CLI to register the sidekick MCP
 // server (user-scope). Returns (registered, ranCommand, err) where
 // registered=true means the CLI exited 0; ranCommand is the argv we
 // actually invoked (useful for --print / dry-run output). If the CLI is
@@ -280,14 +280,14 @@ func MergeHookFile(path string, cfg HookConfig) (bool, error) {
 // stopping the install.
 //
 // Commands run:
-//   Claude: claude mcp add hud --scope user -- hud mcp
-//   Codex:  codex  mcp add hud -- hud mcp
+//   Claude: claude mcp add sidekick --scope user -- sidekick mcp
+//   Codex:  codex  mcp add sidekick -- sidekick mcp
 func RegisterMCP(agent Agent, stdout, stderr io.Writer) (registered bool, argv []string, err error) {
 	switch agent {
 	case AgentClaude:
-		argv = []string{"claude", "mcp", "add", "hud", "--scope", "user", "--", "hud", "mcp"}
+		argv = []string{"claude", "mcp", "add", "sidekick", "--scope", "user", "--", "sidekick", "mcp"}
 	case AgentCodex:
-		argv = []string{"codex", "mcp", "add", "hud", "--", "hud", "mcp"}
+		argv = []string{"codex", "mcp", "add", "sidekick", "--", "sidekick", "mcp"}
 	default:
 		return false, nil, fmt.Errorf("unknown agent %q", agent)
 	}
@@ -315,13 +315,13 @@ func HookFilePath(home string, agent Agent) string {
 	return ""
 }
 
-// CanonicalHookConfig returns the hud PostToolUse wiring for the agent.
+// CanonicalHookConfig returns the sidekick PostToolUse wiring for the agent.
 func CanonicalHookConfig(agent Agent) HookConfig {
 	switch agent {
 	case AgentClaude:
-		return HudPostToolUseClaude
+		return SidekickPostToolUseClaude
 	case AgentCodex:
-		return HudPostToolUseCodex
+		return SidekickPostToolUseCodex
 	}
 	return HookConfig{}
 }

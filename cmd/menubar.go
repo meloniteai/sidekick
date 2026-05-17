@@ -10,18 +10,18 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/uriahlevy/hud/internal/daemon"
-	hudtui "github.com/uriahlevy/hud/internal/hud"
-	"github.com/uriahlevy/hud/internal/ipc"
-	"github.com/uriahlevy/hud/internal/menubar"
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/daemon"
+	sidekicktui "github.com/meloniteai/sidekick/internal/sidekick"
+	"github.com/meloniteai/sidekick/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/menubar"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
 func newMenubarCmd() *cobra.Command {
 	var configPath string
 	cmd := &cobra.Command{
 		Use:   "menubar",
-		Short: "Start the HUD daemon as a macOS menu bar item",
+		Short: "Start the Sidekick daemon as a macOS menu bar item",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sock, err := ipc.SocketPath()
 			if err != nil {
@@ -35,8 +35,8 @@ func newMenubarCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stderr, "[hud] session base ref: %s\n", baseRef)
-			fmt.Fprintf(os.Stderr, "[hud] session worktree: %s\n", worktree)
+			fmt.Fprintf(os.Stderr, "[sidekick] session base ref: %s\n", baseRef)
+			fmt.Fprintf(os.Stderr, "[sidekick] session worktree: %s\n", worktree)
 
 			verifiers, quietPeriod, source, loadedConfigPath, err := loadVerifiers(configPath)
 			if err != nil {
@@ -48,12 +48,12 @@ func newMenubarCmd() *cobra.Command {
 			} else if set {
 				sessionIdleTimeout = idle
 			}
-			if loadedConfigPath != "" && len(verifiers) < hudtui.MinSelected {
+			if loadedConfigPath != "" && len(verifiers) < sidekicktui.MinSelected {
 				return fmt.Errorf("at least %d verifiers must be configured (found %d in %s)",
-					hudtui.MinSelected, len(verifiers), source)
+					sidekicktui.MinSelected, len(verifiers), source)
 			}
-			fmt.Fprintf(os.Stderr, "[hud] verifiers: %s\n", source)
-			fmt.Fprintf(os.Stderr, "[hud] enabled: %s\n", verifierNames(verifiers))
+			fmt.Fprintf(os.Stderr, "[sidekick] verifiers: %s\n", source)
+			fmt.Fprintf(os.Stderr, "[sidekick] enabled: %s\n", verifierNames(verifiers))
 
 			state := daemon.NewState()
 			state.SetSessionBaseRef(baseRef)
@@ -61,8 +61,8 @@ func newMenubarCmd() *cobra.Command {
 			state.SetVersion(version)
 			runner := verifier.NewRunner(ctx, state, verifiers)
 			runner.SetQuietPeriod(quietPeriod)
-			fmt.Fprintf(os.Stderr, "[hud] quiet period: %s\n", runner.QuietPeriod())
-			fmt.Fprintf(os.Stderr, "[hud] session idle timeout: %s\n", sessionIdleTimeout)
+			fmt.Fprintf(os.Stderr, "[sidekick] quiet period: %s\n", runner.QuietPeriod())
+			fmt.Fprintf(os.Stderr, "[sidekick] session idle timeout: %s\n", sessionIdleTimeout)
 
 			runtimes := newSessionRuntimeManager(ctx, version, configPath)
 			runtimes.Register(state, runner, loadedConfigPath)
@@ -81,7 +81,7 @@ func newMenubarCmd() *cobra.Command {
 
 			serveErr := make(chan error, 1)
 			go func() { serveErr <- srv.Serve(ctx) }()
-			fmt.Fprintf(os.Stderr, "[hud] listening on %s (menubar)\n", sock)
+			fmt.Fprintf(os.Stderr, "[sidekick] listening on %s (menubar)\n", sock)
 
 			manualTrigger := func() {
 				session := registry.DisplayedSession()
@@ -107,6 +107,6 @@ func newMenubarCmd() *cobra.Command {
 			return runErr
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml (default: nearest hud.yaml above cwd)")
+	cmd.Flags().StringVar(&configPath, "config", "", "path to sidekick.yaml (default: nearest sidekick.yaml above cwd)")
 	return cmd
 }

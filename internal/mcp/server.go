@@ -1,6 +1,6 @@
-// Package mcp wires the read-only HUD tools onto an MCP stdio server.
+// Package mcp wires the read-only Sidekick tools onto an MCP stdio server.
 //
-// The server is a thin proxy: every tool call dials the running `hud start`
+// The server is a thin proxy: every tool call dials the running `sidekick start`
 // daemon over its Unix socket and returns the JSON snapshot. It never runs
 // verifiers itself — recomputation is exclusively triggered by file-write
 // hooks per the MVP spec.
@@ -17,13 +17,13 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 // Run constructs the MCP server, wires the tools, and serves over stdio
 // until ctx is canceled or stdin is closed.
 func Run(ctx context.Context, version string) error {
-	srv := server.NewMCPServer("hud", version)
+	srv := server.NewMCPServer("sidekick", version)
 
 	readOnly := []mcp.ToolOption{
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -42,9 +42,9 @@ func Run(ctx context.Context, version string) error {
 		mcp.Description(
 			"Absolute path to the agent's current working directory (typically "+
 				"the worktree the agent is editing in). Pass this on every call so "+
-				"the HUD server can resolve the repo's shared daemon socket and "+
-				"route to the right worktree session. One HUD daemon "+
-				"serves a repo and all of its linked worktrees, so `hud start` may "+
+				"the Sidekick server can resolve the repo's shared daemon socket and "+
+				"route to the right worktree session. One Sidekick daemon "+
+				"serves a repo and all of its linked worktrees, so `sidekick start` may "+
 				"live in the trunk while the agent works in a worktree. The MCP "+
 				"server's own process cwd is frozen at session start and goes "+
 				"stale when the agent switches worktrees. Omit only when not in a "+
@@ -52,17 +52,17 @@ func Run(ctx context.Context, version string) error {
 	)
 
 	srv.AddTool(
-		mcp.NewTool("hud_status",
+		mcp.NewTool("sidekick_status",
 			append([]mcp.ToolOption{
 				mcp.WithDescription(
-					"Read the latest HUD verifier snapshot for the active session. " +
+					"Read the latest Sidekick verifier snapshot for the active session. " +
 						"Returns the goal and each verifier's compass direction, " +
 						"distance from goal (0=achieved, 1=far), and one-line reason. " +
 						"Read-only: never triggers verifier recomputation. " +
 						"When any_running is true (or running_verifiers is non-empty), " +
 						"one or more verifiers are still computing; the distance and " +
 						"reason fields reflect the previous run and may be stale. " +
-						"Wait a few seconds and call hud_status again to read fresh " +
+						"Wait a few seconds and call sidekick_status again to read fresh " +
 						"scores before acting on them."),
 				cwdArg,
 			}, readOnly...)...,
@@ -71,11 +71,11 @@ func Run(ctx context.Context, version string) error {
 	)
 
 	srv.AddTool(
-		mcp.NewTool("hud_explain",
+		mcp.NewTool("sidekick_explain",
 			append([]mcp.ToolOption{
 				mcp.WithDescription(
-					"Read the detailed last-known state of a single HUD verifier by name. " +
-						"Use this when hud_status shows a high distance and you want the " +
+					"Read the detailed last-known state of a single Sidekick verifier by name. " +
+						"Use this when sidekick_status shows a high distance and you want the " +
 						"verifier's reason expanded for the agent's next decision. " +
 						"If the returned running flag is true, the verifier is still " +
 						"computing and distance/reason reflect the previous run; wait " +
@@ -91,9 +91,9 @@ func Run(ctx context.Context, version string) error {
 	)
 
 	srv.AddTool(
-		mcp.NewTool("hud_set_goal",
+		mcp.NewTool("sidekick_set_goal",
 			mcp.WithDescription(
-				"Set the active session goal that all HUD verifiers evaluate against. "+
+				"Set the active session goal that all Sidekick verifiers evaluate against. "+
 					"Call this at the start of a task and whenever the goal materially shifts "+
 					"(e.g. user pivots, sub-task begins). This only updates the goal; "+
 					"file-write hooks trigger verifier recomputation."),
@@ -127,7 +127,7 @@ func callerCwd(req mcp.CallToolRequest) string {
 func statusHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	resp, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeStatus, Source: ipc.SourceMCP}, callerCwd(req))
 	if err != nil {
-		return nil, fmt.Errorf("hud daemon unreachable (is `hud start` running?): %w", err)
+		return nil, fmt.Errorf("sidekick daemon unreachable (is `sidekick start` running?): %w", err)
 	}
 	var reply ipc.StatusReply
 	if err := json.Unmarshal(resp.Data, &reply); err != nil {
@@ -145,7 +145,7 @@ func setGoalHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	// The agent passes its current worktree via the cwd arg. Anchoring
 	// from that path (not from the MCP process cwd, which is stale)
 	// ensures the daemon re-points at the right worktree when the goal
-	// moves, even if `hud start` was launched elsewhere (e.g. the trunk).
+	// moves, even if `sidekick start` was launched elsewhere (e.g. the trunk).
 	cwd := callerCwd(req)
 	worktree, baseRef := resolveSessionAnchor(cwd)
 	data, err := ipc.MarshalData(ipc.GoalData{
@@ -158,7 +158,7 @@ func setGoalHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	}
 	resp, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeGoal, Source: ipc.SourceMCP, Data: data}, cwd)
 	if err != nil {
-		return nil, fmt.Errorf("hud daemon unreachable (is `hud start` running?): %w", err)
+		return nil, fmt.Errorf("sidekick daemon unreachable (is `sidekick start` running?): %w", err)
 	}
 	var ack ipc.GoalAck
 	// Old daemons reply with `{}`; an unmarshal miss is non-fatal — we
@@ -170,7 +170,7 @@ func setGoalHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 			"locked":   true,
 			"worktree": worktree,
 			"base_ref": baseRef,
-			"note":     "this session's goal was pinned by `hud start --goal`; agent-supplied goals are ignored until the daemon restarts.",
+			"note":     "this session's goal was pinned by `sidekick start --goal`; agent-supplied goals are ignored until the daemon restarts.",
 		})
 	}
 	return mcp.NewToolResultJSON(map[string]any{
@@ -218,7 +218,7 @@ func explainHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	}
 	resp, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeExplain, Source: ipc.SourceMCP, Data: data}, callerCwd(req))
 	if err != nil {
-		return nil, fmt.Errorf("hud daemon unreachable: %w", err)
+		return nil, fmt.Errorf("sidekick daemon unreachable: %w", err)
 	}
 	var v ipc.VerifierStatus
 	if err := json.Unmarshal(resp.Data, &v); err != nil {

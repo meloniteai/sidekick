@@ -1,6 +1,6 @@
-// Package hud renders the daemon's state as a Bubble Tea TUI: a compass-style
+// Package sidekick renders the daemon's state as a Bubble Tea TUI: a compass-style
 // 2D map of verifier distances plus a detail list.
-package hud
+package sidekick
 
 import "math"
 

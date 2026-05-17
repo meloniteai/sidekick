@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/uriahlevy/hud/internal/registry"
+	"github.com/meloniteai/sidekick/internal/registry"
 )
 
 // remoteBrowserMode is the two-pane state machine of the browser modal:
@@ -32,7 +32,7 @@ var directionsCycle = []string{"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
 // RemoteBrowser is the ctrl+p → "Browse Verifiers" overlay. It lists
 // manifests fetched from the GitHub-hosted verifier catalog and lets
 // the user install one with a single keystroke into either the project
-// hud.yaml or the global ~/.hud/hud.yaml.
+// sidekick.yaml or the global ~/.sidekick/sidekick.yaml.
 type RemoteBrowser struct {
 	client      *registry.Client
 	mode        remoteBrowserMode
@@ -61,7 +61,7 @@ type browserListMsg struct {
 // browserInstalledMsg lands after an install completes. err non-nil
 // means the install failed; FinalName carries the (possibly renamed)
 // verifier name that was written so the success row can reflect what
-// actually landed in hud.yaml.
+// actually landed in sidekick.yaml.
 type browserInstalledMsg struct {
 	finalName string
 	path      string
@@ -69,8 +69,8 @@ type browserInstalledMsg struct {
 }
 
 // NewRemoteBrowser returns a browser pointed at the default catalog
-// (meloniteai/kikaite-hud-verifiers @ main). projectPath should be the
-// hud.yaml of the currently displayed session — passed straight through
+// (meloniteai/sidekick-verifiers @ main). projectPath should be the
+// sidekick.yaml of the currently displayed session — passed straight through
 // to registry.Install when the user picks ScopeProject.
 func NewRemoteBrowser(projectPath string) RemoteBrowser {
 	return RemoteBrowser{
@@ -83,8 +83,8 @@ func NewRemoteBrowser(projectPath string) RemoteBrowser {
 }
 
 // ScopeForExistingProject picks a sensible default install scope: if
-// the displayed session has a project hud.yaml, default to project;
-// otherwise default to global so first-time users with no hud.yaml
+// the displayed session has a project sidekick.yaml, default to project;
+// otherwise default to global so first-time users with no sidekick.yaml
 // don't accidentally write into cwd.
 func ScopeForExistingProject(path string) registry.Scope {
 	if path == "" {
@@ -127,7 +127,7 @@ func (b RemoteBrowser) Update(msg tea.Msg) (RemoteBrowser, tea.Cmd, bool) {
 			if b.scope == registry.ScopeGlobal {
 				scope = "global"
 			}
-			b.installMsg = fmt.Sprintf("installed %s into %s hud.yaml (%s)", msg.finalName, scope, msg.path)
+			b.installMsg = fmt.Sprintf("installed %s into %s sidekick.yaml (%s)", msg.finalName, scope, msg.path)
 		}
 		return b, nil, false
 	case tea.KeyMsg:
@@ -253,7 +253,7 @@ func (b RemoteBrowser) viewList(innerW int) string {
 	bld.WriteString("\n\n")
 
 	if b.loading {
-		bld.WriteString(stylePalettePlaceholder.Render("Fetching meloniteai/kikaite-hud-verifiers…"))
+		bld.WriteString(stylePalettePlaceholder.Render("Fetching meloniteai/sidekick-verifiers…"))
 		bld.WriteString("\n")
 		return bld.String()
 	}

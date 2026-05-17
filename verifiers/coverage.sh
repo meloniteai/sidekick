@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# coverage.sh — deterministic example HUD verifier.
+# coverage.sh — deterministic example Sidekick verifier.
 #
-# Reads the standard hud session JSON on stdin (we ignore it for this
+# Reads the standard sidekick session JSON on stdin (we ignore it for this
 # verifier) and writes {"distance": <0..1>, "reason": "..."} on stdout.
 #
 # Distance derivation: run `go test -cover ./...` in the project root, parse

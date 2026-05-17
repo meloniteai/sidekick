@@ -1,5 +1,5 @@
 // Package registry talks to the public GitHub-hosted verifier catalog
-// (default meloniteai/kikaite-hud-verifiers) so the in-TUI Remote Verifier
+// (default meloniteai/sidekick-verifiers) so the in-TUI Remote Verifier
 // Browser can list and install community verifiers without a separate
 // auth flow.
 //
@@ -37,7 +37,7 @@ import (
 // or a pinned ref.
 const (
 	DefaultOwner = "meloniteai"
-	DefaultRepo  = "kikaite-hud-verifiers"
+	DefaultRepo  = "sidekick-verifiers"
 	DefaultRef   = "main"
 )
 
@@ -47,9 +47,9 @@ const (
 var manifestTypeDirs = []string{"command", "agent", "binary"}
 
 // Manifest is the parsed contents of a per-verifier manifest.yaml. The
-// shape is intentionally a superset of what hud.yaml understands today:
+// shape is intentionally a superset of what sidekick.yaml understands today:
 // fields the loader doesn't know about (Description, DefaultTimeout) are
-// kept here for the UI but stripped before being written into hud.yaml
+// kept here for the UI but stripped before being written into sidekick.yaml
 // at install time.
 type Manifest struct {
 	Name           string          `yaml:"name"`
@@ -225,7 +225,7 @@ func (c *Client) listDir(ctx context.Context, dir string) ([]contentsEntry, erro
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "hud/0.1 (+https://github.com/uriahlevy/hud)")
+	req.Header.Set("User-Agent", "sidekick/0.1 (+https://github.com/meloniteai/sidekick)")
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := c.httpc.Do(req)
 	if err != nil {
@@ -289,7 +289,7 @@ func (c *Client) getRaw(ctx context.Context, u string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "hud/0.1 (+https://github.com/uriahlevy/hud)")
+	req.Header.Set("User-Agent", "sidekick/0.1 (+https://github.com/meloniteai/sidekick)")
 	resp, err := c.httpc.Do(req)
 	if err != nil {
 		return nil, err

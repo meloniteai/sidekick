@@ -9,7 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/uriahlevy/hud/internal/config"
+	"github.com/meloniteai/sidekick/internal/config"
 )
 
 const removeTestSeed = `goal_source: prompt
@@ -35,7 +35,7 @@ func writeSeed(t *testing.T) string {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("chdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "hud.yaml"), []byte(removeTestSeed), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "sidekick.yaml"), []byte(removeTestSeed), 0o600); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
 	return dir
@@ -55,9 +55,9 @@ func runRemove(t *testing.T, stdin string, args ...string) (string, error) {
 
 func readVerifiers(t *testing.T, dir string) *config.File {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(dir, "hud.yaml"))
+	raw, err := os.ReadFile(filepath.Join(dir, "sidekick.yaml"))
 	if err != nil {
-		t.Fatalf("read hud.yaml: %v", err)
+		t.Fatalf("read sidekick.yaml: %v", err)
 	}
 	var f config.File
 	if err := yaml.Unmarshal(raw, &f); err != nil {

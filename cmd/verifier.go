@@ -11,20 +11,20 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/uriahlevy/hud/internal/config"
-	"github.com/uriahlevy/hud/internal/fetch"
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/config"
+	"github.com/meloniteai/sidekick/internal/fetch"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
-// newVerifierCmd assembles the `hud verifier ...` command tree. Today it
+// newVerifierCmd assembles the `sidekick verifier ...` command tree. Today it
 // holds `add <url>` (fetch + pin a remote SKILL.md or script and register
-// it in hud.yaml) and `list` (print the configured verifiers). The intent
+// it in sidekick.yaml) and `list` (print the configured verifiers). The intent
 // is to keep this the user-facing CLI surface for managing the community
-// verifier set, leaving hud.yaml hand-edits as the escape hatch.
+// verifier set, leaving sidekick.yaml hand-edits as the escape hatch.
 func newVerifierCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "verifier",
-		Short: "Manage HUD verifiers (add remote, list, etc.)",
+		Short: "Manage Sidekick verifiers (add remote, list, etc.)",
 	}
 	cmd.AddCommand(newVerifierAddCmd())
 	cmd.AddCommand(newVerifierListCmd())
@@ -40,20 +40,20 @@ func newVerifierRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "remove <name>",
 		Aliases: []string{"rm", "delete"},
-		Short:   "Delete a verifier from hud.yaml by name",
-		Long: `Remove a verifier entry from hud.yaml. Matching is case-insensitive.
+		Short:   "Delete a verifier from sidekick.yaml by name",
+		Long: `Remove a verifier entry from sidekick.yaml. Matching is case-insensitive.
 
-  hud verifier remove MyVerifier            prompts before deleting
-  hud verifier remove MyVerifier --yes      skip the confirmation prompt
+  sidekick verifier remove MyVerifier            prompts before deleting
+  sidekick verifier remove MyVerifier --yes      skip the confirmation prompt
 
 The verifier's source files on disk (skill, script) are left untouched —
-this command only edits hud.yaml.`,
+this command only edits sidekick.yaml.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := args[0]
 			f, path, err := config.Load(configPath)
 			if err != nil {
-				return fmt.Errorf("load hud.yaml: %w", err)
+				return fmt.Errorf("load sidekick.yaml: %w", err)
 			}
 			idx := -1
 			for i, v := range f.Verifiers {
@@ -87,7 +87,7 @@ this command only edits hud.yaml.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml")
+	cmd.Flags().StringVar(&configPath, "config", "", "path to sidekick.yaml")
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
 	return cmd
 }
@@ -96,13 +96,13 @@ func newVerifierListCmd() *cobra.Command {
 	var configPath string
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "Print the verifiers configured in hud.yaml",
+		Short: "Print the verifiers configured in sidekick.yaml",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f, path, err := config.Load(configPath)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("hud.yaml: %s\n\n", path)
+			fmt.Printf("sidekick.yaml: %s\n\n", path)
 			vs, err := f.Resolve(filepath.Dir(path))
 			if err != nil {
 				// Print whatever we have even if resolution fails so the
@@ -129,7 +129,7 @@ func newVerifierListCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml")
+	cmd.Flags().StringVar(&configPath, "config", "", "path to sidekick.yaml")
 	return cmd
 }
 
@@ -145,14 +145,14 @@ func newVerifierAddCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "add [url]",
-		Short: "Register a verifier in hud.yaml — either a pinned remote URL or a local one via the interactive wizard",
-		Long: `Add a verifier to hud.yaml.
+		Short: "Register a verifier in sidekick.yaml — either a pinned remote URL or a local one via the interactive wizard",
+		Long: `Add a verifier to sidekick.yaml.
 
 Remote mode (default):
-` + "  `hud verifier add <url>`" + ` downloads the URL once, displays the first 20
+` + "  `sidekick verifier add <url>`" + ` downloads the URL once, displays the first 20
   lines of the content, prompts for confirmation, computes the sha256, and
-  writes a new entry into hud.yaml that pins the artefact by hash. Subsequent
-  loads of the verifier go through the on-disk cache; HUD refuses to use any
+  writes a new entry into sidekick.yaml that pins the artefact by hash. Subsequent
+  loads of the verifier go through the on-disk cache; Sidekick refuses to use any
   content whose hash has drifted from the pin.
 
   URLs are heuristically classified by extension and content:
@@ -162,9 +162,9 @@ Remote mode (default):
   Override the heuristic with --type {agent,command,binary}.
 
 Local mode:
-` + "  `hud verifier add --local`" + ` runs an interactive field-by-field wizard
+` + "  `sidekick verifier add --local`" + ` runs an interactive field-by-field wizard
   that prompts for name, direction, type, command/skill path, timeout, and
-  optional advisory permissions, then writes the entry to hud.yaml without
+  optional advisory permissions, then writes the entry to sidekick.yaml without
   any URL or sha256 pin. Pre-set --name/--direction/--type/--permissions
   flags become the defaults the wizard suggests.`,
 		Args: cobra.MaximumNArgs(1),
@@ -208,7 +208,7 @@ Local mode:
 				"Add as: name=%q  type=%s  direction=%s\n", name, kind, direction)
 
 			if !yes {
-				if !confirm(cmd.InOrStdin(), cmd.OutOrStdout(), "Add this verifier to hud.yaml?") {
+				if !confirm(cmd.InOrStdin(), cmd.OutOrStdout(), "Add this verifier to sidekick.yaml?") {
 					return errors.New("aborted")
 				}
 			}
@@ -245,11 +245,11 @@ Local mode:
 				fmt.Fprintf(cmd.OutOrStdout(), "\nWrote %s.\n", path)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(),
-				"Restart `hud start` to pick up the new verifier (or trigger a config reload from the TUI editor).\n")
+				"Restart `sidekick start` to pick up the new verifier (or trigger a config reload from the TUI editor).\n")
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml (default: nearest hud.yaml above cwd, else ./hud.yaml)")
+	cmd.Flags().StringVar(&configPath, "config", "", "path to sidekick.yaml (default: nearest sidekick.yaml above cwd, else ./sidekick.yaml)")
 	cmd.Flags().StringVar(&name, "name", "", "verifier name (default: derived from URL filename)")
 	cmd.Flags().StringVar(&direction, "direction", "", "compass direction (default: NE)")
 	cmd.Flags().StringVar(&kind, "type", "", "verifier type: agent | command | binary (default: detect)")
@@ -362,10 +362,10 @@ func asReader(in interface{ Read([]byte) (int, error) }) *os.File {
 	return os.Stdin
 }
 
-// loadOrInit returns (parsed file, on-disk path, true) if hud.yaml exists,
+// loadOrInit returns (parsed file, on-disk path, true) if sidekick.yaml exists,
 // or (empty file, default path, false) if not. The default path when none
-// is supplied is ./hud.yaml in the current working directory — the same
-// place `hud start` looks for it via findUpwards.
+// is supplied is ./sidekick.yaml in the current working directory — the same
+// place `sidekick start` looks for it via findUpwards.
 func loadOrInit(configPath string) (*config.File, string, bool, error) {
 	f, path, err := config.Load(configPath)
 	if err == nil {
@@ -374,7 +374,7 @@ func loadOrInit(configPath string) (*config.File, string, bool, error) {
 	if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errFileMissing) {
 		return nil, "", false, err
 	}
-	// No hud.yaml found anywhere upward. Create one in cwd.
+	// No sidekick.yaml found anywhere upward. Create one in cwd.
 	cwd, wderr := os.Getwd()
 	if wderr != nil {
 		return nil, "", false, wderr
@@ -383,13 +383,13 @@ func loadOrInit(configPath string) (*config.File, string, bool, error) {
 		// User supplied a path that doesn't exist yet; honour it.
 		return &config.File{GoalSource: "prompt"}, configPath, false, nil
 	}
-	return &config.File{GoalSource: "prompt"}, filepath.Join(cwd, "hud.yaml"), false, nil
+	return &config.File{GoalSource: "prompt"}, filepath.Join(cwd, "sidekick.yaml"), false, nil
 }
 
-// errFileMissing is a sentinel for the "no hud.yaml found" case used by
+// errFileMissing is a sentinel for the "no sidekick.yaml found" case used by
 // loadOrInit. config.Load returns os.ErrNotExist directly so this is
 // effectively unused, but kept for readability of the err path.
-var errFileMissing = errors.New("hud.yaml not found")
+var errFileMissing = errors.New("sidekick.yaml not found")
 
 func hasVerifier(f *config.File, name string) bool {
 	for _, v := range f.Verifiers {

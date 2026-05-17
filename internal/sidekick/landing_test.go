@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"strings"
@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
 func landingFixture() []verifier.Verifier {
@@ -17,12 +17,12 @@ func landingFixture() []verifier.Verifier {
 	}
 }
 
-// TestLandingRenderShape pins the visual contract: HUD wordmark, version
+// TestLandingRenderShape pins the visual contract: Sidekick wordmark, version
 // pill, working dir, socket path, the section title, every verifier with its
 // direction, and the footer help row. Each of these is something a user
 // needs to *see* on start — silently dropping one regresses discoverability.
 func TestLandingRenderShape(t *testing.T) {
-	l := NewLanding(landingFixture(), "0.1", "/home/u/.hud/sockets/abc.sock", "/home/u/repos/hud")
+	l := NewLanding(landingFixture(), "0.1", "/home/u/.sidekick/sockets/abc.sock", "/home/u/repos/sidekick")
 	l.width, l.height = 120, 40
 
 	out := l.View()
@@ -93,7 +93,7 @@ func TestLandingSeedsFromDisabledFlag(t *testing.T) {
 
 // TestLandingToggleMirrorsDisabled: space-toggling a row flips the Disabled
 // flag on the returned verifier rather than dropping the row. Disabled rows
-// stay in the slice so the runner/HUD can re-enable them without a restart.
+// stay in the slice so the runner/Sidekick can re-enable them without a restart.
 func TestLandingToggleMirrorsDisabled(t *testing.T) {
 	l := NewLanding(landingFixture(), "0.1", "/sock", "/cwd")
 	l.width, l.height = 120, 40

@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/uriahlevy/hud/internal/config"
+	"github.com/meloniteai/sidekick/internal/config"
 )
 
-// Scope picks which hud.yaml the installer writes into. ScopeProject
-// uses the currently-loaded project file (or ./hud.yaml in cwd if none
+// Scope picks which sidekick.yaml the installer writes into. ScopeProject
+// uses the currently-loaded project file (or ./sidekick.yaml in cwd if none
 // exists yet); ScopeGlobal uses config.GlobalPath().
 type Scope int
 
@@ -21,7 +21,7 @@ const (
 )
 
 // InstallOptions describes a single install. ProjectPath is the path of
-// the project's currently-loaded hud.yaml (if any); used by ScopeProject
+// the project's currently-loaded sidekick.yaml (if any); used by ScopeProject
 // to decide where to write. Direction overrides Manifest.Direction so
 // the user can pick a slot from the UI before committing.
 type InstallOptions struct {
@@ -40,8 +40,8 @@ type InstallResult struct {
 }
 
 // Install appends a source-pinned VerifierSpec for the manifest to the
-// hud.yaml selected by opts.Scope. The sha256 in Manifest.SHA256 is the
-// only integrity check; subsequent `hud start` invocations re-verify
+// sidekick.yaml selected by opts.Scope. The sha256 in Manifest.SHA256 is the
+// only integrity check; subsequent `sidekick start` invocations re-verify
 // fetched bytes against it (see fetch.Resolve).
 //
 // On name collision the new entry is renamed with a numeric suffix
@@ -124,13 +124,13 @@ func resolveTargetPath(opts InstallOptions) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(cwd, "hud.yaml"), nil
+		return filepath.Join(cwd, "sidekick.yaml"), nil
 	default:
 		return "", fmt.Errorf("unknown scope %d", opts.Scope)
 	}
 }
 
-// ensureFile creates an empty hud.yaml (and any missing parent dirs) at
+// ensureFile creates an empty sidekick.yaml (and any missing parent dirs) at
 // path if it doesn't exist. Permission bits intentionally mirror what
 // config.Save uses so the freshly-created file isn't broader than the
 // loader expects (0o600).

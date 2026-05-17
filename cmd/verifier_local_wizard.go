@@ -14,16 +14,16 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/uriahlevy/hud/internal/config"
-	hudtui "github.com/uriahlevy/hud/internal/hud"
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/config"
+	sidekicktui "github.com/meloniteai/sidekick/internal/sidekick"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
-// runLocalVerifierWizardPalette runs the TTY-only `hud verifier add
+// runLocalVerifierWizardPalette runs the TTY-only `sidekick verifier add
 // --local` flow inside a full-screen bubbletea program styled to match
-// the in-HUD ctrl+p command palette. It is intentionally a separate
-// program from the ctrl+n "New Verifier" wizard embedded in the HUD
-// (internal/hud.EditWizard); the two share styling primitives but no
+// the in-Sidekick ctrl+p command palette. It is intentionally a separate
+// program from the ctrl+n "New Verifier" wizard embedded in the Sidekick
+// (internal/sidekick.EditWizard); the two share styling primitives but no
 // wizard code.
 func runLocalVerifierWizardPalette(cmd *cobra.Command, configPath, nameFlag, directionFlag, kindFlag, permissionsFlag string, yes bool) error {
 	f, path, loaded, err := loadOrInit(configPath)
@@ -78,13 +78,13 @@ func runLocalVerifierWizardPalette(cmd *cobra.Command, configPath, nameFlag, dir
 		fmt.Fprintf(out, "Wrote %s with %q.\n", path, spec.Name)
 	}
 	warnMissingArtefacts(out, filepath.Dir(path), spec)
-	fmt.Fprintln(out, "Restart `hud start` to pick up the new verifier.")
+	fmt.Fprintln(out, "Restart `sidekick start` to pick up the new verifier.")
 	return nil
 }
 
 // localWizardStepKind discriminates the per-step renderer in
 // localWizardModel.View. Each step is either a single text input or a
-// vertical choice list — the same two primitives the in-HUD palette
+// vertical choice list — the same two primitives the in-Sidekick palette
 // composes.
 type localWizardStepKind int
 
@@ -395,7 +395,7 @@ func (m *localWizardModel) inputWidth() int {
 }
 
 // localWizardInnerWidth picks the modal's inner content width. It uses
-// the same shape as the in-HUD palette helper (~70% of the terminal) but
+// the same shape as the in-Sidekick palette helper (~70% of the terminal) but
 // raises the cap from 72 to 92 cells — the wizard renders longer
 // description sentences than the palette's one-word command labels, so
 // truncating at 72 makes the type/permissions step copy unreadable.
@@ -478,7 +478,7 @@ func newPaletteInput(placeholder string, width int) textinput.Model {
 	ti.PromptStyle = stylePalettePrompt
 	ti.PlaceholderStyle = stylePalettePlaceholder
 	ti.TextStyle = stylePaletteBody
-	ti.Cursor.Style = lipgloss.NewStyle().Background(lipgloss.Color(hudtui.BrandBg))
+	ti.Cursor.Style = lipgloss.NewStyle().Background(lipgloss.Color(sidekicktui.BrandBg))
 	return ti
 }
 
@@ -554,7 +554,7 @@ func buildLocalWizardSteps() []localWizardStep {
 	return []localWizardStep{
 		{
 			id: "name", kind: stepKindText, title: "Name",
-			desc:        descConst("How this verifier is referenced everywhere else in hud."),
+			desc:        descConst("How this verifier is referenced everywhere else in sidekick."),
 			show:        always,
 			placeholder: "MyVerifier",
 			getText:     func(m *localWizardModel) string { return m.name },
@@ -713,7 +713,7 @@ func buildLocalWizardSteps() []localWizardStep {
 		},
 		{
 			id: "timeout", kind: stepKindText, title: "Timeout",
-			desc:        descConst("Maximum time per run, e.g. 60s. Leave blank for the hud default."),
+			desc:        descConst("Maximum time per run, e.g. 60s. Leave blank for the sidekick default."),
 			show:        always,
 			optional:    true,
 			placeholder: "e.g. 60s",
@@ -795,21 +795,21 @@ func descConst(s string) func(*localWizardModel) string {
 
 // All palette-styled surfaces explicitly set Background to BrandBg so
 // the embedded \x1b[0m resets don't punch terminal black through the
-// modal — same trick the in-HUD palette uses, see palette.go's
+// modal — same trick the in-Sidekick palette uses, see palette.go's
 // long-form note for why.
 var (
-	stylePaletteBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(hudtui.BrandCoral)).BorderBackground(lipgloss.Color(hudtui.BrandBg)).Background(lipgloss.Color(hudtui.BrandBg)).Padding(1, 2)
-	stylePaletteTitle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(hudtui.BrandCoralSoft)).Background(lipgloss.Color(hudtui.BrandBg))
-	stylePaletteSlash       = lipgloss.NewStyle().Foreground(lipgloss.Color(hudtui.BrandCoral)).Background(lipgloss.Color(hudtui.BrandBg))
-	stylePalettePrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color(hudtui.BrandCoralSoft)).Background(lipgloss.Color(hudtui.BrandBg))
-	stylePalettePlaceholder = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color(hudtui.BrandBg))
-	stylePaletteSelected    = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(hudtui.BrandCoral)).Bold(true)
-	stylePaletteHelp        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(hudtui.BrandBg))
-	stylePaletteSeparator   = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color(hudtui.BrandBg))
-	stylePaletteBody        = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color(hudtui.BrandBg))
-	stylePaletteDesc        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(hudtui.BrandBg))
-	stylePaletteError       = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(hudtui.BrandBg)).Bold(true)
-	stylePalettePreview     = lipgloss.NewStyle().Foreground(lipgloss.Color("251")).Background(lipgloss.Color(hudtui.BrandBg))
+	stylePaletteBorder      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(sidekicktui.BrandCoral)).BorderBackground(lipgloss.Color(sidekicktui.BrandBg)).Background(lipgloss.Color(sidekicktui.BrandBg)).Padding(1, 2)
+	stylePaletteTitle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(sidekicktui.BrandCoralSoft)).Background(lipgloss.Color(sidekicktui.BrandBg))
+	stylePaletteSlash       = lipgloss.NewStyle().Foreground(lipgloss.Color(sidekicktui.BrandCoral)).Background(lipgloss.Color(sidekicktui.BrandBg))
+	stylePalettePrompt      = lipgloss.NewStyle().Foreground(lipgloss.Color(sidekicktui.BrandCoralSoft)).Background(lipgloss.Color(sidekicktui.BrandBg))
+	stylePalettePlaceholder = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color(sidekicktui.BrandBg))
+	stylePaletteSelected    = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(sidekicktui.BrandCoral)).Bold(true)
+	stylePaletteHelp        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(sidekicktui.BrandBg))
+	stylePaletteSeparator   = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color(sidekicktui.BrandBg))
+	stylePaletteBody        = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color(sidekicktui.BrandBg))
+	stylePaletteDesc        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(lipgloss.Color(sidekicktui.BrandBg))
+	stylePaletteError       = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(sidekicktui.BrandBg)).Bold(true)
+	stylePalettePreview     = lipgloss.NewStyle().Foreground(lipgloss.Color("251")).Background(lipgloss.Color(sidekicktui.BrandBg))
 )
 
 // ----- view -----
@@ -885,7 +885,7 @@ func (m *localWizardModel) View() string {
 
 	box := stylePaletteBorder.
 		Width(innerW + stylePaletteBorder.GetHorizontalPadding()).
-		Render(hudtui.ReanchorBrandBg(b.String()))
+		Render(sidekicktui.ReanchorBrandBg(b.String()))
 	if m.width == 0 || m.height == 0 {
 		return box
 	}
@@ -893,7 +893,7 @@ func (m *localWizardModel) View() string {
 }
 
 // renderTitleRow draws "New Verifier · 3/7 · Type ////…" filling the
-// inner width, mirroring the in-HUD palette's "Commands //…" banner.
+// inner width, mirroring the in-Sidekick palette's "Commands //…" banner.
 func (m *localWizardModel) renderTitleRow(innerW int, step localWizardStep) string {
 	cur, total := m.visibleCounts()
 	title := fmt.Sprintf("New Verifier · %d/%d · %s ", cur, total, step.title)

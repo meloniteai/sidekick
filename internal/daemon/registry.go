@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 const (

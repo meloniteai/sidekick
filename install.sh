@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# hud installer.
+# sidekick installer.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/meloniteai/sidekick/main/install.sh | bash
 #
 # Environment overrides:
-#   HUD_REPO         override the GitHub repo (default: meloniteai/sidekick)
-#   HUD_VERSION      install a specific version, e.g. 0.2 (default: latest release)
-#   HUD_INSTALL_DIR  install the binary into this directory instead of the auto-picked one
-#   HUD_SKIP_AGENTS  if set, do not run `hud install` after dropping the binary
+#   SIDEKICK_REPO         override the GitHub repo (default: meloniteai/sidekick)
+#   SIDEKICK_VERSION      install a specific version, e.g. 0.2 (default: latest release)
+#   SIDEKICK_INSTALL_DIR  install the binary into this directory instead of the auto-picked one
+#   SIDEKICK_SKIP_AGENTS  if set, do not run `sidekick install` after dropping the binary
 #   NO_COLOR         if set, suppress ANSI colours
 #
-# After the binary lands in $PATH we chain into `hud install` which writes
-# the hud skill, registers the MCP server with any detected agent (Claude
+# After the binary lands in $PATH we chain into `sidekick install` which writes
+# the sidekick skill, registers the MCP server with any detected agent (Claude
 # Code, Codex), and merges the PostToolUse write hook into their settings.
 # Re-running this script is safe and idempotent — it's also the recommended
 # way to refresh integrations after an upgrade.
 
 set -euo pipefail
 
-REPO="${HUD_REPO:-meloniteai/sidekick}"
-BIN="hud"
+REPO="${SIDEKICK_REPO:-meloniteai/sidekick}"
+BIN="sidekick"
 
-# ---- Palette (matches the TUI brand from internal/hud/landing.go) ----
+# ---- Palette (matches the TUI brand from internal/sidekick/landing.go) ----
 # Coral #E84B30 — headings / banner
 # Coral-soft #FF7A55 — paths, versions
 # 84 — ✓ done
@@ -41,7 +41,7 @@ else
 fi
 
 banner() {
-  printf '\n%s%s   hud — agentic-coding compass%s\n'        "$BOLD" "$CORAL"      "$RESET" >&2
+  printf '\n%s%s   sidekick — agentic-coding compass%s\n'        "$BOLD" "$CORAL"      "$RESET" >&2
   printf '%s   github.com/%s%s\n\n'                          "$DIM"   "$REPO"      "$RESET" >&2
 }
 step() { printf '%s•%s %s\n'   "$CORAL_SOFT" "$RESET" "$*" >&2; }
@@ -75,8 +75,8 @@ case "$(uname -m)" in
 esac
 
 # Resolve version
-if [ -n "${HUD_VERSION:-}" ]; then
-  VERSION="${HUD_VERSION#v}"
+if [ -n "${SIDEKICK_VERSION:-}" ]; then
+  VERSION="${SIDEKICK_VERSION#v}"
   TAG="v${VERSION}"
   step "Using pinned version ${CORAL_SOFT}${VERSION}${RESET}"
 else
@@ -119,8 +119,8 @@ tar -xzf "$TMP/$ASSET" -C "$TMP"
 [ -x "$TMP/$BIN" ] || fail "archive did not contain executable: ${BIN}"
 
 # Pick install dir
-if [ -n "${HUD_INSTALL_DIR:-}" ]; then
-  DEST="$HUD_INSTALL_DIR"
+if [ -n "${SIDEKICK_INSTALL_DIR:-}" ]; then
+  DEST="$SIDEKICK_INSTALL_DIR"
   mkdir -p "$DEST"
 elif [ -w /usr/local/bin ] 2>/dev/null; then
   DEST="/usr/local/bin"
@@ -140,21 +140,21 @@ case ":${PATH}:" in
     ;;
 esac
 
-# ---- Chain into `hud install` for agent integration ----
-if [ -n "${HUD_SKIP_AGENTS:-}" ]; then
-  info "skipping agent integration (HUD_SKIP_AGENTS set). Run \`hud install\` later to wire up Claude / Codex."
+# ---- Chain into `sidekick install` for agent integration ----
+if [ -n "${SIDEKICK_SKIP_AGENTS:-}" ]; then
+  info "skipping agent integration (SIDEKICK_SKIP_AGENTS set). Run \`sidekick install\` later to wire up Claude / Codex."
 elif ! "$DEST/$BIN" install --help >/dev/null 2>&1; then
-  warn "this hud version does not have \`hud install\` yet — re-run \`curl … | bash\` after the next release, or wire up Claude/Codex manually (see README)."
+  warn "this sidekick version does not have \`sidekick install\` yet — re-run \`curl … | bash\` after the next release, or wire up Claude/Codex manually (see README)."
 else
   printf '\n%s%s   Agent integration%s\n' "$BOLD" "$CORAL" "$RESET" >&2
   # Always pass --yes here. When stdin is a tty (user invoked install.sh
   # directly, not piped from curl) we want to skip prompting because they
   # already opted in by running the installer. The user can re-run
-  # `hud install` manually for fine-grained control.
+  # `sidekick install` manually for fine-grained control.
   if ! "$DEST/$BIN" install --yes; then
-    warn "agent integration finished with warnings — re-run \`hud install\` to retry."
+    warn "agent integration finished with warnings — re-run \`sidekick install\` to retry."
   fi
 fi
 
-printf '\n%s%s   Done.%s  Run %s%shud start%s in a repo to launch the daemon.\n\n' \
+printf '\n%s%s   Done.%s  Run %s%ssidekick start%s in a repo to launch the daemon.\n\n' \
   "$BOLD" "$OK" "$RESET" "$CORAL_SOFT" "$BOLD" "$RESET" >&2

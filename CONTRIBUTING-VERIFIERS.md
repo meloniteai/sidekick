@@ -1,9 +1,9 @@
-# Writing a HUD verifier
+# Writing a Sidekick verifier
 
 This is the contract every verifier must satisfy, plus the conventions
 the bundled and community verifiers follow. If you write a verifier,
 publish it from your own repo (or any HTTPS-reachable URL); users can
-install it with `hud verifier add <url>` once you give them a sha256
+install it with `sidekick verifier add <url>` once you give them a sha256
 pin.
 
 There is no central registry. Pinning by sha256 is mandatory.
@@ -12,14 +12,14 @@ There is no central registry. Pinning by sha256 is mandatory.
 
 ## The protocol
 
-A verifier is a process that the HUD daemon spawns once per evaluation
+A verifier is a process that the Sidekick daemon spawns once per evaluation
 batch. There are three types:
 
 | Type | I/O | When to use |
 |---|---|---|
 | `command` | stdin: session JSON · stdout: `{"distance", "reason", "status"}` JSON · exit 0 | Custom scoring logic. Most extensible. |
 | `binary` | stdin: session JSON (may ignore) · stdout/stderr: free · exit code = score | Pass/fail wrappers around existing tools (`go test`, `eslint`). |
-| `agent` | stdin: prompt body · stdout: agent CLI output (HUD parses) | Persona-style review with an LLM, driven by a `SKILL.md` rubric. |
+| `agent` | stdin: prompt body · stdout: agent CLI output (Sidekick parses) | Persona-style review with an LLM, driven by a `SKILL.md` rubric. |
 
 ### Session JSON (stdin for `command` and `binary`)
 
@@ -44,17 +44,17 @@ Output one JSON object on a single line:
 {"distance": 0.42, "reason": "one short sentence", "status": "ok"}
 ```
 
-- `distance` ∈ `[0.0, 1.0]` — clamped by HUD if you over/undershoot.
+- `distance` ∈ `[0.0, 1.0]` — clamped by Sidekick if you over/undershoot.
 - `reason` is a single short sentence — the **most load-bearing**
   observation, not a summary.
-- `status` is optional. If your verifier ran cleanly, omit it (HUD
+- `status` is optional. If your verifier ran cleanly, omit it (Sidekick
   promotes to `"ok"`). If the verifier could not score this run
   (tooling missing, no diff to evaluate, prerequisite step pending),
-  set `"status": "unknown"` and HUD will preserve the prior distance
+  set `"status": "unknown"` and Sidekick will preserve the prior distance
   instead of pretending the score moved.
 
 You may emit log lines on stderr (or even on stdout before your final
-JSON line) — HUD is brace-aware and string-aware when extracting the
+JSON line) — Sidekick is brace-aware and string-aware when extracting the
 result, so trailing or leading prose is tolerated.
 
 ### Score anchors
@@ -73,16 +73,16 @@ evidence for something in between.
 
 ### Environment variables
 
-- `SESSION_BASE_REF` — git SHA of `HEAD` when `hud start` began. Diff
+- `SESSION_BASE_REF` — git SHA of `HEAD` when `sidekick start` began. Diff
   against this for cumulative session work, **not** against the last
   write.
-- `HUD_VERIFIER=1` — set automatically. Use this in your script if you
-  call `claude` or `codex` and want to be sure HUD's hooks won't recurse
+- `SIDEKICK_VERIFIER=1` — set automatically. Use this in your script if you
+  call `claude` or `codex` and want to be sure Sidekick's hooks won't recurse
   on writes triggered by the verifier itself.
 
 ### Timeouts
 
-Default 60s per verifier. Override per-verifier in `hud.yaml`:
+Default 60s per verifier. Override per-verifier in `sidekick.yaml`:
 
 ```yaml
 - name: Slow
@@ -115,7 +115,7 @@ distance=$(awk -v c="$count" 'BEGIN { x = c / 10.0; if (x>1) x=1; printf "%.3f",
 printf '{"distance": %s, "reason": "%d build warnings"}\n' "$distance" "$count"
 ```
 
-Then in `hud.yaml`:
+Then in `sidekick.yaml`:
 
 ```yaml
 verifiers:
@@ -143,13 +143,13 @@ description: One-line description shown in skill listings.
 
 # my-verifier
 
-You are the [Persona] reviewer for the HUD compass. Evaluate the
+You are the [Persona] reviewer for the Sidekick compass. Evaluate the
 cumulative session work through [your specific lens], against the
 agent's stated goal.
 
 ## How to evaluate
 
-1. `$SESSION_BASE_REF` is the commit `HEAD` was at when `hud start` ran.
+1. `$SESSION_BASE_REF` is the commit `HEAD` was at when `sidekick start` ran.
 2. Run `git diff $SESSION_BASE_REF --stat` to size the change.
 3. Run `git diff $SESSION_BASE_REF` to read it.
 4. Run `git status --porcelain` for untracked files.
@@ -168,7 +168,7 @@ agent's stated goal.
 - 1.00 — ...
 ```
 
-Then in `hud.yaml`:
+Then in `sidekick.yaml`:
 
 ```yaml
 verifiers:
@@ -182,7 +182,7 @@ verifiers:
       skill: ./skills/my-persona/SKILL.md
 ```
 
-HUD strips your YAML frontmatter, appends the runtime score-anchor
+Sidekick strips your YAML frontmatter, appends the runtime score-anchor
 contract, and shells out to the configured agent CLI. The agent runs
 with a tool allowlist of read-only git/file operations only.
 
@@ -197,18 +197,18 @@ for full rubrics.
 1. Push your script or `SKILL.md` to a public URL (GitHub raw, Gitea
    raw, your own static host — anything HTTPS-reachable).
 2. Compute the sha256 (`shasum -a 256 my-verifier.sh`) or let
-   `hud verifier add` compute it for you on first download.
+   `sidekick verifier add` compute it for you on first download.
 3. In your README, give users the install command:
 
    ```bash
-   hud verifier add https://raw.githubusercontent.com/you/yours/v1/my-verifier.sh \
+   sidekick verifier add https://raw.githubusercontent.com/you/yours/v1/my-verifier.sh \
      --name MyVerifier --direction NE
    ```
 
    Or, if you want them to pin a specific revision yourself:
 
    ```yaml
-   # hud.yaml
+   # sidekick.yaml
    verifiers:
      - name: MyVerifier
        type: command
@@ -218,9 +218,9 @@ for full rubrics.
          sha256: <64 hex chars>
    ```
 
-HUD verifies the sha256 on every load. If you ship a new version, bump
+Sidekick verifies the sha256 on every load. If you ship a new version, bump
 the URL (e.g. `/v2/...`) and the sha256 — never silently overwrite
-content at the same URL, because HUD will refuse to load a body whose
+content at the same URL, because Sidekick will refuse to load a body whose
 hash drifted from the pin.
 
 ## Permissions
@@ -251,10 +251,10 @@ echo '{"goal":"x","changed_files":["a.go"],"verifier_name":"Test"}' \
   | ./verifiers/mine.sh
 # Expected: a single JSON line with distance, reason, optional status.
 
-# Run inside HUD:
-hud start --headless &
-echo '{"tool_input":{"file_path":"a.go"}}' | hud hook write
-hud status   # see your verifier's distance/reason in the snapshot
+# Run inside Sidekick:
+sidekick start --headless &
+echo '{"tool_input":{"file_path":"a.go"}}' | sidekick hook write
+sidekick status   # see your verifier's distance/reason in the snapshot
 ```
 
 ## Common pitfalls
@@ -265,8 +265,8 @@ hud status   # see your verifier's distance/reason in the snapshot
 - **Computing distance from a single instance instead of cumulative
   work.** Diff against `$SESSION_BASE_REF`, not `HEAD~1`.
 - **Hard-coding paths.** `cd` in the script if you need to, or take
-  paths relative to `$PWD` (HUD runs verifiers from the directory
+  paths relative to `$PWD` (Sidekick runs verifiers from the directory
   it was started in).
 - **Returning errors as distance=1.** That conflates "goal contradicted"
-  with "tooling broken." Return `status: unknown` instead — HUD will
+  with "tooling broken." Return `status: unknown` instead — Sidekick will
   preserve the prior distance and flag the row as not-yet-evaluable.

@@ -5,7 +5,7 @@ description: AGENTS.md compliance reviewer. Checks cumulative session work again
 
 # agents-md
 
-You are the AGENTS.MD persona for the HUD compass. You evaluate the
+You are the AGENTS.MD persona for the Sidekick compass. You evaluate the
 cumulative session diff against the repository's AGENTS.md instruction
 hierarchy.
 

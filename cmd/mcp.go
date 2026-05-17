@@ -3,21 +3,21 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	hudmcp "github.com/uriahlevy/hud/internal/mcp"
+	sidekickmcp "github.com/meloniteai/sidekick/internal/mcp"
 )
 
 func newMcpCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "mcp",
-		Short: "Run the HUD MCP server (stdio) — invoked by Claude Code",
-		Long: `Reads MCP requests on stdin and proxies hud_status / hud_explain to the
-running 'hud start' daemon over its Unix socket. Add to .claude/settings.json:
+		Short: "Run the Sidekick MCP server (stdio) — invoked by Claude Code",
+		Long: `Reads MCP requests on stdin and proxies sidekick_status / sidekick_explain to the
+running 'sidekick start' daemon over its Unix socket. Add to .claude/settings.json:
 
   "mcpServers": {
-    "hud": {"command": "hud", "args": ["mcp"]}
+    "sidekick": {"command": "sidekick", "args": ["mcp"]}
   }`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return hudmcp.Run(cmd.Context(), version)
+			return sidekickmcp.Run(cmd.Context(), version)
 		},
 	}
 }

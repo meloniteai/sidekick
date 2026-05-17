@@ -1,6 +1,6 @@
 // Package ipc defines the line-delimited JSON protocol spoken between the
-// long-running `hud start` daemon and its short-lived peers (`hud hook`,
-// `hud mcp`, `hud goal`).
+// long-running `sidekick start` daemon and its short-lived peers (`sidekick hook`,
+// `sidekick mcp`, `sidekick goal`).
 package ipc
 
 import (
@@ -19,14 +19,14 @@ import (
 )
 
 const (
-	defaultSockRel = ".hud/sock"
-	envSock        = "HUD_SOCK"
+	defaultSockRel = ".sidekick/sock"
+	envSock        = "SIDEKICK_SOCK"
 )
 
 // SocketPath returns the daemon socket path for the process cwd. See
 // SocketPathFor for the full doc; this is the legacy parameterless entry
-// point used by daemon-side code (`hud start`, the menubar) and short-lived
-// CLI peers (`hud goal`, `hud hook`) that inherit the operator's real
+// point used by daemon-side code (`sidekick start`, the menubar) and short-lived
+// CLI peers (`sidekick goal`, `sidekick hook`) that inherit the operator's real
 // shell cwd.
 func SocketPath() (string, error) {
 	return SocketPathFor("")
@@ -41,11 +41,11 @@ func SocketPath() (string, error) {
 // worktrees, but the agent itself always knows where it is and can pass
 // that path through.
 //
-// Falls back to the legacy single-socket $HOME/.hud/sock when no git
+// Falls back to the legacy single-socket $HOME/.sidekick/sock when no git
 // common dir can be resolved (preserves the demo path that runs outside a
 // repository).
 //
-// Override with $HUD_SOCK for tests and unusual deployments.
+// Override with $SIDEKICK_SOCK for tests and unusual deployments.
 func SocketPathFor(cwd string) (string, error) {
 	if p := os.Getenv(envSock); p != "" {
 		return p, nil
@@ -55,7 +55,7 @@ func SocketPathFor(cwd string) (string, error) {
 		return "", err
 	}
 	if fp := repoFingerprintFor(cwd); fp != "" {
-		return filepath.Join(home, ".hud", "sockets", fp+".sock"), nil
+		return filepath.Join(home, ".sidekick", "sockets", fp+".sock"), nil
 	}
 	return filepath.Join(home, defaultSockRel), nil
 }
@@ -67,15 +67,15 @@ func SocketPathFor(cwd string) (string, error) {
 // The fingerprint hashes the absolute `git rev-parse --git-common-dir`
 // path, which is the *shared* .git directory across a repo and all of its
 // linked worktrees. This means the main repo and every worktree of it
-// collapse onto a single socket — `hud start` can run in the trunk while
-// an agent in a worktree (or a `hud hook` fired from that worktree)
+// collapse onto a single socket — `sidekick start` can run in the trunk while
+// an agent in a worktree (or a `sidekick hook` fired from that worktree)
 // transparently dials the same daemon. The daemon routes each request to a
 // per-worktree session inside that shared socket.
 //
 // We intentionally do *not* use `--show-toplevel`: that returns the
 // worktree's own path and produced a distinct fingerprint per worktree,
-// stranding worktree-side clients whenever the HUD daemon lived in the
-// trunk (or vice versa, e.g. after a HUD restart from a different cwd).
+// stranding worktree-side clients whenever the Sidekick daemon lived in the
+// trunk (or vice versa, e.g. after a Sidekick restart from a different cwd).
 func repoFingerprintFor(cwd string) string {
 	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
 	if cwd != "" {
@@ -203,7 +203,7 @@ type VerifierStatus struct {
 }
 
 // HistoryPoint is one prior verifier result, kept in a small ring buffer per
-// verifier so clients and agents can read trends via hud_explain. Status is
+// verifier so clients and agents can read trends via sidekick_explain. Status is
 // denormalised (pending/error rows are still kept so the user sees flakiness,
 // not just successful runs).
 type HistoryPoint struct {
@@ -224,7 +224,7 @@ type AgentUsage struct {
 	DurationMS   int64   `json:"duration_ms,omitempty"`
 }
 
-// VerifierConfig is the resolved hud.yaml metadata surfaced with verifier
+// VerifierConfig is the resolved sidekick.yaml metadata surfaced with verifier
 // status so clients can explain what is running without reparsing config.
 type VerifierConfig struct {
 	Type        string              `json:"type,omitempty"`

@@ -14,8 +14,8 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/uriahlevy/hud/internal/config"
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/config"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
 // stdinIsTerminal returns true when the cobra command's stdin is a real
@@ -30,9 +30,9 @@ func stdinIsTerminal(in io.Reader) bool {
 	return isatty.IsTerminal(f.Fd())
 }
 
-// runLocalVerifierWizard adds a verifier to hud.yaml interactively. On a
+// runLocalVerifierWizard adds a verifier to sidekick.yaml interactively. On a
 // real terminal it shows a palette-styled full-window wizard (see
-// verifier_local_wizard.go) so the experience matches the in-HUD ctrl+p
+// verifier_local_wizard.go) so the experience matches the in-Sidekick ctrl+p
 // command palette; otherwise (tests, pipes) it falls back to a
 // scripted-friendly line-by-line wizard so scripted-stdin tests keep
 // working unchanged.
@@ -136,7 +136,7 @@ func runLocalVerifierWizardText(cmd *cobra.Command, configPath, nameFlag, direct
 		fmt.Fprintf(out, "Wrote %s with %q.\n", path, spec.Name)
 	}
 	warnMissingArtefacts(out, filepath.Dir(path), spec)
-	fmt.Fprintln(out, "Restart `hud start` to pick up the new verifier.")
+	fmt.Fprintln(out, "Restart `sidekick start` to pick up the new verifier.")
 	return nil
 }
 
@@ -441,7 +441,7 @@ func splitCommandFields(s string) []string {
 }
 
 // warnMissingArtefacts surfaces a heads-up when the local script or skill
-// the user just registered doesn't exist on disk. `hud start` will fail
+// the user just registered doesn't exist on disk. `sidekick start` will fail
 // with the same error later — catching it here is a UX nicety, not a
 // correctness check.
 func warnMissingArtefacts(out io.Writer, configDir string, spec config.VerifierSpec) {
@@ -452,7 +452,7 @@ func warnMissingArtefacts(out io.Writer, configDir string, spec config.VerifierS
 		}
 		path := config.ResolveLocalPath(configDir, spec.LLM.Skill)
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(out, "Note: skill file %s does not exist yet — create it before running `hud start`.\n", path)
+			fmt.Fprintf(out, "Note: skill file %s does not exist yet — create it before running `sidekick start`.\n", path)
 		}
 	case verifier.TypeCommand:
 		if len(spec.Command) == 0 {
@@ -473,7 +473,7 @@ func warnLocalCommand(out io.Writer, configDir, raw string) {
 	}
 	path := config.ResolveLocalPath(configDir, raw)
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(out, "Note: script %s does not exist yet — create it before running `hud start`.\n", path)
+		fmt.Fprintf(out, "Note: script %s does not exist yet — create it before running `sidekick start`.\n", path)
 	}
 }
 

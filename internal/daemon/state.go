@@ -1,4 +1,4 @@
-// Package daemon owns the long-running session state behind `hud start`.
+// Package daemon owns the long-running session state behind `sidekick start`.
 package daemon
 
 import (
@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	charmlog "github.com/charmbracelet/log"
 	"github.com/muesli/termenv"
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 // EventLevel categorises an entry in the in-memory event log. Renderers use
@@ -126,8 +126,8 @@ func (s *State) SessionEdits() []string {
 }
 
 // SetGoal replaces the active goal. When the goal has been locked via
-// LockGoal (typically by `hud start --goal`), SetGoal is a no-op so the
-// agent's hud_set_goal calls and manual triggers cannot overwrite the
+// LockGoal (typically by `sidekick start --goal`), SetGoal is a no-op so the
+// agent's sidekick_set_goal calls and manual triggers cannot overwrite the
 // user-supplied goal.
 func (s *State) SetGoal(goal string) {
 	s.mu.Lock()
@@ -138,8 +138,8 @@ func (s *State) SetGoal(goal string) {
 }
 
 // LockGoal sets the active goal and pins it: subsequent SetGoal calls
-// are ignored until the daemon restarts. Used by `hud start --goal` so
-// the operator's framing survives the agent's own hud_set_goal traffic.
+// are ignored until the daemon restarts. Used by `sidekick start --goal` so
+// the operator's framing survives the agent's own sidekick_set_goal traffic.
 func (s *State) LockGoal(goal string) {
 	s.mu.Lock()
 	s.goal = goal
@@ -180,7 +180,7 @@ func (s *State) SessionBaseRef() string {
 // SetSessionWorktree records the absolute path to the git worktree the
 // session is anchored against. Verifier subprocesses run with this as
 // their working directory so `git diff $SESSION_BASE_REF` evaluates the
-// right tree regardless of where `hud start` was launched.
+// right tree regardless of where `sidekick start` was launched.
 func (s *State) SetSessionWorktree(path string) {
 	s.mu.Lock()
 	s.sessionWorktree = path
@@ -226,8 +226,8 @@ func (s *State) UpsertVerifier(v ipc.VerifierStatus) {
 }
 
 // ReplaceVerifiers swaps the configured verifier set while preserving runtime
-// status for same-named verifiers. This is used when hud.yaml is edited from
-// the TUI and reloaded without restarting HUD. Preserved scores are marked
+// status for same-named verifiers. This is used when sidekick.yaml is edited from
+// the TUI and reloaded without restarting Sidekick. Preserved scores are marked
 // stale so clients can render them as not-yet-revalidated.
 func (s *State) ReplaceVerifiers(verifiers []ipc.VerifierStatus) {
 	s.mu.Lock()
@@ -280,7 +280,7 @@ func (s *State) MarkRunning(name string, running bool) {
 
 // SetVerifierDisabled controls whether a verifier participates in rendering
 // and future runner batches. The row remains in State so users can re-enable
-// it from the footer without restarting HUD.
+// it from the footer without restarting Sidekick.
 func (s *State) SetVerifierDisabled(name string, disabled bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -327,7 +327,7 @@ func applyDisable(v *ipc.VerifierStatus, disabled bool) {
 }
 
 // Snapshot returns a stable, ordered copy of the current state for read-only
-// consumers (TUI, MCP `hud_status`).
+// consumers (TUI, MCP `sidekick_status`).
 func (s *State) Snapshot() ipc.StatusReply {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -421,7 +421,7 @@ func (w *eventLogSink) Write(p []byte) (int, error) {
 }
 
 // eventLogStyles tints charm/log's level + timestamp output to match the
-// rest of the HUD palette (dim grey timestamp, cyan INF, red ERR). The level
+// rest of the Sidekick palette (dim grey timestamp, cyan INF, red ERR). The level
 // labels are squashed to three characters so they line up with the historical
 // INF/ERR badges already familiar to users.
 func eventLogStyles() *charmlog.Styles {

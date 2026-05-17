@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 // EventHandler reacts to mutating client events for a routed worktree session.
 // The daemon's own logic (debouncer, verifier runner) is wired in by
-// `hud start`.
+// `sidekick start`.
 type EventHandler interface {
 	OnWrite(session *State, file string)
 	OnGoal(session *State, goal string)
@@ -27,7 +27,7 @@ type EventHandler interface {
 // socket file got an answer, meaning another daemon already owns the
 // path. Callers can offer a "start anyway" recovery path via
 // RemoveSocket + Listen.
-var ErrDaemonRunning = errors.New("another hud daemon is already listening")
+var ErrDaemonRunning = errors.New("another sidekick daemon is already listening")
 
 // RemoveSocket unlinks the socket file so a subsequent Listen can take
 // over the path. Intended for the recovery flow when ErrDaemonRunning

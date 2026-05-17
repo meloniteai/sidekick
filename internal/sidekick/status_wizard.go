@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 var (
@@ -17,7 +17,7 @@ var (
 	statusErrorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
 )
 
-// StatusWizard renders the selected verifier's full last-known HUD status in
+// StatusWizard renders the selected verifier's full last-known Sidekick status in
 // the same centered modal chrome as the palette, session switcher, and git
 // changes panel.
 type StatusWizard struct {

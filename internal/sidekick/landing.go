@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"fmt"
@@ -8,33 +8,33 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
-// hudBanner is the ANSI-Shadow block-letter wordmark drawn at the top of the
+// sidekickBanner is the ANSI-Shadow block-letter wordmark drawn at the top of the
 // landing screen. Hand-drawn so we don't drag a figlet dependency in for one
 // six-line glyph string. The leading space lines it up with the inner padding.
-const hudBanner = ` ██╗  ██╗██╗██╗  ██╗ █████╗ ██╗████████╗███████╗    ██╗  ██╗██╗   ██╗██████╗
- ██║ ██╔╝██║██║ ██╔╝██╔══██╗██║╚══██╔══╝██╔════╝    ██║  ██║██║   ██║██╔══██╗
- █████╔╝ ██║█████╔╝ ███████║██║   ██║   █████╗      ███████║██║   ██║██║  ██║
- ██╔═██╗ ██║██╔═██╗ ██╔══██║██║   ██║   ██╔══╝      ██╔══██║██║   ██║██║  ██║
- ██║  ██╗██║██║  ██╗██║  ██║██║   ██║   ███████╗    ██║  ██║╚██████╔╝██████╔╝
- ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚══════╝    ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ `
+const sidekickBanner = ` ███████╗██╗██████╗ ███████╗██╗  ██╗██╗ ██████╗██╗  ██╗
+ ██╔════╝██║██╔══██╗██╔════╝██║ ██╔╝██║██╔════╝██║ ██╔╝
+ ███████╗██║██║  ██║█████╗  █████╔╝ ██║██║     █████╔╝
+ ╚════██║██║██║  ██║██╔══╝  ██╔═██╗ ██║██║     ██╔═██╗
+ ███████║██║██████╔╝███████╗██║  ██╗██║╚██████╗██║  ██╗
+ ╚══════╝╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝ ╚═════╝╚═╝  ╚═╝`
 
-// brandCoral / brandCoralSoft form the KIKAITE accent family: the saturated
-// coral from kikaite.ai for chrome (border, selection bar, banner) and a
+// brandCoral / brandCoralSoft form the Melonite accent family: the saturated
+// coral from melonite.ai for chrome (border, selection bar, banner) and a
 // slightly lighter shade for secondary accents (titles, version pill) so
 // stacked elements still separate at a glance. brandBg is the warm graphite
 // that fills the inside of every framed surface — picked to read as a
 // deliberate "off-black" against the coral chrome on both the splash and the
-// main HUD without competing with the user's terminal theme.
+// main Sidekick without competing with the user's terminal theme.
 const (
 	brandCoral     = "#E84B30"
 	brandCoralSoft = "#FF7A55"
 	brandBg        = "#1A1612"
 )
 
-// Landing colors are anchored to the KIKAITE coral palette so the splash
+// Landing colors are anchored to the Melonite coral palette so the splash
 // reads as the same brand the marketing site uses. Dim 240/245 stay for
 // secondary text and OK/OFF bullets keep their existing green/grey so
 // state cues survive the recolor. Every inner style sets Background to
@@ -58,7 +58,7 @@ var (
 	styleLandingError    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(brandBg)).Bold(true)
 )
 
-// Landing is the start-of-session screen: HUD wordmark + version pill, the
+// Landing is the start-of-session screen: Sidekick wordmark + version pill, the
 // session metadata (working dir, socket path), and a verifier multi-select.
 // Confirming with enter quits the tea program with Confirmed()==true and
 // Selection() populated; esc/ctrl+c quits with Aborted()==true.
@@ -79,7 +79,7 @@ type Landing struct {
 }
 
 // NewLanding builds a Landing seeded from each verifier's Disabled flag, so
-// the picker reflects the persisted hud.yaml state and a hit-enter user gets
+// the picker reflects the persisted sidekick.yaml state and a hit-enter user gets
 // the same set they ran last session. Users can still toggle freely; on
 // confirm the resulting toggle state is mirrored back to yaml by the caller.
 func NewLanding(verifiers []verifier.Verifier, version, socketPath, cwd string) Landing {
@@ -142,7 +142,7 @@ func (l Landing) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // Verifiers returns the full input set in input order, with each entry's
 // Disabled flag rewritten to reflect the landing toggle state. Disabled rows
-// are kept (not filtered) so the runner can still surface them in the HUD
+// are kept (not filtered) so the runner can still surface them in the Sidekick
 // footer where the user can re-enable them mid-session without restarting.
 // Empty when the user aborted.
 func (l Landing) Verifiers() []verifier.Verifier {
@@ -242,7 +242,7 @@ func (l Landing) View() string {
 // a dedicated row means the 6 banner rows stay uniform width and clip
 // together when the terminal is narrower than the wordmark.
 func renderLandingBanner(innerW int, version string) string {
-	lines := strings.Split(hudBanner, "\n")
+	lines := strings.Split(sidekickBanner, "\n")
 	var b strings.Builder
 	if version != "" {
 		pill := "v" + version
@@ -285,9 +285,9 @@ func renderLandingVerifierRow(v verifier.Verifier, enabled, selected bool, nameW
 }
 
 // landingInnerWidth picks the content width for the landing modal. Sized
-// generously so the "KIKAITE HUD" banner (~76 cells) doesn't wrap on typical
-// terminals; floored at 84 to keep that banner intact and capped at 110 so
-// the modal still feels framed on ultra-wide terminals.
+// generously so the "Sidekick" banner (~56 cells) doesn't wrap on typical
+// terminals; floored at 84 to keep the banner framed comfortably and
+// capped at 110 so the modal still feels framed on ultra-wide terminals.
 func landingInnerWidth(termWidth int) int {
 	target := min(max(termWidth*8/10, 84), 110)
 	chrome := styleLandingBorder.GetHorizontalFrameSize()

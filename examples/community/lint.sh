@@ -5,7 +5,7 @@
 #
 # As a `binary` verifier, this script is scored purely on exit code:
 # exit 0 = distance 0 (lint clean), non-zero = distance 1 (lint failed).
-# Use the `binary` verifier type in hud.yaml; do not emit JSON yourself.
+# Use the `binary` verifier type in sidekick.yaml; do not emit JSON yourself.
 
 set -euo pipefail
 

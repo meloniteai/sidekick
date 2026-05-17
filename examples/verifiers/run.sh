@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# run.sh — HUD verifier wrapper backed by a SKILL.md persona.
+# run.sh — Sidekick verifier wrapper backed by a SKILL.md persona.
 #
-# Usage (from hud.yaml): command: ["./verifiers/run.sh", "<persona>"]
+# Usage (from sidekick.yaml): command: ["./verifiers/run.sh", "<persona>"]
 #
-# Reads the standard HUD session JSON on stdin, loads
+# Reads the standard Sidekick session JSON on stdin, loads
 # ../skills/<persona>/SKILL.md as the rubric body, exports the session
 # base ref so the persona's `git diff $SESSION_BASE_REF` calls resolve,
 # asks `claude -p` to score cumulative session work against the goal,
@@ -71,7 +71,7 @@ Active goal: ${goal:-<no goal set>}
 Session base ref (\$SESSION_BASE_REF): ${session_base_ref:-<unset; fall back to HEAD>}
 Recently changed files (last write batch, for orientation only — score the cumulative diff, not this list): ${files:-<none>}
 
-## Output contract (HUD verifier mode)
+## Output contract (Sidekick verifier mode)
 
 After your evaluation, output exactly one final line of JSON, with no
 other text on that line:

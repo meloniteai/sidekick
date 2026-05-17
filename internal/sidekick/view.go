@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"fmt"
@@ -8,9 +8,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/uriahlevy/hud/internal/daemon"
-	"github.com/uriahlevy/hud/internal/gitstats"
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/gitstats"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 // brandBgColor is the lipgloss.Color for brandBg, hoisted into a var so
@@ -74,9 +74,9 @@ var (
 	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28")).Background(brandBgColor)
 	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor).Padding(0, 1).Foreground(lipgloss.Color("252"))
 	// styleHeaderBrand mirrors styleLandingBanner from the splash: the
-	// in-header ANSI-shadow "HUD" wordmark is rendered with the same
+	// in-header ANSI-shadow "Sidekick" wordmark is rendered with the same
 	// solid coral on warm graphite, bold, no animation — so the splash
-	// and the main HUD share one wordmark identity.
+	// and the main Sidekick share one wordmark identity.
 	styleHeaderBrand = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor).Bold(true)
 	styleListBorder  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor)
 	styleListTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft)).Background(brandBgColor)
@@ -281,22 +281,33 @@ func defaultString(s, fallback string) string {
 	return s
 }
 
-// hudHeaderBanner is the compact ANSI-shadow "HUD" wordmark stamped on
-// the right side of the main HUD header. Same chunky block aesthetic as
-// the splash banner for brand continuity, but trimmed to the three-letter
-// short form and compressed to 4 rows so it sits inside the existing
-// header band without adding vertical space (and so the view still fits
-// the classic 80×24 terminal). The splash keeps the full 6-row
-// "KIKAITE HUD" since it owns its own screen.
-const hudHeaderBanner = `██╗  ██╗██╗   ██╗██████╗
-███████║██║   ██║██║  ██║
-██║  ██║╚██████╔╝██████╔╝
-╚═╝  ╚═╝ ╚═════╝ ╚═════╝ `
+// sidekickHeaderBanner is the ANSI-Shadow "SK" monogram stamped on the
+// right side of the main header. Same font and 3D shadow aesthetic as
+// the splash's full "SIDEKICK" wordmark — just the two-letter short
+// form so the metadata column to its left still fits the longest
+// verifier/timestamp line on the classic 80×24 terminal.
+//
+// All 6 rows of the glyph are kept (not a 4-row slice): S and K have
+// load-bearing features in both the top bar / upper diagonal and the
+// bottom bar, so any partial slice shears the letters. renderHeader
+// pairs banner rows with metadata rows by index and pads the left
+// column with blanks past the end of the metadata — so the box ends
+// up 6 banner rows + 1 shortcut row tall.
+//
+// Each row is exactly 16 visible cells; the trailing whitespace on
+// rows 3–4 (the K column) is load-bearing — without it those rows
+// shrink to 15 cells and the right edge shears.
+const sidekickHeaderBanner = "███████╗██╗  ██╗\n" +
+	"██╔════╝██║ ██╔╝\n" +
+	"███████╗█████╔╝ \n" +
+	"╚════██║██╔═██╗ \n" +
+	"███████║██║  ██╗\n" +
+	"╚══════╝╚═╝  ╚═╝"
 
 // renderHeader builds the framed metadata box at the top of the screen.
 // The box stretches to the same total width as the grid so it visually
 // anchors over the compass below. The right column hosts the ANSI-shadow
-// "HUD" wordmark — same font as the splash banner, just the short form so
+// "Sidekick" wordmark — same font as the splash banner, the 4-row form so
 // it fits beside the telemetry without dominating. Sized to fit on
 // 80-cell-or-wider terminals; on narrower widths lipgloss clips the
 // banner from the right rather than spawning a separate fallback.
@@ -311,7 +322,7 @@ func (m Model) renderHeader(totalW int) string {
 		ver = "dev"
 	}
 
-	bannerLines := strings.Split(hudHeaderBanner, "\n")
+	bannerLines := strings.Split(sidekickHeaderBanner, "\n")
 	brandW := 0
 	for _, ln := range bannerLines {
 		if w := lipgloss.Width(ln); w > brandW {
@@ -336,17 +347,36 @@ func (m Model) renderHeader(totalW int) string {
 	// Compose rows manually: pad each metadata line to leftW, lay down
 	// the gutter, then stamp the banner line styled coral. Banner lines
 	// are padded to brandW so trailing spaces stay inside the brand bg.
+	//
+	// When the banner is taller than the metadata column (the 6-row
+	// ANSI-Shadow "SK" against a 3–4-row metadata stack), the shortcut
+	// row rides on the *last* banner row instead of being appended as
+	// its own line — otherwise the empty banner-rows-3-to-N leave an
+	// awkward gap between goal: and the keys row. The hoisted shortcut
+	// is allowed to consume the gutter (it abuts the banner glyph
+	// directly) so the full keys list survives at the 100-cell width
+	// the tests pin.
+	hoistShortcut := len(bannerLines) > len(leftLines)
 	rows := make([]string, len(bannerLines))
 	for i, bl := range bannerLines {
 		var left string
-		if i < len(leftLines) {
+		leftCellW := leftW
+		gutterW := gutter
+		switch {
+		case i < len(leftLines):
 			left = leftLines[i]
+		case hoistShortcut && i == len(bannerLines)-1:
+			leftCellW = max(contentW-brandW, 0)
+			gutterW = 0
+			left = m.renderHeaderShortcutRow(leftCellW)
 		}
-		left = padToWidth(left, leftW)
+		left = padToWidth(left, leftCellW)
 		banner := styleHeaderBrand.Render(padBannerLine(bl, brandW))
-		rows[i] = left + strings.Repeat(" ", gutter) + banner
+		rows[i] = left + strings.Repeat(" ", gutterW) + banner
 	}
-	rows = append(rows, m.renderHeaderShortcutRow(contentW))
+	if !hoistShortcut {
+		rows = append(rows, m.renderHeaderShortcutRow(contentW))
+	}
 	return styleHeaderBox.Width(styleW).Render(reanchorBrandBg(strings.Join(rows, "\n")))
 }
 
@@ -421,7 +451,7 @@ func (m Model) headerTelemetryRows(colW int) []string {
 	goal := m.snapshot.Goal
 	goalRow := styleGoalLbl.Render("goal: ")
 	if goal == "" {
-		goalRow += styleReason.Render("(none — submit a prompt or run `hud goal ...`)")
+		goalRow += styleReason.Render("(none — submit a prompt or run `sidekick goal ...`)")
 	} else {
 		goalRow += truncate(goal, colW-len("goal: ")-2)
 	}

@@ -1,4 +1,4 @@
-// Package config loads `hud.yaml` from disk and converts entries into
+// Package config loads `sidekick.yaml` from disk and converts entries into
 // runtime verifier.Verifier instances.
 package config
 
@@ -12,11 +12,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/uriahlevy/hud/internal/fetch"
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/fetch"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
-// File is the on-disk shape of `hud.yaml`.
+// File is the on-disk shape of `sidekick.yaml`.
 type File struct {
 	GoalSource string `yaml:"goal_source"` // "prompt" | "manual"; informational only for MVP
 	// QuietPeriod sets a minimum gap between verifier batch runs across all
@@ -62,9 +62,9 @@ type PermissionsSpec struct {
 }
 
 // SourceSpec describes where a verifier's script or skill was fetched from.
-// Populated automatically by `hud verifier add`; can also be authored by
-// hand for self-documenting hud.yaml files. The sha256 is mandatory for
-// remote sources — HUD refuses to load a remote script whose hash drifts.
+// Populated automatically by `sidekick verifier add`; can also be authored by
+// hand for self-documenting sidekick.yaml files. The sha256 is mandatory for
+// remote sources — Sidekick refuses to load a remote script whose hash drifts.
 type SourceSpec struct {
 	URL    string `yaml:"url,omitempty"`
 	Ref    string `yaml:"ref,omitempty"`
@@ -106,22 +106,22 @@ var validDirections = map[string]bool{
 	"S": true, "SW": true, "W": true, "NW": true,
 }
 
-// Load reads hud.yaml from `path`. If `path` is empty, it walks upward from
-// cwd looking for `hud.yaml`. Returns (nil, os.ErrNotExist) if not found.
+// Load reads sidekick.yaml from `path`. If `path` is empty, it walks upward from
+// cwd looking for `sidekick.yaml`. Returns (nil, os.ErrNotExist) if not found.
 func Load(path string) (*File, string, error) {
 	return LoadFrom(path, "")
 }
 
-// LoadFrom reads hud.yaml from `path`, or walks upward from startDir when
-// path is empty. When no project hud.yaml is found we fall back to the
-// global config at GlobalPath (typically $HOME/.hud/hud.yaml) so users
+// LoadFrom reads sidekick.yaml from `path`, or walks upward from startDir when
+// path is empty. When no project sidekick.yaml is found we fall back to the
+// global config at GlobalPath (typically $HOME/.sidekick/sidekick.yaml) so users
 // can install verifiers once and see them in every repo. Project files
-// shadow the global completely — no merging — so a project hud.yaml is a
+// shadow the global completely — no merging — so a project sidekick.yaml is a
 // hard override.
 func LoadFrom(path, startDir string) (*File, string, error) {
 	if path == "" {
 		var err error
-		path, err = findUpwardsFrom("hud.yaml", startDir)
+		path, err = findUpwardsFrom("sidekick.yaml", startDir)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
 				return nil, "", err
@@ -147,21 +147,21 @@ func LoadFrom(path, startDir string) (*File, string, error) {
 	return &f, path, nil
 }
 
-// GlobalPath returns the location of the global hud.yaml — the one HUD
+// GlobalPath returns the location of the global sidekick.yaml — the one Sidekick
 // reads when no project-level file is found by walking upward from cwd.
-// Defaults to $HOME/.hud/hud.yaml; tests can override with $HUD_GLOBAL_CONFIG.
+// Defaults to $HOME/.sidekick/sidekick.yaml; tests can override with $SIDEKICK_GLOBAL_CONFIG.
 func GlobalPath() (string, error) {
-	if p := os.Getenv("HUD_GLOBAL_CONFIG"); p != "" {
+	if p := os.Getenv("SIDEKICK_GLOBAL_CONFIG"); p != "" {
 		return p, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".hud", "hud.yaml"), nil
+	return filepath.Join(home, ".sidekick", "sidekick.yaml"), nil
 }
 
-// Save writes f back to path as hud.yaml.
+// Save writes f back to path as sidekick.yaml.
 func Save(path string, f *File) error {
 	raw, err := yaml.Marshal(f)
 	if err != nil {
@@ -173,7 +173,7 @@ func Save(path string, f *File) error {
 	return nil
 }
 
-// SetVerifierDisabled persists a verifier's disabled flag in hud.yaml.
+// SetVerifierDisabled persists a verifier's disabled flag in sidekick.yaml.
 func SetVerifierDisabled(path, name string, disabled bool) error {
 	f, path, err := Load(path)
 	if err != nil {
@@ -250,7 +250,7 @@ func (f *File) ResolveSessionIdleTimeout() (time.Duration, bool, error) {
 // minima) without touching the filesystem, trust store, or fetch cache.
 // Used by the in-TUI create wizard, where a user may legitimately reference
 // a skill or script they are about to create — the existence check still
-// fires at `hud start` load time via Resolve.
+// fires at `sidekick start` load time via Resolve.
 func (f *File) ValidateStructural() error {
 	if len(f.Verifiers) == 0 {
 		return errors.New("no verifiers configured")
@@ -490,7 +490,7 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 
 // remoteExt picks an extension hint for the cache filename based on the
 // verifier kind. The extension is purely cosmetic — fetch is content-
-// addressed by sha256 — but it makes `~/.hud/cache/` browsable.
+// addressed by sha256 — but it makes `~/.sidekick/cache/` browsable.
 func remoteExt(kind string, vs VerifierSpec) string {
 	switch kind {
 	case verifier.TypeAgent:
@@ -522,7 +522,7 @@ func checkSkillFile(verifierName, path string) error {
 // shell out to system tools, and validating them would reject any host
 // that uses a different executable name.
 //
-// raw is the original string from hud.yaml; resolved is the cwd-relative
+// raw is the original string from sidekick.yaml; resolved is the cwd-relative
 // or home-relative form after resolveLocalPath.
 func checkLocalScript(verifierName, raw, resolved string) error {
 	if !looksLikeLocalScript(raw) {
@@ -554,7 +554,7 @@ func resolveCommand(configDir string, in []string) []string {
 	return cmd
 }
 
-// ResolveLocalPath resolves the local path forms accepted by hud.yaml against
+// ResolveLocalPath resolves the local path forms accepted by sidekick.yaml against
 // configDir. Non-local command names are returned unchanged.
 func ResolveLocalPath(configDir, p string) string {
 	if strings.HasPrefix(p, "~/") {

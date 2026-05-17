@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func TestVerifyEchoScript(t *testing.T) {
@@ -31,7 +31,7 @@ func TestVerifyEchoScript(t *testing.T) {
 func TestVerifyCommandReceivesVerifierEnv(t *testing.T) {
 	v := Verifier{
 		Name:    "Env",
-		Command: []string{"sh", "-c", `cat >/dev/null; printf '{"distance": 0.0, "reason": "%s/%s"}\n' "$SESSION_BASE_REF" "$HUD_VERIFIER"`},
+		Command: []string{"sh", "-c", `cat >/dev/null; printf '{"distance": 0.0, "reason": "%s/%s"}\n' "$SESSION_BASE_REF" "$SIDEKICK_VERIFIER"`},
 	}
 	r, err := v.Verify(context.Background(), Session{SessionBaseRef: "abc123"})
 	if err != nil {
@@ -199,7 +199,7 @@ func TestAgentCommandClaudeAndCodex(t *testing.T) {
 }
 
 // TestAgentCommandClaudeAllowedToolsUnion asserts the per-verifier
-// allowed_tools declared in hud.yaml are appended to the hardcoded
+// allowed_tools declared in sidekick.yaml are appended to the hardcoded
 // baseline rather than replacing it, and that duplicates are deduped so
 // the command line stays clean.
 func TestAgentCommandClaudeAllowedToolsUnion(t *testing.T) {

@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/uriahlevy/hud/internal/gitstats"
+	"github.com/meloniteai/sidekick/internal/gitstats"
 )
 
 // GitPanel is the ctrl+g modal that lists the per-file workspace diff.

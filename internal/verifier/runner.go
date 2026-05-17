@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/daemon"
-	"github.com/uriahlevy/hud/internal/ipc"
-	"github.com/uriahlevy/hud/internal/transcript"
+	"github.com/meloniteai/sidekick/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/transcript"
 )
 
 // transcriptTurns is the number of most-recent user/assistant messages we
@@ -16,7 +16,7 @@ import (
 const transcriptTurns = 12
 
 // historyDepth is how many recent results we retain per verifier in memory.
-// Sized for "is this verifier flaky" trend reads via hud_explain. Lost on
+// Sized for "is this verifier flaky" trend reads via sidekick_explain. Lost on
 // daemon restart — persistence is a v0.2 concern.
 const historyDepth = 32
 
@@ -89,7 +89,7 @@ func NewRunner(parent context.Context, state *daemon.State, verifiers []Verifier
 	return r
 }
 
-// ReplaceVerifiers updates the runner and state after hud.yaml is edited at
+// ReplaceVerifiers updates the runner and state after sidekick.yaml is edited at
 // runtime. Same-named verifier status is preserved by daemon.State.
 func (r *Runner) ReplaceVerifiers(verifiers []Verifier) {
 	r.mu.Lock()
@@ -153,7 +153,7 @@ func verifierConfig(v Verifier) ipc.VerifierConfig {
 
 // SetQuietPeriod overrides the minimum gap between batch starts. Pass 0 to
 // keep the existing value (callers wiring config can pass through whatever
-// hud.yaml resolved without branching on "unset").
+// sidekick.yaml resolved without branching on "unset").
 func (r *Runner) SetQuietPeriod(d time.Duration) {
 	if d <= 0 {
 		return

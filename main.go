@@ -6,17 +6,17 @@ import (
 	"os"
 	"strings"
 
-	"github.com/uriahlevy/hud/cmd"
+	"github.com/meloniteai/sidekick/cmd"
 )
 
 //go:embed version
 var versionFile string
 
-//go:embed skills/hud/SKILL.md
-var hudSkillBody []byte
+//go:embed skills/sidekick/SKILL.md
+var sidekickSkillBody []byte
 
 func main() {
-	if err := cmd.New(strings.TrimSpace(versionFile), hudSkillBody).Execute(); err != nil {
+	if err := cmd.New(strings.TrimSpace(versionFile), sidekickSkillBody).Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

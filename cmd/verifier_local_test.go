@@ -9,19 +9,19 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/uriahlevy/hud/internal/config"
+	"github.com/meloniteai/sidekick/internal/config"
 )
 
-// isolateGlobalConfig points HUD_GLOBAL_CONFIG at a path inside dir that
+// isolateGlobalConfig points SIDEKICK_GLOBAL_CONFIG at a path inside dir that
 // won't exist, so config.Load can't fall back to the user's real
-// ~/.hud/hud.yaml when no local hud.yaml is present.
+// ~/.sidekick/sidekick.yaml when no local sidekick.yaml is present.
 func isolateGlobalConfig(t *testing.T, dir string) {
 	t.Helper()
-	t.Setenv("HUD_GLOBAL_CONFIG", filepath.Join(dir, "no-global.yaml"))
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", filepath.Join(dir, "no-global.yaml"))
 }
 
 // drive runs the cobra add command with --local against a scripted stdin in
-// a temp dir. Returns the resulting hud.yaml (parsed) and the captured
+// a temp dir. Returns the resulting sidekick.yaml (parsed) and the captured
 // stdout, so tests can assert on both the YAML state and what the user saw.
 func drive(t *testing.T, scriptedStdin string, args ...string) (*config.File, string) {
 	t.Helper()
@@ -47,13 +47,13 @@ func drive(t *testing.T, scriptedStdin string, args ...string) (*config.File, st
 		t.Fatalf("execute: %v\n--- output ---\n%s", err, out.String())
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, "hud.yaml"))
+	raw, err := os.ReadFile(filepath.Join(dir, "sidekick.yaml"))
 	if err != nil {
-		t.Fatalf("read hud.yaml: %v", err)
+		t.Fatalf("read sidekick.yaml: %v", err)
 	}
 	var f config.File
 	if err := yaml.Unmarshal(raw, &f); err != nil {
-		t.Fatalf("unmarshal hud.yaml: %v\nraw=%s", err, raw)
+		t.Fatalf("unmarshal sidekick.yaml: %v\nraw=%s", err, raw)
 	}
 	return &f, out.String()
 }
@@ -184,7 +184,7 @@ func TestLocalAddWizardBinaryWithPermissions(t *testing.T) {
 }
 
 func TestLocalAddWizardRejectsDuplicateName(t *testing.T) {
-	// Pre-populate hud.yaml with an existing verifier.
+	// Pre-populate sidekick.yaml with an existing verifier.
 	dir := t.TempDir()
 	isolateGlobalConfig(t, dir)
 	cwd, _ := os.Getwd()
@@ -200,7 +200,7 @@ verifiers:
     command:
       - ./verifiers/existing.sh
 `)
-	if err := os.WriteFile(filepath.Join(dir, "hud.yaml"), preExisting, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "sidekick.yaml"), preExisting, 0o600); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
 
@@ -230,7 +230,7 @@ verifiers:
 		t.Errorf("expected duplicate-name error in output, got:\n%s", out.String())
 	}
 
-	raw, _ := os.ReadFile(filepath.Join(dir, "hud.yaml"))
+	raw, _ := os.ReadFile(filepath.Join(dir, "sidekick.yaml"))
 	var f config.File
 	if err := yaml.Unmarshal(raw, &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -273,8 +273,8 @@ func TestLocalAddWizardAbortOnConfirmNo(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "aborted") {
 		t.Fatalf("expected aborted error, got err=%v output=%s", err, out.String())
 	}
-	if _, err := os.Stat(filepath.Join(dir, "hud.yaml")); !os.IsNotExist(err) {
-		t.Errorf("hud.yaml should not have been written on abort: err=%v", err)
+	if _, err := os.Stat(filepath.Join(dir, "sidekick.yaml")); !os.IsNotExist(err) {
+		t.Errorf("sidekick.yaml should not have been written on abort: err=%v", err)
 	}
 }
 

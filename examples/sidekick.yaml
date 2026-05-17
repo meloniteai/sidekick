@@ -1,4 +1,4 @@
-# Example hud.yaml — drop into your project root and edit to taste.
+# Example sidekick.yaml — drop into your project root and edit to taste.
 #
 # Verifiers can be:
 #   - type: llm     loads a SKILL.md rubric and runs claude/codex for you
