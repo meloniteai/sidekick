@@ -93,8 +93,9 @@ triggers HUD after `apply_patch` plus Claude-style write/edit tool names.
 
 ## Configure verifiers
 
-Drop a `hud.yaml` next to your code. The shipped example registers four
-native agent verifiers that load bundled `SKILL.md` rubrics and run `claude -p`:
+Drop a `hud.yaml` next to your code. The shipped example registers native
+agent verifiers that load bundled `SKILL.md` rubrics and run `claude -p`
+or `codex exec`:
 
 ```yaml
 goal_source: prompt
@@ -132,6 +133,15 @@ verifiers:
       model: haiku
       thinking: low
       skill: ./skills/deployment/SKILL.md
+  - name: AGENTS.MD
+    type: agent
+    direction: NW
+    timeout: 180s
+    llm:
+      agent: codex
+      model: gpt-5.5
+      thinking: low
+      skill: ./skills/agents-md/SKILL.md
 ```
 
 For simple pass/fail checks, use `type: binary`; exit code `0` maps to
@@ -318,7 +328,7 @@ hud/
 │   ├── fetch/                    content-addressed remote artefact cache
 │   ├── trust/                    trust-on-first-use ledger (~/.hud/trust.json)
 │   └── config/                   hud.yaml loader (validates at load, fetches remote sources)
-├── skills/                       bundled SKILL.md rubrics: architect, test, security, deployment, hud
+├── skills/                       bundled SKILL.md rubrics: architect, test, security, deployment, agents-md, hud
 └── examples/
     ├── hud.yaml                  reference config
     ├── claude-settings.json      Claude Code hook + MCP wiring

@@ -100,7 +100,7 @@ hud/
 │   ├── trust/                 # Trust-on-first-use ledger (~/.hud/trust.json)
 │   ├── transcript/            # Tails Claude Code session JSONL for verifier context
 │   └── menubar/               # macOS menu bar app (darwin-specific)
-├── skills/                    # Bundled SKILL.md rubrics: architect, test, security, deployment, hud
+├── skills/                    # Bundled SKILL.md rubrics: architect, test, security, deployment, agents-md, hud
 ├── verifiers/                 # In-tree example scripts: coverage.sh, run.sh, dummy.sh
 ├── examples/                  # Reference hud.yaml, claude-settings.json, codex-hooks.json, community verifiers
 └── version                    # Single-line version string (embed at build)

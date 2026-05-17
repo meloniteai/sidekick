@@ -72,3 +72,12 @@ verifiers:
       model: haiku
       thinking: low
       skill: ./skills/deployment/SKILL.md
+  - name: AGENTS.MD
+    type: agent
+    direction: NW
+    timeout: 180s
+    llm:
+      agent: codex
+      model: gpt-5.5
+      thinking: low
+      skill: ./skills/agents-md/SKILL.md
