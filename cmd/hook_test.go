@@ -73,7 +73,7 @@ func TestHookFilesStringifiedArguments(t *testing.T) {
 
 func TestForwardWriteReachesDaemon(t *testing.T) {
 	h := &captureHandler{writes: make(chan string, 1)}
-	sock := t.TempDir() + "/hud.sock"
+	sock := shortSockPath(t)
 	state := daemon.NewState()
 	if cwd, err := os.Getwd(); err == nil {
 		if anchor, ok := daemon.ResolveAnchor(cwd); ok {
@@ -109,7 +109,7 @@ func TestForwardWriteReachesDaemon(t *testing.T) {
 func TestForwardWriteRoutesAbsoluteWorktreeFile(t *testing.T) {
 	trunk, wt := testRepoWithWorktree(t)
 	h := &worktreeCaptureHandler{writes: make(chan routedWrite, 1)}
-	sock := t.TempDir() + "/hud.sock"
+	sock := shortSockPath(t)
 	state := daemon.NewState()
 	state.SetSessionWorktree(trunk)
 	registry := daemon.NewRegistry(state, func(anchor daemon.SessionAnchor) (*daemon.State, error) {
@@ -176,6 +176,19 @@ func (h *worktreeCaptureHandler) OnWrite(s *daemon.State, file string) {
 	h.writes <- routedWrite{worktree: s.SessionWorktree(), file: file}
 }
 func (h *worktreeCaptureHandler) OnGoal(_ *daemon.State, _ string) {}
+
+// shortSockPath returns a temp socket path that fits within the macOS
+// sun_path limit (~104 bytes), which t.TempDir() can exceed when the
+// test name is long.
+func shortSockPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "huds-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "hud.sock")
+}
 
 func testRepoWithWorktree(t *testing.T) (string, string) {
 	t.Helper()
