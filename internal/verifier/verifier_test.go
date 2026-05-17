@@ -174,6 +174,19 @@ func TestAgentCommandClaudeAndCodex(t *testing.T) {
 			t.Fatalf("claude args missing %q: %#v", want, claude)
 		}
 	}
+	// The runtime prompt mandates "git -C $SESSION_WORKTREE …" form, so the
+	// allowlist must accept it explicitly — claude's prefix matcher won't
+	// unify "git -C path diff" with "git diff:*".
+	var allowed string
+	for i, a := range claude {
+		if a == "--allowedTools" && i+1 < len(claude) {
+			allowed = claude[i+1]
+			break
+		}
+	}
+	if !strings.Contains(allowed, "Bash(git -C:*)") {
+		t.Fatalf("allowlist missing Bash(git -C:*) entry: %s", allowed)
+	}
 
 	codex, err := agentCommand(AgentConfig{Agent: "codex", Model: "gpt-5.5", Thinking: "high"})
 	if err != nil {

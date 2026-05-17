@@ -272,7 +272,14 @@ func runSubprocess(ctx context.Context, argv []string, stdin []byte, extraEnv []
 		cmd.Dir = dir
 	}
 	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
+		env := os.Environ()
+		// macOS git calls confstr(_CS_DARWIN_USER_TEMP_DIR) when TMPDIR is unset
+		// and intermittently fails with EIO, polluting stderr with a benign
+		// warning. Setting TMPDIR explicitly skips the failing syscall.
+		if os.Getenv("TMPDIR") == "" {
+			env = append(env, "TMPDIR="+os.TempDir())
+		}
+		cmd.Env = append(env, extraEnv...)
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -612,6 +619,11 @@ func agentCommand(c AgentConfig) ([]string, error) {
 		args = append(args,
 			"--allowedTools",
 			strings.Join([]string{
+				// The runtime prompt mandates "git -C $SESSION_WORKTREE …" so
+				// the verifier reads the session worktree, not the daemon cwd.
+				// Without this entry claude's prefix-match allowlist blocks
+				// every git command the prompt asks for.
+				"Bash(git -C:*)",
 				"Bash(git diff:*)",
 				"Bash(git diff)",
 				"Bash(git status:*)",
