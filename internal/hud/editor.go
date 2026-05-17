@@ -109,7 +109,7 @@ type EditWizard struct {
 func NewEditWizard(configPath string) EditWizard {
 	w := EditWizard{configPath: configPath, selected: -1}
 	if configPath == "" {
-		w.errMsg = "no hud.yaml is loaded; demo verifiers cannot be edited"
+		w.errMsg = "no hud.yaml is loaded; run `hud verifier add` to create one"
 		return w
 	}
 	f, path, err := config.Load(configPath)

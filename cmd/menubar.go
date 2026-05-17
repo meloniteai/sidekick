@@ -48,7 +48,7 @@ func newMenubarCmd() *cobra.Command {
 			} else if set {
 				sessionIdleTimeout = idle
 			}
-			if len(verifiers) < hudtui.MinSelected {
+			if loadedConfigPath != "" && len(verifiers) < hudtui.MinSelected {
 				return fmt.Errorf("at least %d verifiers must be configured (found %d in %s)",
 					hudtui.MinSelected, len(verifiers), source)
 			}
@@ -107,6 +107,6 @@ func newMenubarCmd() *cobra.Command {
 			return runErr
 		},
 	}
-	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml (default: nearest hud.yaml above cwd, else demo verifiers)")
+	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml (default: nearest hud.yaml above cwd)")
 	return cmd
 }

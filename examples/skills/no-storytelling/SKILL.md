@@ -19,15 +19,16 @@ documentation.
 
 ## How to evaluate
 
-1. `$SESSION_BASE_REF` is the commit SHA `HEAD` was at when `hud start`
-   ran. Read it from the environment; if unset, fall back to `HEAD`.
-2. Run `git diff $SESSION_BASE_REF --stat` to find touched code files.
-3. Run `git diff $SESSION_BASE_REF` and inspect added or modified
-   comments in code. For large diffs, focus on hunks containing comment
-   markers such as `//`, `/*`, `#`, `--`, `<!--`, or language-specific
-   doc-comment forms.
-4. Run `git status --porcelain` for untracked files; read new code
-   files that may contain comments.
+1. Use the session worktree and base ref from the runtime prompt
+   (`$SESSION_WORKTREE`, `$SESSION_BASE_REF`).
+2. Run `git -C $SESSION_WORKTREE diff $SESSION_BASE_REF --stat` to
+   find touched code files.
+3. Run `git -C $SESSION_WORKTREE diff $SESSION_BASE_REF` and inspect
+   added or modified comments in code. For large diffs, focus on hunks
+   containing comment markers such as `//`, `/*`, `#`, `--`, `<!--`, or
+   language-specific doc-comment forms.
+4. Run `git -C $SESSION_WORKTREE status --porcelain` for untracked
+   files; read new code files that may contain comments.
 5. Score the **comment posture**, not the implementation. If the code
    has no added or changed comments, the score should usually be 0.00.
 

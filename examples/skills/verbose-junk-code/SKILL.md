@@ -18,14 +18,15 @@ be for the behaviour it implements.
 
 ## How to evaluate
 
-1. `$SESSION_BASE_REF` is the commit SHA `HEAD` was at when `hud start`
-   ran. Read it from the environment; if unset, fall back to `HEAD`.
-2. Run `git diff $SESSION_BASE_REF --stat` first to size the change.
-3. Run `git diff $SESSION_BASE_REF` to read cumulative session
-   changes. For very large diffs, start with source files and then
-   follow tests only when they explain intent.
-4. Run `git status --porcelain` to find untracked files; read any new
-   source files in full.
+1. Use the session worktree and base ref from the runtime prompt
+   (`$SESSION_WORKTREE`, `$SESSION_BASE_REF`).
+2. Run `git -C $SESSION_WORKTREE diff $SESSION_BASE_REF --stat` first
+   to size the change.
+3. Run `git -C $SESSION_WORKTREE diff $SESSION_BASE_REF` to read
+   cumulative session changes. For very large diffs, start with source
+   files and then follow tests only when they explain intent.
+4. Run `git -C $SESSION_WORKTREE status --porcelain` to find untracked
+   files; read any new source files in full.
 5. Score the **implementation shape**, not the amount of code. A large
    direct change can be clean; a tiny helper can be junk if it adds an
    unnecessary concept.

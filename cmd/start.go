@@ -67,7 +67,7 @@ func (m *sessionRuntimeManager) NewSession(anchor daemon.SessionAnchor) (*daemon
 	if err != nil {
 		return nil, err
 	}
-	if len(verifiers) < hudtui.MinSelected {
+	if loadedConfigPath != "" && len(verifiers) < hudtui.MinSelected {
 		return nil, fmt.Errorf("at least %d verifiers must be configured (found %d)", hudtui.MinSelected, len(verifiers))
 	}
 	state := daemon.NewState()
@@ -121,18 +121,6 @@ func (m *sessionRuntimeManager) StopAll() {
 	}
 }
 
-// demoVerifiers is what `hud start` instantiates when no hud.yaml is found.
-// They run the bundled coverage.sh-style stub script so the user gets a live
-// HUD without writing any config first. Replaced by config loading in milestone 4.
-func demoVerifiers() []verifier.Verifier {
-	return []verifier.Verifier{
-		{Name: "Architect", Direction: "N", Command: []string{"sh", "-c", "echo '{\"distance\":0.4,\"reason\":\"placeholder\"}'"}},
-		{Name: "Test", Direction: "E", Command: []string{"sh", "-c", "echo '{\"distance\":0.5,\"reason\":\"placeholder\"}'"}},
-		{Name: "Security", Direction: "S", Command: []string{"sh", "-c", "echo '{\"distance\":0.6,\"reason\":\"placeholder\"}'"}},
-		{Name: "Deployment", Direction: "W", Command: []string{"sh", "-c", "echo '{\"distance\":0.7,\"reason\":\"placeholder\"}'"}},
-	}
-}
-
 func newStartCmd() *cobra.Command {
 	var headless bool
 	var configPath string
@@ -166,14 +154,14 @@ func newStartCmd() *cobra.Command {
 			} else if set {
 				sessionIdleTimeout = idle
 			}
-			if len(available) < hudtui.MinSelected {
+			if loadedConfigPath != "" && len(available) < hudtui.MinSelected {
 				return fmt.Errorf("at least %d verifiers must be configured (found %d in %s)",
 					hudtui.MinSelected, len(available), source)
 			}
 			fmt.Fprintf(os.Stderr, "[hud] verifiers: %s\n", source)
 
 			verifiers := available
-			if !headless {
+			if !headless && len(available) > 0 {
 				selected, err := runLanding(available, version, sock)
 				if err != nil {
 					return err
@@ -291,7 +279,7 @@ func newStartCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&headless, "headless", false, "run only the daemon (no TUI); useful for tests")
-	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml (default: nearest hud.yaml above cwd, else demo verifiers)")
+	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml (default: nearest hud.yaml above cwd)")
 	cmd.Flags().StringVar(&startGoal, "goal", "", "pin the session goal up-front; the agent's hud_set_goal calls become no-ops while this is set")
 	return cmd
 }
@@ -444,9 +432,10 @@ func captureSessionAnchor() (baseRef, worktree string, err error) {
 }
 
 // loadVerifiers returns runtime verifiers and the configured quiet period
-// from hud.yaml, falling back to the built-in demo set (and runtime default
-// quiet period) when no config exists. The returned string is a short
-// description of the source for logging.
+// from hud.yaml. When no hud.yaml is found, the returned slice is empty and
+// the returned config path is "" — callers boot vanilla and let the user
+// add verifiers via `hud verifier add` or the in-TUI editor. The returned
+// string is a short description of the source for logging.
 func loadVerifiers(configPath string) ([]verifier.Verifier, time.Duration, string, string, error) {
 	return loadVerifiersFor(configPath, "")
 }
@@ -454,7 +443,7 @@ func loadVerifiers(configPath string) ([]verifier.Verifier, time.Duration, strin
 func loadVerifiersFor(configPath, startDir string) ([]verifier.Verifier, time.Duration, string, string, error) {
 	f, path, err := config.LoadFrom(configPath, startDir)
 	if errors.Is(err, os.ErrNotExist) {
-		return demoVerifiers(), 0, "demo (no hud.yaml found)", "", nil
+		return nil, 0, "no hud.yaml found", "", nil
 	}
 	if err != nil {
 		return nil, 0, "", "", err
