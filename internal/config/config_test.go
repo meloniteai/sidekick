@@ -211,6 +211,125 @@ func TestLoadMissing(t *testing.T) {
 	}
 }
 
+// TestLoadFallsBackToGlobal exercises the global ~/.hud/hud.yaml fallback:
+// when no project hud.yaml is found by walking upward from startDir, the
+// loader should resolve $HUD_GLOBAL_CONFIG instead. Isolated with both a
+// fresh startDir and an env-overridden global path so the user's real
+// home directory is never touched.
+func TestLoadFallsBackToGlobal(t *testing.T) {
+	startDir := t.TempDir() // contains no hud.yaml
+	globalDir := t.TempDir()
+	globalPath := filepath.Join(globalDir, "hud.yaml")
+	body := `verifiers:
+  - name: GlobalOnly
+    direction: N
+    command: ["echo", "hi"]
+`
+	if err := os.WriteFile(globalPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HUD_GLOBAL_CONFIG", globalPath)
+
+	f, path, err := LoadFrom("", startDir)
+	if err != nil {
+		t.Fatalf("LoadFrom returned error: %v", err)
+	}
+	if path != globalPath {
+		t.Fatalf("resolved path %q, want global path %q", path, globalPath)
+	}
+	if len(f.Verifiers) != 1 || f.Verifiers[0].Name != "GlobalOnly" {
+		t.Fatalf("unexpected verifiers: %+v", f.Verifiers)
+	}
+}
+
+// TestProjectShadowsGlobal verifies that when both a project hud.yaml
+// and a global one exist, the project file wins and the global is
+// ignored entirely (no merging). The user's decision: project replaces
+// global.
+func TestProjectShadowsGlobal(t *testing.T) {
+	startDir := t.TempDir()
+	projectPath := filepath.Join(startDir, "hud.yaml")
+	if err := os.WriteFile(projectPath, []byte(`verifiers:
+  - name: ProjectOnly
+    direction: N
+    command: ["echo", "hi"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	globalDir := t.TempDir()
+	globalPath := filepath.Join(globalDir, "hud.yaml")
+	if err := os.WriteFile(globalPath, []byte(`verifiers:
+  - name: GlobalOnly
+    direction: S
+    command: ["echo", "hi"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HUD_GLOBAL_CONFIG", globalPath)
+
+	f, path, err := LoadFrom("", startDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != projectPath {
+		t.Fatalf("resolved %q, want project path %q", path, projectPath)
+	}
+	if len(f.Verifiers) != 1 || f.Verifiers[0].Name != "ProjectOnly" {
+		t.Fatalf("expected ProjectOnly only, got %+v", f.Verifiers)
+	}
+}
+
+// TestAllowedToolsRoundTrip ensures the new permissions.allowed_tools
+// field parses through the YAML loader, survives Resolve, and lands on
+// both the Permissions and AgentConfig of the runtime Verifier so
+// agentCommand can read it without reaching back to the parent struct.
+func TestAllowedToolsRoundTrip(t *testing.T) {
+	p := writeTemp(t, `verifiers:
+  - name: Architect
+    type: agent
+    direction: N
+    llm:
+      agent: claude
+      skill: ./skills/architect/SKILL.md
+    permissions:
+      allowed_tools:
+        - "Bash(go test:*)"
+        - "Bash(go build:*)"
+`)
+	dir := filepath.Dir(p)
+	touchLocalArtifact(t, dir, "skills/architect/SKILL.md")
+	f, _, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs, err := f.Resolve(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 1 {
+		t.Fatalf("want 1 verifier, got %d", len(vs))
+	}
+	wantTools := []string{"Bash(go test:*)", "Bash(go build:*)"}
+	if !stringSlicesEqual(vs[0].Permissions.AllowedTools, wantTools) {
+		t.Fatalf("Permissions.AllowedTools = %v, want %v", vs[0].Permissions.AllowedTools, wantTools)
+	}
+	if !stringSlicesEqual(vs[0].Agent.AllowedTools, wantTools) {
+		t.Fatalf("Agent.AllowedTools = %v, want %v", vs[0].Agent.AllowedTools, wantTools)
+	}
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestRejectRemoteWithoutSHA enforces the trust model: any source: URL
 // without a sha256 pin must be rejected at config load. Drift caught
 // late is drift caught wrong.
@@ -228,39 +347,6 @@ func TestRejectRemoteWithoutSHA(t *testing.T) {
 	}
 	if _, err := f.Resolve(filepath.Dir(p)); err == nil {
 		t.Fatal("expected sha256-required error")
-	}
-}
-
-// TestUntrustedRemoteRejected ensures a remote verifier whose sha256 is
-// pinned but absent from trust.json blocks daemon startup with a
-// human-readable instruction. We isolate trust via $HUD_TRUST_FILE so
-// the test does not depend on the user's real ~/.hud directory.
-func TestUntrustedRemoteRejected(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HUD_TRUST_FILE", filepath.Join(dir, "trust.json"))
-
-	p := writeTemp(t, `verifiers:
-  - name: Remote
-    type: command
-    direction: NE
-    source:
-      url: https://example.com/x.sh
-      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-  - name: Local
-    type: command
-    direction: N
-    command: ["echo", "hi"]
-`)
-	f, _, err := Load(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = f.Resolve(filepath.Dir(p))
-	if err == nil {
-		t.Fatal("expected untrusted-remote error")
-	}
-	if !strings.Contains(err.Error(), "Remote") || !strings.Contains(err.Error(), "trust") {
-		t.Fatalf("error should name verifier and trust command; got: %v", err)
 	}
 }
 

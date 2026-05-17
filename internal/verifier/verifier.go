@@ -95,22 +95,31 @@ type Verifier struct {
 	SHA256    string
 }
 
-// Permissions is the advisory permission declaration carried with each
-// verifier. v0.1 surfaces these in the TUI on first run for trust-on-first-use;
-// future versions may map them onto sandbox-exec / landlock for enforcement.
+// Permissions is the permission declaration carried with each verifier.
+// Network/Filesystem/Env are advisory in v0.1 (surfaced in the TUI for
+// human review; future versions may enforce via sandbox-exec / landlock).
+// AllowedTools is enforced for the Claude agent: entries are appended to
+// the hardcoded baseline list at spawn time so verifier authors can widen
+// what their subprocess is allowed to call without losing the safe
+// defaults.
 type Permissions struct {
-	Network    bool
-	Filesystem string // "read-only" | "read-write" | "none"
-	Env        []string
+	Network      bool
+	Filesystem   string // "read-only" | "read-write" | "none"
+	Env          []string
+	AllowedTools []string
 }
 
-// AgentConfig configures a native agent-backed verifier.
+// AgentConfig configures a native agent-backed verifier. AllowedTools
+// mirrors Permissions.AllowedTools — copied during config.Resolve so
+// agentCommand (which only sees AgentConfig) can honour it without having
+// to reach back to the parent Verifier.
 type AgentConfig struct {
-	Agent    string
-	Model    string
-	Thinking string
-	Skill    string
-	Custom   CustomAgent
+	Agent        string
+	Model        string
+	Thinking     string
+	Skill        string
+	Custom       CustomAgent
+	AllowedTools []string
 }
 
 // CustomAgent configures a user-supplied agent CLI invoked via templated
@@ -616,23 +625,24 @@ func agentCommand(c AgentConfig) ([]string, error) {
 		if c.Thinking != "" {
 			args = append(args, "--effort", c.Thinking)
 		}
+		baselineTools := []string{
+			// The runtime prompt mandates "git -C $SESSION_WORKTREE …" so
+			// the verifier reads the session worktree, not the daemon cwd.
+			// Without this entry claude's prefix-match allowlist blocks
+			// every git command the prompt asks for.
+			"Bash(git -C:*)",
+			"Bash(git diff:*)",
+			"Bash(git diff)",
+			"Bash(git status:*)",
+			"Bash(git log:*)",
+			"Bash(git show:*)",
+			"Bash(git ls-files:*)",
+			"Bash(git rev-parse:*)",
+			"Read", "Grep", "Glob",
+		}
 		args = append(args,
 			"--allowedTools",
-			strings.Join([]string{
-				// The runtime prompt mandates "git -C $SESSION_WORKTREE …" so
-				// the verifier reads the session worktree, not the daemon cwd.
-				// Without this entry claude's prefix-match allowlist blocks
-				// every git command the prompt asks for.
-				"Bash(git -C:*)",
-				"Bash(git diff:*)",
-				"Bash(git diff)",
-				"Bash(git status:*)",
-				"Bash(git log:*)",
-				"Bash(git show:*)",
-				"Bash(git ls-files:*)",
-				"Bash(git rev-parse:*)",
-				"Read", "Grep", "Glob",
-			}, ","),
+			strings.Join(mergeAllowedTools(baselineTools, c.AllowedTools), ","),
 		)
 		return args, nil
 	case "codex":
@@ -648,6 +658,38 @@ func agentCommand(c AgentConfig) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported agent.agent %q", c.Agent)
 	}
+}
+
+// mergeAllowedTools appends extras onto baseline preserving baseline
+// order; extras are deduped (case-sensitive) against the combined set so
+// the same tool can't appear twice on the command line. Verifier authors
+// can widen the allowlist but not narrow it — baseline entries always
+// survive.
+func mergeAllowedTools(baseline, extras []string) []string {
+	if len(extras) == 0 {
+		return baseline
+	}
+	seen := make(map[string]struct{}, len(baseline)+len(extras))
+	out := make([]string, 0, len(baseline)+len(extras))
+	for _, t := range baseline {
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	for _, t := range extras {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
 }
 
 func resolveAgent(agent string) string {

@@ -171,6 +171,9 @@ func (m Model) View() string {
 	if m.palette != nil {
 		return m.palette.View()
 	}
+	if m.browser != nil {
+		return m.browser.View()
+	}
 	if m.switcher != nil {
 		return m.switcher.View()
 	}

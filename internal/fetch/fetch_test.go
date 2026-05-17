@@ -44,6 +44,33 @@ func TestResolveValidPin(t *testing.T) {
 	}
 }
 
+// TestResolveCachedFileIsExecutable defends against a regression where
+// the cache was written as 0o644 — fine for SKILL.md but a runtime
+// permission-denied for command/binary verifiers, which exec the
+// cached file directly.
+func TestResolveCachedFileIsExecutable(t *testing.T) {
+	body := []byte("#!/bin/sh\necho hi\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	t.Setenv("HUD_CACHE_DIR", t.TempDir())
+
+	got, err := Resolve(Pin{URL: srv.URL, SHA256: sha(body), Ext: ".sh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Owner-exec bit must be set; the runner does plain exec(2), not
+	// `sh -c`, so without it we get EACCES at spawn time.
+	if info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("cached file %s mode %o is not executable", got, info.Mode().Perm())
+	}
+}
+
 // TestResolveSHAMismatch ensures Resolve rejects a body whose hash drifts
 // from the pin. This is the entire trust model: drift must fail loud.
 func TestResolveSHAMismatch(t *testing.T) {
