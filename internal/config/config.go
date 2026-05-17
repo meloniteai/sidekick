@@ -13,7 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/uriahlevy/hud/internal/fetch"
-	"github.com/uriahlevy/hud/internal/trust"
 	"github.com/uriahlevy/hud/internal/verifier"
 )
 
@@ -49,10 +48,17 @@ type VerifierSpec struct {
 // PermissionsSpec is the YAML shape of the advisory permission block.
 // All fields are optional; missing values are treated conservatively
 // (filesystem defaults to "read-only", env defaults to nil = "minimal").
+//
+// AllowedTools is enforced (not advisory) for the Claude agent: entries
+// are appended to the hardcoded baseline list at spawn time, widening
+// what the verifier subprocess can call without replacing the safe
+// defaults. Ignored for command/binary verifiers and for non-Claude
+// agents.
 type PermissionsSpec struct {
-	Network    bool     `yaml:"network,omitempty"`
-	Filesystem string   `yaml:"filesystem,omitempty"`
-	Env        []string `yaml:"env,omitempty"`
+	Network      bool     `yaml:"network,omitempty"`
+	Filesystem   string   `yaml:"filesystem,omitempty"`
+	Env          []string `yaml:"env,omitempty"`
+	AllowedTools []string `yaml:"allowed_tools,omitempty"`
 }
 
 // SourceSpec describes where a verifier's script or skill was fetched from.
@@ -106,14 +112,28 @@ func Load(path string) (*File, string, error) {
 	return LoadFrom(path, "")
 }
 
-// LoadFrom reads hud.yaml from `path`, or walks upward from startDir when path
-// is empty. Empty startDir preserves Load's process-cwd behaviour.
+// LoadFrom reads hud.yaml from `path`, or walks upward from startDir when
+// path is empty. When no project hud.yaml is found we fall back to the
+// global config at GlobalPath (typically $HOME/.hud/hud.yaml) so users
+// can install verifiers once and see them in every repo. Project files
+// shadow the global completely — no merging — so a project hud.yaml is a
+// hard override.
 func LoadFrom(path, startDir string) (*File, string, error) {
 	if path == "" {
 		var err error
 		path, err = findUpwardsFrom("hud.yaml", startDir)
 		if err != nil {
-			return nil, "", err
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, "", err
+			}
+			gp, gerr := GlobalPath()
+			if gerr != nil {
+				return nil, "", err
+			}
+			if _, statErr := os.Stat(gp); statErr != nil {
+				return nil, "", err
+			}
+			path = gp
 		}
 	}
 	raw, err := os.ReadFile(path)
@@ -125,6 +145,20 @@ func LoadFrom(path, startDir string) (*File, string, error) {
 		return nil, path, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return &f, path, nil
+}
+
+// GlobalPath returns the location of the global hud.yaml — the one HUD
+// reads when no project-level file is found by walking upward from cwd.
+// Defaults to $HOME/.hud/hud.yaml; tests can override with $HUD_GLOBAL_CONFIG.
+func GlobalPath() (string, error) {
+	if p := os.Getenv("HUD_GLOBAL_CONFIG"); p != "" {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".hud", "hud.yaml"), nil
 }
 
 // Save writes f back to path as hud.yaml.
@@ -275,18 +309,13 @@ func (f *File) ValidateStructural() error {
 }
 
 // Resolve converts the parsed file into runtime verifiers, resolving any
-// relative local paths against `configDir`. It returns an error listing
-// every untrusted remote verifier so the user can address them all in one
-// pass instead of fixing them one at a time.
+// relative local paths against `configDir`. Remote verifiers must carry a
+// sha256 pin in their source block; the pin is the only integrity check
+// (see fetch.Resolve, which refuses to return drifted bytes).
 func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 	if len(f.Verifiers) == 0 {
 		return nil, errors.New("no verifiers configured")
 	}
-	store, _ := trust.New("")
-	if store != nil {
-		_ = store.Load() // missing file is fine; treat as empty store
-	}
-	var untrusted []string
 	out := make([]verifier.Verifier, 0, len(f.Verifiers))
 	seen := map[string]bool{}
 	for i, vs := range f.Verifiers {
@@ -331,16 +360,6 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 		if vs.Source != nil && vs.Source.URL != "" {
 			if vs.Source.SHA256 == "" {
 				return nil, fmt.Errorf("verifier %s: remote source requires sha256 pin (got url=%q without sha256)", vs.Name, vs.Source.URL)
-			}
-			// Trust gate runs before fetch: an unapproved hash should
-			// neither hit the network nor populate the cache. We collect
-			// every untrusted name into `untrusted` below and surface
-			// them all together at the end of Resolve.
-			if store == nil || !store.IsApproved(vs.Source.SHA256) {
-				untrusted = append(untrusted,
-					fmt.Sprintf("  - %s  (sha256 %s)\n      from %s", vs.Name, shortHash(vs.Source.SHA256), vs.Source.URL))
-				// Skip materialising this verifier; trust error is fatal.
-				continue
 			}
 			ext := remoteExt(kind, vs)
 			path, err := fetch.Resolve(fetch.Pin{
@@ -399,6 +418,9 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 				Thinking: vs.LLM.Thinking,
 				Skill:    skill,
 			}
+			if vs.Permissions != nil && len(vs.Permissions.AllowedTools) > 0 {
+				ac.AllowedTools = append([]string(nil), vs.Permissions.AllowedTools...)
+			}
 			if strings.EqualFold(agent, "custom") {
 				if vs.LLM.Custom == nil || len(vs.LLM.Custom.Command) == 0 {
 					return nil, fmt.Errorf("verifier %s: llm.custom.command is required when agent: custom", vs.Name)
@@ -448,9 +470,10 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 				return nil, fmt.Errorf("verifier %s: permissions.filesystem %q (want one of read-only, read-write, none)", vs.Name, vs.Permissions.Filesystem)
 			}
 			v.Permissions = verifier.Permissions{
-				Network:    vs.Permissions.Network,
-				Filesystem: fs,
-				Env:        append([]string(nil), vs.Permissions.Env...),
+				Network:      vs.Permissions.Network,
+				Filesystem:   fs,
+				Env:          append([]string(nil), vs.Permissions.Env...),
+				AllowedTools: append([]string(nil), vs.Permissions.AllowedTools...),
 			}
 		}
 		if remoteArtefact != "" {
@@ -462,29 +485,7 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 		}
 		out = append(out, v)
 	}
-	if len(untrusted) > 0 {
-		return nil, fmt.Errorf("the following remote verifiers are not yet trusted:\n%s\n\nrun `hud verifier trust <name>` to inspect and approve, or `hud verifier trust --all` to approve every pending verifier in this config",
-			joinLines(untrusted))
-	}
 	return out, nil
-}
-
-func shortHash(s string) string {
-	if len(s) > 12 {
-		return s[:12] + "…"
-	}
-	return s
-}
-
-func joinLines(xs []string) string {
-	out := ""
-	for i, x := range xs {
-		if i > 0 {
-			out += "\n"
-		}
-		out += x
-	}
-	return out
 }
 
 // remoteExt picks an extension hint for the cache filename based on the

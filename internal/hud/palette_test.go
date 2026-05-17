@@ -24,6 +24,7 @@ func TestPaletteRenderShape(t *testing.T) {
 		"Type to filter",
 		"New Verifier",
 		"Edit Verifier",
+		"Browse Verifiers",
 		"Switch Session",
 		"Toggle Git Changes",
 		"Toggle Event Log",
@@ -50,15 +51,17 @@ func TestPaletteNavigationAndEnter(t *testing.T) {
 		t.Fatalf("first enter: got done=%v action=%d, want done=true action=%d", done, confirmed.Chosen(), paletteActionNewVerifier)
 	}
 
-	// Now from a fresh palette: down → down → enter should pick Switch
-	// Session (index 2), proving the cursor advances and clamps correctly.
+	// Now from a fresh palette: down → down → down → enter should pick
+	// Switch Session (index 3, after "Browse Verifiers" at index 2),
+	// proving the cursor advances and clamps correctly.
 	p = NewPalette()
 	p.SetSize(120, 40)
 	step1, _, _ := p.Update(tea.KeyMsg{Type: tea.KeyDown})
 	step2, _, _ := step1.Update(tea.KeyMsg{Type: tea.KeyDown})
-	final, _, done := step2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	step3, _, _ := step2.Update(tea.KeyMsg{Type: tea.KeyDown})
+	final, _, done := step3.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if !done || final.Chosen() != paletteActionSwitchSession {
-		t.Fatalf("down,down,enter: got done=%v action=%d, want action=%d", done, final.Chosen(), paletteActionSwitchSession)
+		t.Fatalf("down,down,down,enter: got done=%v action=%d, want action=%d", done, final.Chosen(), paletteActionSwitchSession)
 	}
 }
 
@@ -145,7 +148,9 @@ func TestPaletteDispatchTogglesGitPanel(t *testing.T) {
 	}
 	m = openPalette(t, m)
 
-	// "Toggle Git Changes" is the fourth item (index 3).
+	// "Toggle Git Changes" is index 4 (after "Browse Verifiers" at index 2
+	// and "Switch Session" at index 3).
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
@@ -164,7 +169,8 @@ func TestPaletteDispatchOpensSessionSwitcher(t *testing.T) {
 	m.width, m.height = 120, 40
 	m = openPalette(t, m)
 
-	// "Switch Session" is the third item (index 2).
+	// "Switch Session" is index 3 (after "Browse Verifiers" at index 2).
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -184,6 +190,7 @@ func TestPaletteDispatchSwitchSessionChangesDisplayed(t *testing.T) {
 	before := reg.DisplayedSession().SessionWorktree()
 	m = openPalette(t, m)
 
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -206,7 +213,9 @@ func TestPaletteDispatchTogglesEventLog(t *testing.T) {
 	}
 	m = openPalette(t, m)
 
-	// "Toggle Event Log" is the fifth item (index 4).
+	// "Toggle Event Log" is index 5 (after Browse Verifiers, Switch
+	// Session, Toggle Git Changes).
+	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = paletteKey(t, m, tea.KeyMsg{Type: tea.KeyDown})

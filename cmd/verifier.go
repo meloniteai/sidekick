@@ -13,7 +13,6 @@ import (
 
 	"github.com/uriahlevy/hud/internal/config"
 	"github.com/uriahlevy/hud/internal/fetch"
-	"github.com/uriahlevy/hud/internal/trust"
 	"github.com/uriahlevy/hud/internal/verifier"
 )
 
@@ -30,7 +29,6 @@ func newVerifierCmd() *cobra.Command {
 	cmd.AddCommand(newVerifierAddCmd())
 	cmd.AddCommand(newVerifierListCmd())
 	cmd.AddCommand(newVerifierRemoveCmd())
-	cmd.AddCommand(newVerifierTrustCmd())
 	return cmd
 }
 
@@ -49,8 +47,7 @@ func newVerifierRemoveCmd() *cobra.Command {
   hud verifier remove MyVerifier --yes      skip the confirmation prompt
 
 The verifier's source files on disk (skill, script) are left untouched —
-this command only edits hud.yaml. Trust approvals in ~/.hud/trust.json
-are also untouched, so re-adding the same artefact won't re-prompt.`,
+this command only edits hud.yaml.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := args[0]
@@ -92,101 +89,6 @@ are also untouched, so re-adding the same artefact won't re-prompt.`,
 	}
 	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml")
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
-	return cmd
-}
-
-func newVerifierTrustCmd() *cobra.Command {
-	var (
-		configPath string
-		all        bool
-		listOnly   bool
-		revoke     bool
-	)
-	cmd := &cobra.Command{
-		Use:   "trust [verifier-name ...]",
-		Short: "Approve remote verifiers so HUD will run them",
-		Long: `Each remote verifier (those with a ` + "`source:`" + ` block in hud.yaml) must
-be explicitly trusted before HUD will execute it. Trust is recorded by
-sha256 in ~/.hud/trust.json.
-
-  hud verifier trust MyVerifier              approve one verifier by name
-  hud verifier trust --all                   approve every pending verifier
-  hud verifier trust --list                  show currently approved hashes
-  hud verifier trust --revoke MyVerifier     revoke approval
-
-Local verifiers (no source: block) are implicitly trusted.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := trust.New("")
-			if err != nil {
-				return err
-			}
-			_ = store.Load()
-
-			if listOnly {
-				approvals := store.Approvals()
-				if len(approvals) == 0 {
-					fmt.Fprintln(cmd.OutOrStdout(), "no approved verifiers in trust.json")
-					return nil
-				}
-				for sha, e := range approvals {
-					fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s  (%s)\n", sha[:12], e.Verifier, e.URL, e.ApprovedAt.Format("2006-01-02"))
-				}
-				return nil
-			}
-
-			f, path, err := config.Load(configPath)
-			if err != nil {
-				return fmt.Errorf("load hud.yaml: %w", err)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "hud.yaml: %s\n", path)
-
-			targets := map[string]bool{}
-			for _, n := range args {
-				targets[strings.ToLower(n)] = true
-			}
-
-			approvedAny := false
-			revokedAny := false
-			for _, vs := range f.Verifiers {
-				if vs.Source == nil || vs.Source.URL == "" {
-					continue
-				}
-				if !all && len(targets) > 0 && !targets[strings.ToLower(vs.Name)] {
-					continue
-				}
-				if !all && len(targets) == 0 {
-					return fmt.Errorf("no verifier names supplied — use --all to approve every pending verifier or pass names explicitly")
-				}
-				if revoke {
-					if store.Revoke(vs.Source.SHA256) {
-						fmt.Fprintf(cmd.OutOrStdout(), "revoked: %s (%s)\n", vs.Name, short(vs.Source.SHA256))
-						revokedAny = true
-					}
-					continue
-				}
-				if store.IsApproved(vs.Source.SHA256) {
-					fmt.Fprintf(cmd.OutOrStdout(), "already trusted: %s (%s)\n", vs.Name, short(vs.Source.SHA256))
-					continue
-				}
-				store.Approve(vs.Source.SHA256, trust.Entry{
-					URL:      vs.Source.URL,
-					Verifier: vs.Name,
-				})
-				approvedAny = true
-				fmt.Fprintf(cmd.OutOrStdout(), "approved: %s (%s)  from %s\n", vs.Name, short(vs.Source.SHA256), vs.Source.URL)
-			}
-			if approvedAny || revokedAny {
-				if err := store.Save(); err != nil {
-					return fmt.Errorf("save trust.json: %w", err)
-				}
-			}
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&configPath, "config", "", "path to hud.yaml")
-	cmd.Flags().BoolVar(&all, "all", false, "approve every remote verifier currently in hud.yaml")
-	cmd.Flags().BoolVar(&listOnly, "list", false, "list approved sha256 entries from trust.json and exit")
-	cmd.Flags().BoolVar(&revoke, "revoke", false, "revoke approval for the named verifier(s)")
 	return cmd
 }
 
@@ -336,19 +238,6 @@ Local mode:
 
 			if err := config.Save(path, f); err != nil {
 				return fmt.Errorf("save %s: %w", path, err)
-			}
-			// User just confirmed the preview — record their approval in
-			// trust.json so the next `hud start` doesn't re-prompt.
-			store, terr := trust.New("")
-			if terr == nil {
-				_ = store.Load()
-				store.Approve(sha, trust.Entry{
-					URL:      rawURL,
-					Verifier: name,
-				})
-				if err := store.Save(); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not write trust.json: %v\n", err)
-				}
 			}
 			if loaded {
 				fmt.Fprintf(cmd.OutOrStdout(), "\nUpdated %s.\n", path)

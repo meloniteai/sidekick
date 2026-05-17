@@ -198,6 +198,46 @@ func TestAgentCommandClaudeAndCodex(t *testing.T) {
 	}
 }
 
+// TestAgentCommandClaudeAllowedToolsUnion asserts the per-verifier
+// allowed_tools declared in hud.yaml are appended to the hardcoded
+// baseline rather than replacing it, and that duplicates are deduped so
+// the command line stays clean.
+func TestAgentCommandClaudeAllowedToolsUnion(t *testing.T) {
+	args, err := agentCommand(AgentConfig{
+		Agent:        "claude",
+		AllowedTools: []string{"Bash(go test:*)", "Bash(go build:*)", "Read"}, // "Read" is already in baseline
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var allowed string
+	for i, a := range args {
+		if a == "--allowedTools" && i+1 < len(args) {
+			allowed = args[i+1]
+			break
+		}
+	}
+	if allowed == "" {
+		t.Fatalf("no --allowedTools value in args: %#v", args)
+	}
+	// Baseline entries must survive.
+	for _, want := range []string{"Bash(git -C:*)", "Read", "Grep", "Glob"} {
+		if !strings.Contains(allowed, want) {
+			t.Fatalf("baseline entry %q missing: %s", want, allowed)
+		}
+	}
+	// Per-verifier extras must appear.
+	for _, want := range []string{"Bash(go test:*)", "Bash(go build:*)"} {
+		if !strings.Contains(allowed, want) {
+			t.Fatalf("extra entry %q missing: %s", want, allowed)
+		}
+	}
+	// "Read" must appear exactly once (dedup).
+	if got := strings.Count(allowed, "Read"); got != 1 {
+		t.Fatalf("expected Read to appear exactly once, got %d in: %s", got, allowed)
+	}
+}
+
 func TestParseAgentResult(t *testing.T) {
 	claude := `{"result":"thinking...\n{\"distance\":0.2,\"reason\":\"ok\"}"}`
 	r, err := parseAgentResult("Architect", "claude", claude)

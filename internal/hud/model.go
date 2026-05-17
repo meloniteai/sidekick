@@ -81,6 +81,7 @@ type Model struct {
 	palette           *Palette
 	switcher          *SessionSwitcher
 	gitPanel          *GitPanel
+	browser           *RemoteBrowser
 	// anims is keyed by verifier name. We seed an entry on first observation
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
@@ -203,6 +204,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.gitPanel.width = msg.Width
 			m.gitPanel.height = msg.Height
 		}
+		if m.browser != nil {
+			m.browser.width = msg.Width
+			m.browser.height = msg.Height
+		}
 	case tickMsg:
 		m.snapshot = m.currentSnapshot()
 		m.events = m.currentEvents()
@@ -224,10 +229,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if done {
 			action := next.Chosen()
 			m.palette = nil
-			m.dispatchPaletteAction(action)
+			dispatchCmd := m.dispatchPaletteAction(action)
+			if dispatchCmd != nil {
+				return m, tea.Batch(cmd, dispatchCmd)
+			}
 			return m, cmd
 		}
 		m.palette = &next
+		return m, cmd
+	}
+	if m.browser != nil {
+		next, cmd, done := m.browser.Update(msg)
+		// On a successful install, refresh the daemon's config so the
+		// new verifier shows up on the compass immediately — same
+		// callback the edit wizard fires on save.
+		if installed, ok := msg.(browserInstalledMsg); ok && installed.err == nil && m.onConfigSaved != nil {
+			_ = m.onConfigSaved()
+			m.snapshot = m.currentSnapshot()
+		}
+		if done {
+			m.browser = nil
+			return m, cmd
+		}
+		m.browser = &next
 		return m, cmd
 	}
 	if m.switcher != nil {
@@ -432,7 +456,9 @@ func tick() tea.Cmd {
 // confirms with enter. Esc dismissal arrives as paletteActionNone and is a
 // no-op; all real actions reuse the same code paths as the bare hotkeys (n,
 // e, g, l) so behaviour stays consistent however the user invokes them.
-func (m *Model) dispatchPaletteAction(action paletteAction) {
+// Returns a tea.Cmd for actions that need to kick off async work (e.g. the
+// remote browser's initial catalog fetch); nil for purely synchronous arms.
+func (m *Model) dispatchPaletteAction(action paletteAction) tea.Cmd {
 	switch action {
 	case paletteActionNewVerifier:
 		editor := NewCreateWizard(m.currentConfigPath())
@@ -444,6 +470,12 @@ func (m *Model) dispatchPaletteAction(action paletteAction) {
 		editor.width = m.width
 		editor.height = m.height
 		m.editor = &editor
+	case paletteActionBrowseVerifiers:
+		browser := NewRemoteBrowser(m.currentConfigPath())
+		browser.width = m.width
+		browser.height = m.height
+		m.browser = &browser
+		return browser.Init()
 	case paletteActionToggleGitPanel:
 		m.toggleGitPanel()
 	case paletteActionToggleEventLog:
@@ -451,6 +483,7 @@ func (m *Model) dispatchPaletteAction(action paletteAction) {
 	case paletteActionSwitchSession:
 		m.openSessionSwitcher()
 	}
+	return nil
 }
 
 func (m *Model) openSessionSwitcher() {
