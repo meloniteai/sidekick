@@ -155,6 +155,45 @@ func TestRegistryFirstGoalFixesDisplayedSessionUntilUserSwitch(t *testing.T) {
 	}
 }
 
+func TestRegistryStartupGoalPreventsImplicitWorktreeSwitch(t *testing.T) {
+	trunk, wt := testRepoWithWorktree(t)
+	defaultState := NewState()
+	defaultState.SetSessionWorktree(trunk)
+	defaultState.SetGoal("existing session")
+	reg := NewRegistry(defaultState, func(anchor SessionAnchor) (*State, error) {
+		s := NewState()
+		s.SetSessionWorktree(anchor.Worktree)
+		return s, nil
+	})
+
+	if _, err := reg.GoalSessionForCWD(wt); err != nil {
+		t.Fatal(err)
+	}
+	if reg.DisplayedSession() != defaultState {
+		t.Fatal("worktree goal should not auto-switch after an existing startup goal")
+	}
+}
+
+func TestRegistryUnsetLiteralStillAllowsInitialWorktreeSwitch(t *testing.T) {
+	trunk, wt := testRepoWithWorktree(t)
+	defaultState := NewState()
+	defaultState.SetSessionWorktree(trunk)
+	defaultState.SetGoal("unset")
+	reg := NewRegistry(defaultState, func(anchor SessionAnchor) (*State, error) {
+		s := NewState()
+		s.SetSessionWorktree(anchor.Worktree)
+		return s, nil
+	})
+
+	wtSession, err := reg.GoalSessionForCWD(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.DisplayedSession() != wtSession {
+		t.Fatal("literal unset goal should still allow first worktree selection")
+	}
+}
+
 func testRepoWithWorktree(t *testing.T) (string, string) {
 	t.Helper()
 	trunk := t.TempDir()

@@ -60,9 +60,15 @@ func NewRegistry(defaultState *State, factory SessionFactory) *Registry {
 		lastActivity: map[string]time.Time{key: now},
 		defaultKey:   key,
 		displayedKey: key,
+		displayFixed: !isUnsetGoal(defaultState.Goal()),
 		idleTimeout:  DefaultSessionIdleTimeout,
 		factory:      factory,
 	}
+}
+
+func isUnsetGoal(goal string) bool {
+	goal = strings.TrimSpace(goal)
+	return goal == "" || strings.EqualFold(goal, "unset")
 }
 
 func normalizeSessionKey(worktree string) string {
