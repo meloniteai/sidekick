@@ -12,7 +12,7 @@ import (
 
 // TestSocketPathFor_WorktreeSharesTrunkFingerprint pins the contract that a
 // linked git worktree resolves to the same daemon socket as its trunk.
-// Regression guard for the case where `hud start` runs in the trunk while
+// Regression guard for the case where `sidekick start` runs in the trunk while
 // the agent (and its MCP server) operates in a worktree: previously the
 // fingerprint was derived from `--show-toplevel`, which differs per
 // worktree and stranded worktree-side clients.
@@ -20,7 +20,7 @@ func TestSocketPathFor_WorktreeSharesTrunkFingerprint(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")
 	}
-	t.Setenv("HUD_SOCK", "")
+	t.Setenv("SIDEKICK_SOCK", "")
 
 	trunk := t.TempDir()
 	mustGit(t, trunk, "init", "-q", "-b", "main")
@@ -63,13 +63,15 @@ func mustGit(t *testing.T, dir string, args ...string) {
 }
 
 func TestSendFromStampsRequestCWD(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "hud.sock")
+	// Short filename — macOS caps unix socket paths at 104 bytes and the
+	// default $TMPDIR + t.TempDir() prefix already burns ~95.
+	sock := filepath.Join(t.TempDir(), "s.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	t.Setenv("HUD_SOCK", sock)
+	t.Setenv("SIDEKICK_SOCK", sock)
 
 	gotCh := make(chan Request, 1)
 	errCh := make(chan error, 1)

@@ -1,8 +1,8 @@
-package hud
+package sidekick
 
-// Exported aliases for the brand color tokens that drive the in-HUD
+// Exported aliases for the brand color tokens that drive the in-Sidekick
 // command palette. They are re-exported so palette-styled surfaces that
-// live outside this package (e.g. the standalone `hud verifier add
+// live outside this package (e.g. the standalone `sidekick verifier add
 // --local` wizard) can build their own lipgloss styles against the same
 // values without re-inventing the palette.
 const (

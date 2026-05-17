@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/daemon"
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func TestHookFilesClaudePayload(t *testing.T) {
@@ -91,7 +91,7 @@ func TestForwardWriteReachesDaemon(t *testing.T) {
 	go func() {
 		_ = srv.Serve(ctx)
 	}()
-	t.Setenv("HUD_SOCK", sock)
+	t.Setenv("SIDEKICK_SOCK", sock)
 
 	if err := forward(ipc.TypeWrite, ipc.WriteData{File: "cmd/hook.go"}); err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestForwardWriteRoutesAbsoluteWorktreeFile(t *testing.T) {
 	go func() {
 		_ = srv.Serve(ctx)
 	}()
-	t.Setenv("HUD_SOCK", sock)
+	t.Setenv("SIDEKICK_SOCK", sock)
 	t.Chdir(trunk)
 
 	file := filepath.Join(wt, "cmd", "hook.go")
@@ -182,12 +182,12 @@ func (h *worktreeCaptureHandler) OnGoal(_ *daemon.State, _ string) {}
 // test name is long.
 func shortSockPath(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "huds-*")
+	dir, err := os.MkdirTemp("", "sidekicks-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return filepath.Join(dir, "hud.sock")
+	return filepath.Join(dir, "sidekick.sock")
 }
 
 func testRepoWithWorktree(t *testing.T) (string, string) {

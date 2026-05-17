@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/uriahlevy/hud/internal/config"
+	"github.com/meloniteai/sidekick/internal/config"
 )
 
 func sampleAgentManifest() Manifest {
@@ -28,12 +28,12 @@ func sampleAgentManifest() Manifest {
 	}
 }
 
-// TestInstall_ProjectCreatesFile exercises the case where no hud.yaml
+// TestInstall_ProjectCreatesFile exercises the case where no sidekick.yaml
 // exists at the target path yet: Install should create it (with parent
 // dirs) and write the verifier into a fresh File.
 func TestInstall_ProjectCreatesFile(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "subdir", "hud.yaml")
+	target := filepath.Join(dir, "subdir", "sidekick.yaml")
 
 	res, err := Install(InstallOptions{
 		Scope:       ScopeProject,
@@ -70,11 +70,11 @@ func TestInstall_ProjectCreatesFile(t *testing.T) {
 }
 
 // TestInstall_RenamesOnConflict installs the same manifest twice into
-// the same hud.yaml — the second install must land on a unique name
+// the same sidekick.yaml — the second install must land on a unique name
 // rather than overwriting the first entry.
 func TestInstall_RenamesOnConflict(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "hud.yaml")
+	target := filepath.Join(dir, "sidekick.yaml")
 	m := sampleAgentManifest()
 
 	if _, err := Install(InstallOptions{Scope: ScopeProject, ProjectPath: target, Manifest: m}); err != nil {
@@ -101,12 +101,12 @@ func TestInstall_RenamesOnConflict(t *testing.T) {
 }
 
 // TestInstall_Global routes the write to config.GlobalPath() when
-// ScopeGlobal is selected, using $HUD_GLOBAL_CONFIG as the override
+// ScopeGlobal is selected, using $SIDEKICK_GLOBAL_CONFIG as the override
 // path so the user's real home is never touched.
 func TestInstall_Global(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "hud.yaml")
-	t.Setenv("HUD_GLOBAL_CONFIG", target)
+	target := filepath.Join(dir, "sidekick.yaml")
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", target)
 
 	res, err := Install(InstallOptions{
 		Scope:    ScopeGlobal,
@@ -128,7 +128,7 @@ func TestInstall_RejectsManifestWithoutSHA(t *testing.T) {
 	m.SHA256 = ""
 	_, err := Install(InstallOptions{
 		Scope:       ScopeProject,
-		ProjectPath: filepath.Join(t.TempDir(), "hud.yaml"),
+		ProjectPath: filepath.Join(t.TempDir(), "sidekick.yaml"),
 		Manifest:    m,
 	})
 	if err == nil || !strings.Contains(err.Error(), "sha256") {

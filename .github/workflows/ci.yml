@@ -19,13 +19,13 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Configure git identity for tests
-        # Several tests (internal/hud, internal/ipc, cmd) shell out to
+        # Several tests (internal/sidekick, internal/ipc, cmd) shell out to
         # `git commit` inside scratch repos to exercise worktree behaviour.
         # CI runners ship with no user.name/email, so the commit fails with
         # "empty ident name". Set a dummy identity globally.
         run: |
-          git config --global user.email "ci@hud.local"
-          git config --global user.name  "hud-ci"
+          git config --global user.email "ci@sidekick.local"
+          git config --global user.name  "sidekick-ci"
       - name: Build
         run: go build ./...
       - name: Test

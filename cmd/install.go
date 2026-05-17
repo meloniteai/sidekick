@@ -11,13 +11,13 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 
-	"github.com/uriahlevy/hud/internal/install"
+	"github.com/meloniteai/sidekick/internal/install"
 )
 
-// newInstallCmd wires hud into the user's agent clients (Claude Code,
+// newInstallCmd wires sidekick into the user's agent clients (Claude Code,
 // Codex). It is the "second half" of the bootstrap that `install.sh`
 // kicks off after dropping the binary into $PATH — but it's also the
-// canonical way to re-wire integrations after a `hud` upgrade.
+// canonical way to re-wire integrations after a `sidekick` upgrade.
 func newInstallCmd() *cobra.Command {
 	var (
 		assumeYes  bool
@@ -37,12 +37,12 @@ func newInstallCmd() *cobra.Command {
 
 	c := &cobra.Command{
 		Use:   "install",
-		Short: "Wire hud into Claude Code and/or Codex (skill + MCP + write hook)",
-		Long: `Install the hud skill, register the MCP server, and merge the
+		Short: "Wire sidekick into Claude Code and/or Codex (skill + MCP + write hook)",
+		Long: `Install the sidekick skill, register the MCP server, and merge the
 PostToolUse write hook into the user-scope settings for any agent client
 that's installed.
 
-Re-running this command after a hud upgrade is safe and recommended — the
+Re-running this command after a sidekick upgrade is safe and recommended — the
 skill is rewritten in place to match the newly-installed binary, the MCP
 registration is idempotent at the agent CLI's discretion, and the hook
 merge is a no-op when the desired entry is already present.`,
@@ -87,7 +87,7 @@ merge is a no-op when the desired entry is already present.`,
 				}
 			}
 
-			if len(hudSkillBody) == 0 && !skipSkill {
+			if len(sidekickSkillBody) == 0 && !skipSkill {
 				return errors.New("internal: SKILL.md embed is empty (did the build skip //go:embed?)")
 			}
 
@@ -106,7 +106,7 @@ merge is a no-op when the desired entry is already present.`,
 				fmt.Fprintln(cmd.OutOrStdout(), "\nDry run — no files written.")
 				return nil
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "\nNext: run `hud start` in a repo to launch the daemon and TUI.")
+			fmt.Fprintln(cmd.OutOrStdout(), "\nNext: run `sidekick start` in a repo to launch the daemon and TUI.")
 			return nil
 		},
 	}
@@ -117,7 +117,7 @@ merge is a no-op when the desired entry is already present.`,
 	c.Flags().BoolVar(skipFlags[install.AgentClaude], "no-claude", false, "Skip Claude even if detected")
 	c.Flags().BoolVar(forceFlags[install.AgentCodex], "codex", false, "Force-include Codex regardless of detection")
 	c.Flags().BoolVar(skipFlags[install.AgentCodex], "no-codex", false, "Skip Codex even if detected")
-	c.Flags().BoolVar(&skipSkill, "skip-skill", false, "Don't copy the hud skill")
+	c.Flags().BoolVar(&skipSkill, "skip-skill", false, "Don't copy the sidekick skill")
 	c.Flags().BoolVar(&skipMCP, "skip-mcp", false, "Don't register the MCP server")
 	c.Flags().BoolVar(&skipHook, "skip-hook", false, "Don't merge the PostToolUse write hook")
 	return c
@@ -136,13 +136,13 @@ func runOneAgent(cmd *cobra.Command, home string, agent install.Agent, opts runO
 
 	// Skill
 	if !opts.SkipSkill {
-		dirs := install.SkillDirs(home, "hud", agent)
+		dirs := install.SkillDirs(home, "sidekick", agent)
 		if opts.DryRun {
 			for _, d := range dirs {
 				fmt.Fprintf(out, "  skill  would write %s/SKILL.md\n", d)
 			}
 		} else {
-			written, err := install.WriteSkill(home, agent, "hud", hudSkillBody, nil)
+			written, err := install.WriteSkill(home, agent, "sidekick", sidekickSkillBody, nil)
 			if err != nil {
 				return fmt.Errorf("write skill: %w", err)
 			}
@@ -239,7 +239,7 @@ func confirmedAgents(r io.Reader, w io.Writer, all []install.Detection, plan []i
 		if d.HasDir {
 			detail = append(detail, "config")
 		}
-		fmt.Fprintf(w, "Install hud integration for %s (%s)? [Y/n] ", d.Agent, strings.Join(detail, "+"))
+		fmt.Fprintf(w, "Install sidekick integration for %s (%s)? [Y/n] ", d.Agent, strings.Join(detail, "+"))
 		var resp string
 		_, _ = fmt.Fscanln(r, &resp)
 		resp = strings.ToLower(strings.TrimSpace(resp))

@@ -10,7 +10,7 @@ import (
 )
 
 func TestMergeHook_EmptyInput(t *testing.T) {
-	out, changed, err := MergeHook(nil, HudPostToolUseClaude)
+	out, changed, err := MergeHook(nil, SidekickPostToolUseClaude)
 	if err != nil {
 		t.Fatalf("MergeHook: %v", err)
 	}
@@ -24,25 +24,25 @@ func TestMergeHook_EmptyInput(t *testing.T) {
 		t.Fatalf("expected 1 entry, got %d", len(post))
 	}
 	entry := post[0].(map[string]any)
-	if entry["matcher"] != HudPostToolUseClaude.Matcher {
-		t.Errorf("matcher = %q, want %q", entry["matcher"], HudPostToolUseClaude.Matcher)
+	if entry["matcher"] != SidekickPostToolUseClaude.Matcher {
+		t.Errorf("matcher = %q, want %q", entry["matcher"], SidekickPostToolUseClaude.Matcher)
 	}
 	hookList := entry["hooks"].([]any)
 	if len(hookList) != 1 {
 		t.Fatalf("expected 1 hook, got %d", len(hookList))
 	}
 	hookEntry := hookList[0].(map[string]any)
-	if hookEntry["command"] != HudPostToolUseClaude.Command {
-		t.Errorf("command = %q, want %q", hookEntry["command"], HudPostToolUseClaude.Command)
+	if hookEntry["command"] != SidekickPostToolUseClaude.Command {
+		t.Errorf("command = %q, want %q", hookEntry["command"], SidekickPostToolUseClaude.Command)
 	}
 }
 
 func TestMergeHook_AlreadyPresent_NoOp(t *testing.T) {
-	first, _, err := MergeHook(nil, HudPostToolUseClaude)
+	first, _, err := MergeHook(nil, SidekickPostToolUseClaude)
 	if err != nil {
 		t.Fatalf("first merge: %v", err)
 	}
-	out, changed, err := MergeHook(first, HudPostToolUseClaude)
+	out, changed, err := MergeHook(first, SidekickPostToolUseClaude)
 	if err != nil {
 		t.Fatalf("second merge: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestMergeHook_PreservesUnrelatedTopLevelKeys(t *testing.T) {
   "model": "claude-sonnet-4-5",
   "env": {"FOO": "bar"}
 }`)
-	out, changed, err := MergeHook(existing, HudPostToolUseClaude)
+	out, changed, err := MergeHook(existing, SidekickPostToolUseClaude)
 	if err != nil {
 		t.Fatalf("MergeHook: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestMergeHook_PreservesUnrelatedPostToolUseEntries(t *testing.T) {
     ]
   }
 }`)
-	out, _, err := MergeHook(existing, HudPostToolUseClaude)
+	out, _, err := MergeHook(existing, SidekickPostToolUseClaude)
 	if err != nil {
 		t.Fatalf("MergeHook: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestMergeHook_PreservesUnrelatedPostToolUseEntries(t *testing.T) {
 	for _, e := range post {
 		gotMatchers = append(gotMatchers, e.(map[string]any)["matcher"].(string))
 	}
-	wantMatchers := []string{"Bash", HudPostToolUseClaude.Matcher}
+	wantMatchers := []string{"Bash", SidekickPostToolUseClaude.Matcher}
 	if !equalUnordered(gotMatchers, wantMatchers) {
 		t.Errorf("matchers = %v, want %v (unordered)", gotMatchers, wantMatchers)
 	}
@@ -118,7 +118,7 @@ func TestMergeHook_AppendsToExistingMatcher(t *testing.T) {
     ]
   }
 }`)
-	out, changed, err := MergeHook(existing, HudPostToolUseClaude)
+	out, changed, err := MergeHook(existing, SidekickPostToolUseClaude)
 	if err != nil {
 		t.Fatalf("MergeHook: %v", err)
 	}
@@ -138,13 +138,13 @@ func TestMergeHook_AppendsToExistingMatcher(t *testing.T) {
 	for _, h := range hooks {
 		commands = append(commands, h.(map[string]any)["command"].(string))
 	}
-	if !equalUnordered(commands, []string{"/other/tool", HudPostToolUseClaude.Command}) {
+	if !equalUnordered(commands, []string{"/other/tool", SidekickPostToolUseClaude.Command}) {
 		t.Errorf("commands = %v", commands)
 	}
 }
 
 func TestMergeHook_InvalidJSON_Refuses(t *testing.T) {
-	_, _, err := MergeHook([]byte(`{ not json`), HudPostToolUseClaude)
+	_, _, err := MergeHook([]byte(`{ not json`), SidekickPostToolUseClaude)
 	if err == nil {
 		t.Fatal("expected error on invalid JSON, got nil")
 	}
@@ -153,7 +153,7 @@ func TestMergeHook_InvalidJSON_Refuses(t *testing.T) {
 func TestMergeHookFile_CreatesParentDir(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "deep", "nested", "settings.json")
-	changed, err := MergeHookFile(path, HudPostToolUseClaude)
+	changed, err := MergeHookFile(path, SidekickPostToolUseClaude)
 	if err != nil {
 		t.Fatalf("MergeHookFile: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestMergeHookFile_CreatesParentDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if !strings.Contains(string(raw), HudPostToolUseClaude.Command) {
+	if !strings.Contains(string(raw), SidekickPostToolUseClaude.Command) {
 		t.Errorf("file does not contain command: %s", raw)
 	}
 }
@@ -172,11 +172,11 @@ func TestMergeHookFile_CreatesParentDir(t *testing.T) {
 func TestMergeHookFile_IdempotentSecondCall(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "settings.json")
-	if _, err := MergeHookFile(path, HudPostToolUseClaude); err != nil {
+	if _, err := MergeHookFile(path, SidekickPostToolUseClaude); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
 	first, _ := os.ReadFile(path)
-	changed, err := MergeHookFile(path, HudPostToolUseClaude)
+	changed, err := MergeHookFile(path, SidekickPostToolUseClaude)
 	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}
@@ -208,13 +208,13 @@ func TestDetect_FindsConfigDir(t *testing.T) {
 
 func TestSkillDirs_WritesBothCanonicalAndCrossAgent(t *testing.T) {
 	home := "/h"
-	got := SkillDirs(home, "hud", AgentClaude)
-	want := []string{"/h/.claude/skills/hud", "/h/.agents/skills/hud"}
+	got := SkillDirs(home, "sidekick", AgentClaude)
+	want := []string{"/h/.claude/skills/sidekick", "/h/.agents/skills/sidekick"}
 	if !equalSlice(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	got = SkillDirs(home, "hud", AgentCodex)
-	want = []string{"/h/.codex/skills/hud", "/h/.agents/skills/hud"}
+	got = SkillDirs(home, "sidekick", AgentCodex)
+	want = []string{"/h/.codex/skills/sidekick", "/h/.agents/skills/sidekick"}
 	if !equalSlice(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -222,8 +222,8 @@ func TestSkillDirs_WritesBothCanonicalAndCrossAgent(t *testing.T) {
 
 func TestWriteSkill_WritesEveryTargetDir(t *testing.T) {
 	home := t.TempDir()
-	body := []byte("# hud skill\n")
-	written, err := WriteSkill(home, AgentClaude, "hud", body, nil)
+	body := []byte("# sidekick skill\n")
+	written, err := WriteSkill(home, AgentClaude, "sidekick", body, nil)
 	if err != nil {
 		t.Fatalf("WriteSkill: %v", err)
 	}

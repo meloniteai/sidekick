@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func TestRegistryRoutesLinkedWorktreesToDistinctSessions(t *testing.T) {

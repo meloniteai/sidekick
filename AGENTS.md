@@ -1,20 +1,20 @@
-# AGENTS.md — HUD
+# AGENTS.md — Sidekick
 
 ## Overview
 
-HUD is a Go CLI tool that renders a live compass-style TUI showing verifier distances from a session goal during agentic coding sessions. It runs alongside Claude Code or Codex, re-evaluating verifiers on file writes and exposing the scores via MCP tools (`hud_status`, `hud_explain`, `hud_set_goal`).
+Sidekick is a Go CLI tool that renders a live compass-style TUI showing verifier distances from a session goal during agentic coding sessions. It runs alongside Claude Code or Codex, re-evaluating verifiers on file writes and exposing the scores via MCP tools (`sidekick_status`, `sidekick_explain`, `sidekick_set_goal`).
 
 ## Essential commands
 
 ```bash
 # Build
-go build -o hud .
+go build -o sidekick .
 
 # Run all tests
 go test ./...
 
 # Run tests for a single package
-go test ./internal/hud/...
+go test ./internal/sidekick/...
 go test ./internal/verifier/...
 
 # Lint (gopls static analysis via LSP integration — no separate linter config)
@@ -26,34 +26,34 @@ No Makefile, no CI configs. The project uses Go modules (`go 1.26.3`).
 
 ## Architecture: three processes, one daemon
 
-The project compiles to a single `hud` binary with subcommands:
+The project compiles to a single `sidekick` binary with subcommands:
 
 | Subcommand | Role |
 |---|---|
-| `hud start` | Long-running daemon + Bubble Tea TUI. Owns state, runs verifiers, listens on a Unix socket. |
-| `hud menubar` | macOS menu bar variant. Same daemon but renders as a compact menubar item. |
-| `hud hook <event>` | Spawned by agent hooks (Claude Code / Codex). Posts normalized write events to the daemon over the socket, exits. |
-| `hud mcp` | Spawned by the agent as an MCP stdio server. Proxies `hud_status`/`hud_explain`/`hud_set_goal` to the daemon socket. |
-| `hud goal <text>` | CLI shortcut to set the session goal. |
-| `hud status` | CLI shortcut to read the JSON snapshot. |
-| `hud verifier add|trust|list` | Manage verifiers (remote install, trust ledger, listing). |
+| `sidekick start` | Long-running daemon + Bubble Tea TUI. Owns state, runs verifiers, listens on a Unix socket. |
+| `sidekick menubar` | macOS menu bar variant. Same daemon but renders as a compact menubar item. |
+| `sidekick hook <event>` | Spawned by agent hooks (Claude Code / Codex). Posts normalized write events to the daemon over the socket, exits. |
+| `sidekick mcp` | Spawned by the agent as an MCP stdio server. Proxies `sidekick_status`/`sidekick_explain`/`sidekick_set_goal` to the daemon socket. |
+| `sidekick goal <text>` | CLI shortcut to set the session goal. |
+| `sidekick status` | CLI shortcut to read the JSON snapshot. |
+| `sidekick verifier add|trust|list` | Manage verifiers (remote install, trust ledger, listing). |
 
 ### Data flow
 
 ```
 Agent (Claude/Codex)
   ├─ stdout → edits files
-  ├─ hooks → `hud hook write` → IPC socket → daemon State → Runner (debounced batch)
-  └─ MCP tools → `hud mcp` → IPC socket → daemon State (read-only snapshot)
+  ├─ hooks → `sidekick hook write` → IPC socket → daemon State → Runner (debounced batch)
+  └─ MCP tools → `sidekick mcp` → IPC socket → daemon State (read-only snapshot)
                                                       ↓
                                               Bubble Tea TUI (re-renders every 133ms tick)
 ```
 
-**Key invariant**: Only file-write hooks trigger verifier recomputation. The MCP tools are read-only — they never run verifiers. The `hud_set_goal` MCP tool only updates the goal string.
+**Key invariant**: Only file-write hooks trigger verifier recomputation. The MCP tools are read-only — they never run verifiers. The `sidekick_set_goal` MCP tool only updates the goal string.
 
 ### Socket protocol
 
-The daemon listens on a repo-scoped Unix socket under `~/.hud/sockets/<sha256-fingerprint>.sock`. Communication is line-delimited JSON (one request, one response, then close). Request types: `write`, `goal`, `status`, `explain`, `ping`. The `Source` field (`"mcp"` or empty) distinguishes MCP traffic for the TUI header.
+The daemon listens on a repo-scoped Unix socket under `~/.sidekick/sockets/<sha256-fingerprint>.sock`. Communication is line-delimited JSON (one request, one response, then close). Request types: `write`, `goal`, `status`, `explain`, `ping`. The `Source` field (`"mcp"` or empty) distinguishes MCP traffic for the TUI header.
 
 ### Verifier runner
 
@@ -67,7 +67,7 @@ Three verifier types:
 ## Code organization
 
 ```
-hud/
+sidekick/
 ├── main.go                    # Cobra entrypoint, embeds version file
 ├── cmd/                       # Cobra subcommands
 │   ├── root.go                # Root command assembly
@@ -81,7 +81,7 @@ hud/
 │   ├── daemon/                # Unix socket server + shared State
 │   │   ├── socket.go          # net.Listen("unix", ...), JSON-line dispatch
 │   │   └── state.go           # Mutex-guarded State: goal, verifiers, event log, session edits
-│   ├── hud/                   # Bubble Tea TUI
+│   ├── sidekick/                   # Bubble Tea TUI
 │   │   ├── model.go           # tea.Model: tick loop, key bindings, orb spring physics
 │   │   ├── view.go            # Render: compass grid, verifier list, event log, git panel
 │   │   ├── layout.go          # Polar-to-grid projection, directionAngle map
@@ -92,17 +92,17 @@ hud/
 │   ├── verifier/              # Verifier types + subprocess runner
 │   │   ├── verifier.go        # Verifier struct, Verify dispatch, agent prompt builder
 │   │   └── runner.go          # Debounced batch runner, history ring buffer
-│   ├── config/                # hud.yaml loader, resolver, validator
+│   ├── config/                # sidekick.yaml loader, resolver, validator
 │   ├── ipc/                   # JSON-line socket protocol types + Send helper
 │   ├── mcp/                   # MCP stdio server (mark3labs/mcp-go)
 │   ├── gitstats/              # Shells out to git for workspace metadata
 │   ├── fetch/                 # Content-addressed remote artifact cache
-│   ├── trust/                 # Trust-on-first-use ledger (~/.hud/trust.json)
+│   ├── trust/                 # Trust-on-first-use ledger (~/.sidekick/trust.json)
 │   ├── transcript/            # Tails Claude Code session JSONL for verifier context
 │   └── menubar/               # macOS menu bar app (darwin-specific)
-├── skills/                    # Bundled SKILL.md rubrics: architect, test, security, deployment, agents-md, hud
+├── skills/                    # Bundled SKILL.md rubrics: architect, test, security, deployment, agents-md, sidekick
 ├── verifiers/                 # In-tree example scripts: coverage.sh, run.sh, dummy.sh
-├── examples/                  # Reference hud.yaml, claude-settings.json, codex-hooks.json, community verifiers
+├── examples/                  # Reference sidekick.yaml, claude-settings.json, codex-hooks.json, community verifiers
 └── version                    # Single-line version string (embed at build)
 ```
 
@@ -125,15 +125,15 @@ hud/
 
 ### Config loading
 
-- `config.Load(path)` walks upward from cwd to find `hud.yaml` if no path given.
+- `config.Load(path)` walks upward from cwd to find `sidekick.yaml` if no path given.
 - `config.Resolve()` validates structurally, checks remote trust, fetches/caches remote artifacts, resolves local paths, and returns runtime `verifier.Verifier` instances.
-- When no `hud.yaml` exists, `hud start` falls back to **demo verifiers** that emit placeholder scores.
+- When no `sidekick.yaml` exists, `sidekick start` falls back to **demo verifiers** that emit placeholder scores.
 
 ### Verifier scoring
 
 - Distance ∈ `[0, 1]`: 0 = goal satisfied, 1 = maximally far.
 - Score anchors (0.00, 0.25, 0.50, 0.75, 1.00) are injected into agent prompts for consistency.
-- `status: "unknown"` is a special outcome: the verifier ran but couldn't score. HUD **preserves the previous distance** instead of fabricating one.
+- `status: "unknown"` is a special outcome: the verifier ran but couldn't score. Sidekick **preserves the previous distance** instead of fabricating one.
 - Agent verifiers parse Claude's `--output-format=json` envelope, unwrapping the `result` field and harvesting usage telemetry.
 
 ### File path extraction from hooks
@@ -158,8 +158,8 @@ The hook handler (`cmd/hook.go`) must extract file paths from arbitrary JSON (Cl
 
 - **Verifier subprocess hang**: The runner sets `cmd.WaitDelay = 500ms` to bound post-cancellation drain. Without this, `cmd.Wait` can hang on macOS when pipes aren't fully drained after SIGTERM.
 - **stdin drain**: Custom verifiers MUST drain stdin (`cat >/dev/null`) even if they don't use it, or the pipe write blocks.
-- **HUD_VERIFIER=1**: Set in the environment for all verifier subprocesses. Hooks check this to avoid recursing on writes triggered by verifiers themselves.
-- **`SESSION_BASE_REF`**: Captured at `hud start` time via `git rev-parse HEAD`. Verifiers diff against this, NOT against the last write. This is critical — `git diff $SESSION_BASE_REF` shows cumulative session work.
+- **SIDEKICK_VERIFIER=1**: Set in the environment for all verifier subprocesses. Hooks check this to avoid recursing on writes triggered by verifiers themselves.
+- **`SESSION_BASE_REF`**: Captured at `sidekick start` time via `git rev-parse HEAD`. Verifiers diff against this, NOT against the last write. This is critical — `git diff $SESSION_BASE_REF` shows cumulative session work.
 - **No persistence**: All state (verifier history, event log, session edits) is in-memory only. Restarting the daemon loses everything.
 - **`go mod tidy` is flaky with `go 1.26.3`**: The `go.mod` specifies a pre-release Go version. If you get module errors, check your Go toolchain version.
 - **Terminal escape handling**: `charmbracelet/log` auto-detects TTY support. Since the event log sink is a plain `io.Writer` (not a terminal), `NewState()` explicitly sets `SetColorProfile(termenv.TrueColor)` so ANSI escapes are emitted.

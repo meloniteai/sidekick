@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 const (
@@ -35,7 +35,7 @@ func RenderJSON(s ipc.StatusReply) ([]byte, error) {
 	p := payload{
 		Title: statusTitle(s),
 		Items: []menuItem{
-			{Title: fmt.Sprintf("HUD active | version %s", fallback(s.Version, "dev")), Tone: toneForOverall(s)},
+			{Title: fmt.Sprintf("Sidekick active | version %s", fallback(s.Version, "dev")), Tone: toneForOverall(s)},
 			{Title: "Session: " + sessionText(s)},
 			{Title: "Goal: " + goalText(s.Goal)},
 			{Title: fmt.Sprintf("Socket %s | MCP %s | %d verifiers",
@@ -85,7 +85,7 @@ func RenderJSON(s ipc.StatusReply) ([]byte, error) {
 		menuItem{Title: "Trigger now", Enabled: true, Action: actionTrigger, Tone: "accent"},
 		menuItem{Title: "Stop current run", Enabled: stopEnabled, Action: actionStop, Tone: boolTone(stopEnabled, "warn", "muted")},
 		menuItem{Separator: true},
-		menuItem{Title: "Quit HUD", Enabled: true, Action: actionQuit},
+		menuItem{Title: "Quit Sidekick", Enabled: true, Action: actionQuit},
 	)
 	return json.Marshal(p)
 }
@@ -112,12 +112,12 @@ func sessionText(s ipc.StatusReply) string {
 
 func statusTitle(s ipc.StatusReply) string {
 	if anyRunning(s.Verifiers) {
-		return "HUD running"
+		return "Sidekick running"
 	}
 	if len(s.Verifiers) == 0 {
-		return "HUD"
+		return "Sidekick"
 	}
-	return fmt.Sprintf("HUD %.2f", s.OverallDistance)
+	return fmt.Sprintf("Sidekick %.2f", s.OverallDistance)
 }
 
 func verifierLine(v ipc.VerifierStatus) string {
@@ -184,7 +184,7 @@ func fallback(s, fb string) string {
 
 func goalText(goal string) string {
 	if strings.TrimSpace(goal) == "" {
-		return "(none, submit a prompt or run hud goal)"
+		return "(none, submit a prompt or run sidekick goal)"
 	}
 	return trunc(goal, 76)
 }

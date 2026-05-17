@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/uriahlevy/hud/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/daemon"
 )
 
 type Actions struct {
@@ -17,5 +17,5 @@ type Actions struct {
 }
 
 func Run(ctx context.Context, registry *daemon.Registry, actions Actions) error {
-	return errors.New("hud menubar is only available on macOS")
+	return errors.New("sidekick menubar is only available on macOS")
 }

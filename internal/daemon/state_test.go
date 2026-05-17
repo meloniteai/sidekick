@@ -3,7 +3,7 @@ package daemon
 import (
 	"testing"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func TestSnapshotOverallDistanceExcludesDisabledVerifiers(t *testing.T) {

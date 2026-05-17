@@ -1,5 +1,5 @@
 // Package transcript reads recent agent messages out of Claude Code's
-// per-session JSONL transcripts so HUD verifiers can ground their judgment
+// per-session JSONL transcripts so Sidekick verifiers can ground their judgment
 // in what the agent has actually been saying — not just file diffs.
 //
 // CC writes one JSONL file per session under

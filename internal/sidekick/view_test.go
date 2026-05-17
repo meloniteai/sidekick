@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"regexp"
@@ -8,8 +8,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/uriahlevy/hud/internal/gitstats"
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/gitstats"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func TestRenderListSnakeGating(t *testing.T) {
@@ -400,7 +400,7 @@ func TestStatusWizardShowsFullVerifierStatus(t *testing.T) {
 			t.Fatalf("status wizard missing %q in:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "HUD verifier status") {
+	if strings.Contains(out, "Sidekick verifier status") {
 		t.Fatalf("status wizard should use shared modal title, got:\n%s", out)
 	}
 }
@@ -583,7 +583,7 @@ func TestRenderHeaderFields(t *testing.T) {
 		},
 	}
 	// 100 cells is the floor where the metadata column still fits all
-	// fields alongside the ~25-cell HUD banner; below that the
+	// fields alongside the ~25-cell Sidekick banner; below that the
 	// "verifiers: N/M" tail truncates by design (user told us "truncate
 	// if it doesn't fit when sizing down" rather than swapping layouts).
 	out := m.renderHeader(100)
@@ -623,7 +623,7 @@ func TestRenderHeaderShowsGitSummaryWhenWorkspacePresent(t *testing.T) {
 		width:  120,
 		height: 40,
 		workspace: gitstats.Workspace{
-			WorktreeName: "hud",
+			WorktreeName: "sidekick",
 			Branch:       "main",
 			TotalAdded:   42,
 			TotalRemoved: 7,
@@ -635,7 +635,7 @@ func TestRenderHeaderShowsGitSummaryWhenWorkspacePresent(t *testing.T) {
 		snapshot: ipc.StatusReply{Goal: "ship the panel"},
 	}
 	out := m.renderHeader(120)
-	for _, want := range []string{"git: ", "hud", "main", "+42", "-7", "2 files", "(g for details)"} {
+	for _, want := range []string{"git: ", "sidekick", "main", "+42", "-7", "2 files", "(g for details)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git header missing %q in:\n%s", want, out)
 		}
@@ -643,7 +643,7 @@ func TestRenderHeaderShowsGitSummaryWhenWorkspacePresent(t *testing.T) {
 }
 
 // TestRenderHeaderShowsBlockBannerInRightColumn pins the header banner:
-// the right column hosts the compact ANSI-shadow "HUD" wordmark (same
+// the right column hosts the compact ANSI-shadow "Sidekick" wordmark (same
 // font as the splash banner, short form). The banner is fixed-size, not
 // responsive, so a couple of unmistakable glyph sequences should appear
 // on every terminal wide enough to fit the box at all.
@@ -675,7 +675,7 @@ func TestRenderHeaderOmitsGitRowWhenWorkspaceEmpty(t *testing.T) {
 
 func TestRenderGitPanelListsFilesWithCounts(t *testing.T) {
 	p := NewGitPanel(gitstats.Workspace{
-		WorktreeName: "hud",
+		WorktreeName: "sidekick",
 		Branch:       "feat/git-panel",
 		Files: []gitstats.FileStat{
 			{Path: "internal/foo.go", Added: 30, Removed: 5},
@@ -686,7 +686,7 @@ func TestRenderGitPanelListsFilesWithCounts(t *testing.T) {
 	p.width, p.height = 140, 40
 	out := p.View()
 	for _, want := range []string{
-		"Changes", "worktree=hud", "branch=feat/git-panel",
+		"Changes", "worktree=sidekick", "branch=feat/git-panel",
 		"internal/foo.go", "+30", "-5",
 		"assets/logo.png", "bin",
 		"internal/bar.go",
@@ -699,7 +699,7 @@ func TestRenderGitPanelListsFilesWithCounts(t *testing.T) {
 
 func TestRenderGitPanelHintsWhenBaseRefUnset(t *testing.T) {
 	p := NewGitPanel(gitstats.Workspace{
-		WorktreeName: "hud",
+		WorktreeName: "sidekick",
 		Branch:       "main",
 		BaseRefUnset: true,
 	})
@@ -718,7 +718,7 @@ func TestViewIncludesGitPanelOnlyWhenToggled(t *testing.T) {
 		width:  120,
 		height: 30,
 		workspace: gitstats.Workspace{
-			WorktreeName: "hud",
+			WorktreeName: "sidekick",
 			Branch:       "main",
 			Files: []gitstats.FileStat{
 				{Path: "internal/foo.go", Added: 1, Removed: 0},

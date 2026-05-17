@@ -1,12 +1,12 @@
 // Package fetch retrieves remote verifier artefacts (SKILL.md files, custom
 // command scripts) into a content-addressed local cache.
 //
-// Trust model: every remote artefact is pinned by sha256 in hud.yaml and the
+// Trust model: every remote artefact is pinned by sha256 in sidekick.yaml and the
 // fetcher refuses to return content whose hash does not match the pin. This
 // is the smallest possible "registry" — there is no central server, just
 // HTTPS URLs the user has explicitly trusted by writing the pin into config.
 //
-// Cache layout: $HOME/.hud/cache/<sha256>[.<ext>]. Files are written
+// Cache layout: $HOME/.sidekick/cache/<sha256>[.<ext>]. Files are written
 // atomically (tmp + rename) so concurrent fetches cannot observe a torn
 // partial download. A successfully cached artefact is reused without
 // re-downloading; cache misses fall back to HTTPS GET.
@@ -25,17 +25,17 @@ import (
 	"time"
 )
 
-// CacheDir returns the on-disk cache root, $HOME/.hud/cache by default.
-// Overridable via $HUD_CACHE_DIR (mostly for tests).
+// CacheDir returns the on-disk cache root, $HOME/.sidekick/cache by default.
+// Overridable via $SIDEKICK_CACHE_DIR (mostly for tests).
 func CacheDir() (string, error) {
-	if p := os.Getenv("HUD_CACHE_DIR"); p != "" {
+	if p := os.Getenv("SIDEKICK_CACHE_DIR"); p != "" {
 		return p, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".hud", "cache"), nil
+	return filepath.Join(home, ".sidekick", "cache"), nil
 }
 
 // Pin describes a remote artefact: where to download it from and the
@@ -93,12 +93,12 @@ func Resolve(p Pin) (string, error) {
 	return cached, nil
 }
 
-// Hash hex-encodes sha256(body); used by `hud verifier add` after fetch.
+// Hash hex-encodes sha256(body); used by `sidekick verifier add` after fetch.
 func Hash(body []byte) string {
 	return hashHex(body)
 }
 
-// Download fetches url and returns the body. Exposed for the `hud verifier
+// Download fetches url and returns the body. Exposed for the `sidekick verifier
 // add` flow which needs to inspect content before pinning. Resolve()
 // callers should not use this directly — they should pin first.
 func Download(url string) ([]byte, error) {
@@ -149,7 +149,7 @@ func download(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "hud/0.1 (+https://github.com/uriahlevy/hud)")
+	req.Header.Set("User-Agent", "sidekick/0.1 (+https://github.com/meloniteai/sidekick)")
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

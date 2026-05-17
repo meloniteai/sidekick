@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"context"
@@ -9,10 +9,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/uriahlevy/hud/internal/config"
-	"github.com/uriahlevy/hud/internal/daemon"
-	"github.com/uriahlevy/hud/internal/ipc"
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/config"
+	"github.com/meloniteai/sidekick/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
 func writeEditorFixture(t *testing.T) (string, string) {
@@ -25,7 +25,7 @@ func writeEditorFixture(t *testing.T) (string, string) {
 	if err := os.WriteFile(skill, []byte("# Old\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := filepath.Join(dir, "hud.yaml")
+	cfg := filepath.Join(dir, "sidekick.yaml")
 	if err := os.WriteFile(cfg, []byte(`verifiers:
   - name: Architect
     type: agent
@@ -490,7 +490,7 @@ func TestEditWizardViewShowsSelectionAndStepHelp(t *testing.T) {
 	w.height = 30
 
 	out := w.View()
-	for _, want := range []string{"HUD verifier editor", "Architect", "enter edit", "esc abort"} {
+	for _, want := range []string{"Sidekick verifier editor", "Architect", "enter edit", "esc abort"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("selection view missing %q in:\n%s", want, out)
 		}
@@ -502,7 +502,7 @@ func TestEditWizardViewShowsSelectionAndStepHelp(t *testing.T) {
 		t.Fatal("enter should not close wizard")
 	}
 	out = w.View()
-	for _, want := range []string{"Step 1/2", "hud.yaml", "ctrl+s save", "ctrl+n skip", `direction: "N"`} {
+	for _, want := range []string{"Step 1/2", "sidekick.yaml", "ctrl+s save", "ctrl+n skip", `direction: "N"`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("metadata view missing %q in:\n%s", want, out)
 		}

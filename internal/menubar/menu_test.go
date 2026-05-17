@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 func TestRenderJSONIncludesCompactStatusAndActions(t *testing.T) {
 	b, err := RenderJSON(ipc.StatusReply{
-		Goal:            "ship the menu bar HUD",
+		Goal:            "ship the menu bar Sidekick",
 		Version:         "test",
 		OverallDistance: 0.42,
 		Verifiers: []ipc.VerifierStatus{
@@ -26,14 +26,14 @@ func TestRenderJSONIncludesCompactStatusAndActions(t *testing.T) {
 	if err := json.Unmarshal(b, &p); err != nil {
 		t.Fatalf("payload is not json: %v", err)
 	}
-	if p.Title != "HUD running" {
+	if p.Title != "Sidekick running" {
 		t.Fatalf("title = %q, want running status", p.Title)
 	}
 
 	var sawGoal, sawVerifier, sawTrigger, sawStop, sawQuit bool
 	for _, item := range p.Items {
 		switch {
-		case strings.Contains(item.Title, "ship the menu bar HUD"):
+		case strings.Contains(item.Title, "ship the menu bar Sidekick"):
 			sawGoal = true
 		case strings.Contains(item.Title, "Architect | N | d=0.20"):
 			sawVerifier = true

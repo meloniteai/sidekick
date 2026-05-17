@@ -1,9 +1,9 @@
-package hud
+package sidekick
 
 import "github.com/charmbracelet/lipgloss"
 
 // MinSelected is the minimum number of verifiers a user must enable before
-// the HUD can start. One is enough — the compass renders any subset.
+// the Sidekick can start. One is enough — the compass renders any subset.
 const MinSelected = 1
 
 // stylePickerError renders inline error text in red. Used by the in-TUI

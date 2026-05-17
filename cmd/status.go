@@ -7,15 +7,15 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 // status is a tiny dev/debug subcommand: prints the daemon's StatusReply as JSON.
-// MCP `hud_status` (milestone 5) will use the same Send call.
+// MCP `sidekick_status` (milestone 5) will use the same Send call.
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Print the current HUD status as JSON (debug)",
+		Short: "Print the current Sidekick status as JSON (debug)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
 			resp, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeStatus}, cwd)

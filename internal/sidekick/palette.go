@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"strings"
@@ -38,7 +38,7 @@ var paletteItems = []paletteItem{
 	{label: "Toggle Event Log", shortcut: "ctrl+l", action: paletteActionToggleEventLog},
 }
 
-// Palette colors share the KIKAITE coral accent family with the landing
+// Palette colors share the Melonite coral accent family with the landing
 // screen so the command palette and the splash read as one product. Chrome
 // (border, slashes, selection bar) uses the saturated coral; titles and
 // prompts use the softer coral; secondary text stays dim grey. Every inner

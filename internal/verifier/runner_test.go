@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/daemon"
 )
 
 // waitFor polls until cond() returns true or the deadline fires. Returns

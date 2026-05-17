@@ -1,6 +1,6 @@
 # Community verifiers
 
-This directory holds vetted reference implementations of HUD verifiers
+This directory holds vetted reference implementations of Sidekick verifiers
 that go beyond the built-in compass quartet (Architect / Test / Security
 / Deployment). They are intended as:
 
@@ -25,7 +25,7 @@ JSON line on stdout, exits 0.
 ## Try one
 
 ```yaml
-# hud.yaml
+# sidekick.yaml
 verifiers:
   - name: Docs
     type: command
@@ -41,6 +41,6 @@ Or fetch the same script from a fork by URL with a sha256 pin (no copy
 required):
 
 ```bash
-hud verifier add https://example.com/community/docs-drift.sh \
+sidekick verifier add https://example.com/community/docs-drift.sh \
   --name Docs --direction NE
 ```

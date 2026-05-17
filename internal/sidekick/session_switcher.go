@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 // SessionSwitcher is the ctrl+w modal for explicit TUI session selection.

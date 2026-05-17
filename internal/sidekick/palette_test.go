@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"strings"
@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/uriahlevy/hud/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/daemon"
 )
 
 // TestPaletteRenderShape locks in the visual contract: title row with slash
@@ -232,7 +232,7 @@ func TestPaletteDispatchTogglesEventLog(t *testing.T) {
 
 // TestPaletteDispatchOpensCreateWizard: confirming "New Verifier" (index 0)
 // has to install a fresh create wizard on the Model. We rely on the existing
-// editor fixture so the wizard can read its hud.yaml and reach the
+// editor fixture so the wizard can read its sidekick.yaml and reach the
 // editCreateBasics phase, matching what TestModelNewKeyOpensCreateWizard
 // asserts for the bare-`n` shortcut.
 func TestPaletteDispatchOpensCreateWizard(t *testing.T) {
@@ -252,7 +252,7 @@ func TestPaletteDispatchOpensCreateWizard(t *testing.T) {
 }
 
 // TestPaletteDispatchOpensEditWizard: confirming "Edit Verifier" (index 1)
-// installs an EditWizard pointing at hud.yaml.
+// installs an EditWizard pointing at sidekick.yaml.
 func TestPaletteDispatchOpensEditWizard(t *testing.T) {
 	cfg, _ := writeEditorFixture(t)
 	m := New(daemon.NewState()).WithConfigEditor(cfg)

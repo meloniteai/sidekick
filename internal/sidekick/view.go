@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"fmt"
@@ -8,9 +8,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/uriahlevy/hud/internal/daemon"
-	"github.com/uriahlevy/hud/internal/gitstats"
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/gitstats"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 // brandBgColor is the lipgloss.Color for brandBg, hoisted into a var so
@@ -74,9 +74,9 @@ var (
 	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28")).Background(brandBgColor)
 	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor).Padding(0, 1).Foreground(lipgloss.Color("252"))
 	// styleHeaderBrand mirrors styleLandingBanner from the splash: the
-	// in-header ANSI-shadow "HUD" wordmark is rendered with the same
+	// in-header ANSI-shadow "Sidekick" wordmark is rendered with the same
 	// solid coral on warm graphite, bold, no animation — so the splash
-	// and the main HUD share one wordmark identity.
+	// and the main Sidekick share one wordmark identity.
 	styleHeaderBrand = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor).Bold(true)
 	styleListBorder  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor)
 	styleListTitle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brandCoralSoft)).Background(brandBgColor)
@@ -281,22 +281,22 @@ func defaultString(s, fallback string) string {
 	return s
 }
 
-// hudHeaderBanner is the compact ANSI-shadow "HUD" wordmark stamped on
-// the right side of the main HUD header. Same chunky block aesthetic as
-// the splash banner for brand continuity, but trimmed to the three-letter
-// short form and compressed to 4 rows so it sits inside the existing
-// header band without adding vertical space (and so the view still fits
-// the classic 80×24 terminal). The splash keeps the full 6-row
-// "KIKAITE HUD" since it owns its own screen.
-const hudHeaderBanner = `██╗  ██╗██╗   ██╗██████╗
-███████║██║   ██║██║  ██║
-██║  ██║╚██████╔╝██████╔╝
-╚═╝  ╚═╝ ╚═════╝ ╚═════╝ `
+// sidekickHeaderBanner is the compact ANSI-shadow "SK" monogram stamped
+// on the right side of the main header. Same chunky block aesthetic as
+// the splash banner for brand continuity, but pared to a two-letter
+// monogram so it sits inside the existing header band without adding
+// vertical space and the metadata column still has room to breathe on
+// the classic 80×24 terminal. The splash keeps the full 6-row "Sidekick"
+// since it owns its own screen.
+const sidekickHeaderBanner = `███████╗█████╔╝
+╚════██║██╔═██╗
+███████║██║  ██╗
+╚══════╝╚═╝  ╚═╝`
 
 // renderHeader builds the framed metadata box at the top of the screen.
 // The box stretches to the same total width as the grid so it visually
 // anchors over the compass below. The right column hosts the ANSI-shadow
-// "HUD" wordmark — same font as the splash banner, just the short form so
+// "Sidekick" wordmark — same font as the splash banner, the 4-row form so
 // it fits beside the telemetry without dominating. Sized to fit on
 // 80-cell-or-wider terminals; on narrower widths lipgloss clips the
 // banner from the right rather than spawning a separate fallback.
@@ -311,7 +311,7 @@ func (m Model) renderHeader(totalW int) string {
 		ver = "dev"
 	}
 
-	bannerLines := strings.Split(hudHeaderBanner, "\n")
+	bannerLines := strings.Split(sidekickHeaderBanner, "\n")
 	brandW := 0
 	for _, ln := range bannerLines {
 		if w := lipgloss.Width(ln); w > brandW {
@@ -421,7 +421,7 @@ func (m Model) headerTelemetryRows(colW int) []string {
 	goal := m.snapshot.Goal
 	goalRow := styleGoalLbl.Render("goal: ")
 	if goal == "" {
-		goalRow += styleReason.Render("(none — submit a prompt or run `hud goal ...`)")
+		goalRow += styleReason.Render("(none — submit a prompt or run `sidekick goal ...`)")
 	} else {
 		goalRow += truncate(goal, colW-len("goal: ")-2)
 	}

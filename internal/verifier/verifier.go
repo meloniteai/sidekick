@@ -1,6 +1,6 @@
 // Package verifier defines the subprocess-backed verifier interface and runner.
 //
-// HUD supports three verifier types:
+// Sidekick supports three verifier types:
 //   - command: reads session JSON on stdin and writes {distance, reason}.
 //   - agent: loads a SKILL.md rubric and invokes a configured agent CLI.
 //   - binary: maps command exit status to pass/fail distance.
@@ -21,7 +21,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 // Session is the context piped to verifier subprocesses on stdin.
@@ -88,8 +88,8 @@ type Verifier struct {
 	Permissions Permissions
 
 	// Source provenance — populated when the verifier was loaded from a
-	// remote URL via `hud verifier add` (or an inline `source:` block in
-	// hud.yaml). "local" / "" means an in-tree script.
+	// remote URL via `sidekick verifier add` (or an inline `source:` block in
+	// sidekick.yaml). "local" / "" means an in-tree script.
 	Source    string // "local" | "remote"
 	SourceURL string
 	SHA256    string
@@ -309,7 +309,7 @@ func verifierEnv(s Session) []string {
 	return []string{
 		"SESSION_BASE_REF=" + s.SessionBaseRef,
 		"SESSION_WORKTREE=" + s.SessionWorktree,
-		"HUD_VERIFIER=1", // prevents HUD hooks from overriding the main session goal
+		"SIDEKICK_VERIFIER=1", // prevents Sidekick hooks from overriding the main session goal
 	}
 }
 
@@ -542,7 +542,7 @@ without -C will evaluate the wrong tree and produce a misleading score.
 4. Score the resulting state, not the volume of work. A small, well-
    placed change should score better than a large, sprawling one.
 
-## Output contract (HUD verifier mode)
+## Output contract (Sidekick verifier mode)
 
 After your evaluation, output exactly one final line of JSON, with no
 other text on that line:
@@ -573,7 +573,7 @@ prerequisite step not yet done), output:
 
 {"distance": 0.0, "reason": "<why>", "status": "unknown"}
 
-The "status":"unknown" tag tells HUD to keep the prior distance and
+The "status":"unknown" tag tells Sidekick to keep the prior distance and
 flag the row as not-yet-evaluable, instead of fabricating a score.
 
 ### Reason field

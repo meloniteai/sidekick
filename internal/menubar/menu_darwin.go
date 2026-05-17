@@ -7,10 +7,10 @@ package menubar
 #cgo darwin LDFLAGS: -framework Cocoa
 #include <stdlib.h>
 
-void HUDSetActionFD(int fd);
-void HUDRun(void);
-void HUDUpdateMenu(const char *json);
-void HUDStop(void);
+void SIDEKICKSetActionFD(int fd);
+void SIDEKICKRun(void);
+void SIDEKICKUpdateMenu(const char *json);
+void SIDEKICKStop(void);
 */
 import "C"
 
@@ -21,7 +21,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/uriahlevy/hud/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/daemon"
 )
 
 func init() {
@@ -49,17 +49,17 @@ func Run(ctx context.Context, registry *daemon.Registry, actions Actions) error 
 	defer readPipe.Close()
 	defer writePipe.Close()
 
-	C.HUDSetActionFD(C.int(writePipe.Fd()))
+	C.SIDEKICKSetActionFD(C.int(writePipe.Fd()))
 
 	go pumpActions(ctx, readPipe, registry, actions)
 	go pumpMenu(ctx, registry)
 	go func() {
 		<-ctx.Done()
-		C.HUDStop()
+		C.SIDEKICKStop()
 		_ = readPipe.Close()
 	}()
 
-	C.HUDRun()
+	C.SIDEKICKRun()
 	return nil
 }
 
@@ -87,7 +87,7 @@ func pumpActions(ctx context.Context, r *os.File, registry *daemon.Registry, act
 			if actions.Quit != nil {
 				actions.Quit()
 			}
-			C.HUDStop()
+			C.SIDEKICKStop()
 			return
 		default:
 			action := int(buf[0])
@@ -109,7 +109,7 @@ func pumpMenu(ctx context.Context, registry *daemon.Registry) {
 			return
 		}
 		cstr := C.CString(string(b))
-		C.HUDUpdateMenu(cstr)
+		C.SIDEKICKUpdateMenu(cstr)
 		C.free(unsafe.Pointer(cstr))
 	}
 	update()

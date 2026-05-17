@@ -3,9 +3,9 @@
 #import <Cocoa/Cocoa.h>
 #include <unistd.h>
 
-static int hudActionFD = -1;
+static int sidekickActionFD = -1;
 
-@interface HUDMenuController : NSObject
+@interface SIDEKICKMenuController : NSObject
 @property(strong) NSStatusItem *statusItem;
 @property(strong) NSMenu *menu;
 - (void)setup;
@@ -14,9 +14,9 @@ static int hudActionFD = -1;
 - (void)stopApp;
 @end
 
-static HUDMenuController *hudController = nil;
+static SIDEKICKMenuController *sidekickController = nil;
 
-static NSImage *HUDToneImage(NSString *tone) {
+static NSImage *SIDEKICKToneImage(NSString *tone) {
     if (tone == nil || [tone length] == 0) {
         return nil;
     }
@@ -51,16 +51,16 @@ static NSImage *HUDToneImage(NSString *tone) {
     return image;
 }
 
-@implementation HUDMenuController
+@implementation SIDEKICKMenuController
 
 - (void)setup {
     self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
-    self.statusItem.button.title = @"HUD";
-    self.statusItem.button.toolTip = @"HUD session status";
-    self.menu = [[NSMenu alloc] initWithTitle:@"HUD"];
+    self.statusItem.button.title = @"Sidekick";
+    self.statusItem.button.toolTip = @"Sidekick session status";
+    self.menu = [[NSMenu alloc] initWithTitle:@"Sidekick"];
     self.statusItem.menu = self.menu;
 
-    NSMenuItem *starting = [[NSMenuItem alloc] initWithTitle:@"Starting HUD..." action:nil keyEquivalent:@""];
+    NSMenuItem *starting = [[NSMenuItem alloc] initWithTitle:@"Starting Sidekick..." action:nil keyEquivalent:@""];
     [starting setEnabled:NO];
     [self.menu addItem:starting];
 }
@@ -117,7 +117,7 @@ static NSImage *HUDToneImage(NSString *tone) {
         }
 
         NSString *tone = entry[@"tone"];
-        item.image = HUDToneImage(tone);
+        item.image = SIDEKICKToneImage(tone);
         [self.menu addItem:item];
     }
 }
@@ -125,9 +125,9 @@ static NSImage *HUDToneImage(NSString *tone) {
 - (void)performAction:(id)sender {
     NSMenuItem *item = (NSMenuItem *)sender;
     NSInteger action = [item.representedObject integerValue];
-    if (hudActionFD >= 0 && action > 0 && action < 256) {
+    if (sidekickActionFD >= 0 && action > 0 && action < 256) {
         unsigned char b = (unsigned char)action;
-        (void)write(hudActionFD, &b, 1);
+        (void)write(sidekickActionFD, &b, 1);
     }
 }
 
@@ -147,37 +147,37 @@ static NSImage *HUDToneImage(NSString *tone) {
 
 @end
 
-void HUDSetActionFD(int fd) {
-    hudActionFD = fd;
+void SIDEKICKSetActionFD(int fd) {
+    sidekickActionFD = fd;
 }
 
-void HUDRun(void) {
+void SIDEKICKRun(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [NSApp setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameAqua]];
 
-        hudController = [[HUDMenuController alloc] init];
-        [hudController setup];
+        sidekickController = [[SIDEKICKMenuController alloc] init];
+        [sidekickController setup];
         [NSApp run];
     }
 }
 
-void HUDUpdateMenu(const char *json) {
-    if (json == NULL || hudController == nil) {
+void SIDEKICKUpdateMenu(const char *json) {
+    if (json == NULL || sidekickController == nil) {
         return;
     }
     NSString *payload = [NSString stringWithUTF8String:json];
-    [hudController performSelectorOnMainThread:@selector(updateWithJSON:)
+    [sidekickController performSelectorOnMainThread:@selector(updateWithJSON:)
                                     withObject:payload
                                  waitUntilDone:NO];
 }
 
-void HUDStop(void) {
-    if (hudController == nil) {
+void SIDEKICKStop(void) {
+    if (sidekickController == nil) {
         return;
     }
-    [hudController performSelectorOnMainThread:@selector(stopApp)
+    [sidekickController performSelectorOnMainThread:@selector(stopApp)
                                     withObject:nil
                                  waitUntilDone:NO];
 }

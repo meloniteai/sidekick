@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# dummy.sh — deterministic no-op HUD verifier.
+# dummy.sh — deterministic no-op Sidekick verifier.
 #
-# Reads and ignores the standard HUD session JSON, then always reports
+# Reads and ignores the standard Sidekick session JSON, then always reports
 # distance 0.0 so it sits on the goal.
 
 set -euo pipefail

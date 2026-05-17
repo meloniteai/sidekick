@@ -5,7 +5,7 @@
 #
 # This is a deterministic command verifier: stdin = session JSON, stdout
 # = exactly one {"distance": ..., "reason": "..."} object on a single line.
-# All other output goes to stderr (HUD will ignore it).
+# All other output goes to stderr (Sidekick will ignore it).
 
 set -euo pipefail
 

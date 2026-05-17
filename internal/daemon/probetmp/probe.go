@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/daemon"
 )
 
 type noopHandler struct{}
@@ -17,12 +17,12 @@ func (noopHandler) OnWrite(*daemon.State, string) {}
 func (noopHandler) OnGoal(*daemon.State, string)  {}
 
 func main() {
-	dir, err := os.MkdirTemp("", "hud-probe-*")
+	dir, err := os.MkdirTemp("", "sidekick-probe-*")
 	if err != nil {
 		panic(err)
 	}
 	defer os.RemoveAll(dir)
-	sock := filepath.Join(dir, "hud.sock")
+	sock := filepath.Join(dir, "sidekick.sock")
 
 	r1 := daemon.NewRegistry(daemon.NewState(), nil)
 	s1, err := daemon.Listen(sock, r1, noopHandler{})

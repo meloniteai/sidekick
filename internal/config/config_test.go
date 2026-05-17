@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
 func writeTemp(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
-	p := filepath.Join(dir, "hud.yaml")
+	p := filepath.Join(dir, "sidekick.yaml")
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -211,15 +211,15 @@ func TestLoadMissing(t *testing.T) {
 	}
 }
 
-// TestLoadFallsBackToGlobal exercises the global ~/.hud/hud.yaml fallback:
-// when no project hud.yaml is found by walking upward from startDir, the
-// loader should resolve $HUD_GLOBAL_CONFIG instead. Isolated with both a
+// TestLoadFallsBackToGlobal exercises the global ~/.sidekick/sidekick.yaml fallback:
+// when no project sidekick.yaml is found by walking upward from startDir, the
+// loader should resolve $SIDEKICK_GLOBAL_CONFIG instead. Isolated with both a
 // fresh startDir and an env-overridden global path so the user's real
 // home directory is never touched.
 func TestLoadFallsBackToGlobal(t *testing.T) {
-	startDir := t.TempDir() // contains no hud.yaml
+	startDir := t.TempDir() // contains no sidekick.yaml
 	globalDir := t.TempDir()
-	globalPath := filepath.Join(globalDir, "hud.yaml")
+	globalPath := filepath.Join(globalDir, "sidekick.yaml")
 	body := `verifiers:
   - name: GlobalOnly
     direction: N
@@ -228,7 +228,7 @@ func TestLoadFallsBackToGlobal(t *testing.T) {
 	if err := os.WriteFile(globalPath, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HUD_GLOBAL_CONFIG", globalPath)
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", globalPath)
 
 	f, path, err := LoadFrom("", startDir)
 	if err != nil {
@@ -242,13 +242,13 @@ func TestLoadFallsBackToGlobal(t *testing.T) {
 	}
 }
 
-// TestProjectShadowsGlobal verifies that when both a project hud.yaml
+// TestProjectShadowsGlobal verifies that when both a project sidekick.yaml
 // and a global one exist, the project file wins and the global is
 // ignored entirely (no merging). The user's decision: project replaces
 // global.
 func TestProjectShadowsGlobal(t *testing.T) {
 	startDir := t.TempDir()
-	projectPath := filepath.Join(startDir, "hud.yaml")
+	projectPath := filepath.Join(startDir, "sidekick.yaml")
 	if err := os.WriteFile(projectPath, []byte(`verifiers:
   - name: ProjectOnly
     direction: N
@@ -257,7 +257,7 @@ func TestProjectShadowsGlobal(t *testing.T) {
 		t.Fatal(err)
 	}
 	globalDir := t.TempDir()
-	globalPath := filepath.Join(globalDir, "hud.yaml")
+	globalPath := filepath.Join(globalDir, "sidekick.yaml")
 	if err := os.WriteFile(globalPath, []byte(`verifiers:
   - name: GlobalOnly
     direction: S
@@ -265,7 +265,7 @@ func TestProjectShadowsGlobal(t *testing.T) {
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HUD_GLOBAL_CONFIG", globalPath)
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", globalPath)
 
 	f, path, err := LoadFrom("", startDir)
 	if err != nil {

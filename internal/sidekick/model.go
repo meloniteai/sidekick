@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/harmonica"
 
-	"github.com/uriahlevy/hud/internal/daemon"
-	"github.com/uriahlevy/hud/internal/gitstats"
-	"github.com/uriahlevy/hud/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/daemon"
+	"github.com/meloniteai/sidekick/internal/gitstats"
+	"github.com/meloniteai/sidekick/internal/ipc"
 )
 
 // tickInterval drives a periodic re-render so the TUI reflects async verifier
@@ -154,13 +154,13 @@ func (m Model) WithStopAll(fn func()) Model {
 }
 
 // WithConfigEditor enables the in-TUI verifier edit wizard. configPath should
-// be the hud.yaml file that produced the current verifier configuration.
+// be the sidekick.yaml file that produced the current verifier configuration.
 func (m Model) WithConfigEditor(configPath string) Model {
 	m.configPath = configPath
 	return m
 }
 
-// WithConfigPathFunc lets multi-session hosts provide the hud.yaml path for
+// WithConfigPathFunc lets multi-session hosts provide the sidekick.yaml path for
 // the currently displayed session.
 func (m Model) WithConfigPathFunc(fn func() string) Model {
 	m.configPathFunc = fn
@@ -168,7 +168,7 @@ func (m Model) WithConfigPathFunc(fn func() string) Model {
 }
 
 // WithConfigSaved sets a callback invoked after the edit wizard saves
-// hud.yaml metadata.
+// sidekick.yaml metadata.
 func (m Model) WithConfigSaved(fn func() error) Model {
 	m.onConfigSaved = fn
 	return m

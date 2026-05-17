@@ -1,4 +1,4 @@
-// Package gitstats fetches lightweight workspace metadata used by the HUD
+// Package gitstats fetches lightweight workspace metadata used by the Sidekick
 // header: the current worktree name, the active branch, and per-file line
 // add/remove counts since the session base ref.
 //
@@ -28,7 +28,7 @@ type FileStat struct {
 	Binary  bool
 }
 
-// Workspace bundles every git-derived field rendered in the HUD header and
+// Workspace bundles every git-derived field rendered in the Sidekick header and
 // the toggleable per-file panel.
 //
 // BaseRefUnset signals that no session base ref was provided to Fetch, so

@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"gopkg.in/yaml.v3"
 
-	"github.com/uriahlevy/hud/internal/config"
+	"github.com/meloniteai/sidekick/internal/config"
 )
 
 type editPhase int
@@ -105,11 +105,11 @@ type EditWizard struct {
 	createTypeValue *string
 }
 
-// NewEditWizard loads hud.yaml and starts at the verifier picker.
+// NewEditWizard loads sidekick.yaml and starts at the verifier picker.
 func NewEditWizard(configPath string) EditWizard {
 	w := EditWizard{configPath: configPath, selected: -1}
 	if configPath == "" {
-		w.errMsg = "no hud.yaml is loaded; run `hud verifier add` to create one"
+		w.errMsg = "no sidekick.yaml is loaded; run `sidekick verifier add` to create one"
 		return w
 	}
 	f, path, err := config.Load(configPath)
@@ -124,7 +124,7 @@ func NewEditWizard(configPath string) EditWizard {
 	return w
 }
 
-// NewCreateWizard loads hud.yaml and starts a guided verifier creation flow.
+// NewCreateWizard loads sidekick.yaml and starts a guided verifier creation flow.
 func NewCreateWizard(configPath string) EditWizard {
 	w := NewEditWizard(configPath)
 	w.create = true
@@ -137,7 +137,7 @@ func NewCreateWizard(configPath string) EditWizard {
 	return w
 }
 
-// NewEditWizardFor loads hud.yaml and jumps straight into editing the named
+// NewEditWizardFor loads sidekick.yaml and jumps straight into editing the named
 // verifier when it exists. Missing names fall back to the normal picker.
 func NewEditWizardFor(configPath, verifierName string) EditWizard {
 	w := NewEditWizard(configPath)
@@ -155,7 +155,7 @@ func NewEditWizardFor(configPath, verifierName string) EditWizard {
 	return w
 }
 
-// Update handles a wizard event. done is true when the main HUD should close
+// Update handles a wizard event. done is true when the main Sidekick should close
 // the wizard and return to the compass.
 func (w EditWizard) Update(msg tea.Msg) (EditWizard, tea.Cmd, bool) {
 	if size, ok := msg.(tea.WindowSizeMsg); ok {
@@ -649,7 +649,7 @@ func (w *EditWizard) validateNewVerifier() error {
 	// Structural validation only: a brand-new verifier may legitimately
 	// point at a skill file the wizard is about to write or a command
 	// script the user will create afterwards. Filesystem existence checks
-	// still run at `hud start` load time.
+	// still run at `sidekick start` load time.
 	return next.ValidateStructural()
 }
 
@@ -812,9 +812,9 @@ func renderEditorTitleRow(title string, innerW int) string {
 func (w EditWizard) title() string {
 	switch w.phase {
 	case editSelect:
-		return "HUD verifier editor"
+		return "Sidekick verifier editor"
 	case editMetadata:
-		return "Step 1/2: hud.yaml metadata"
+		return "Step 1/2: sidekick.yaml metadata"
 	case editSkill:
 		return "Step 2/2: SKILL.md content"
 	case editCreateBasics:
@@ -826,7 +826,7 @@ func (w EditWizard) title() string {
 	case editCreateSkill:
 		return "New verifier 4/4: SKILL.md content"
 	default:
-		return "HUD verifier editor"
+		return "Sidekick verifier editor"
 	}
 }
 
@@ -966,7 +966,7 @@ func defaultCreateConfig(kind, name string) string {
 func defaultSkillContent(name string) string {
 	return fmt.Sprintf(`# %s
 
-Assess this session against the active HUD goal.
+Assess this session against the active Sidekick goal.
 
 Return only JSON in this shape:
 {"distance": 0.5, "reason": "one concise sentence"}

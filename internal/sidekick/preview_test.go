@@ -1,4 +1,4 @@
-package hud
+package sidekick
 
 import (
 	"fmt"
@@ -9,17 +9,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/uriahlevy/hud/internal/ipc"
-	"github.com/uriahlevy/hud/internal/verifier"
+	"github.com/meloniteai/sidekick/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
 // TestVisualPreview renders a synthetic snapshot to stdout when
-// HUD_VISUAL=1 is set. Used for hand-eyeballing the flamboyance pass.
+// SIDEKICK_VISUAL=1 is set. Used for hand-eyeballing the flamboyance pass.
 //
-//	HUD_VISUAL=1 TICK=7 go test -run TestVisualPreview ./internal/hud/ -v
+//	SIDEKICK_VISUAL=1 TICK=7 go test -run TestVisualPreview ./internal/sidekick/ -v
 func TestVisualPreview(t *testing.T) {
-	if os.Getenv("HUD_VISUAL") == "" {
-		t.Skip("set HUD_VISUAL=1 to print a rendered frame")
+	if os.Getenv("SIDEKICK_VISUAL") == "" {
+		t.Skip("set SIDEKICK_VISUAL=1 to print a rendered frame")
 	}
 	tick, _ := strconv.Atoi(os.Getenv("TICK"))
 	w, _ := strconv.Atoi(os.Getenv("COLS"))
@@ -56,20 +56,20 @@ func TestVisualPreview(t *testing.T) {
 }
 
 // TestVisualPreviewLanding renders the landing/splash to stdout when
-// HUD_VISUAL=1 is set so we can eyeball the KIKAITE HUD banner and the
+// SIDEKICK_VISUAL=1 is set so we can eyeball the Melonite Sidekick banner and the
 // coral chrome. Sized for a typical 120-wide terminal.
 //
-//	HUD_VISUAL=1 go test -run TestVisualPreviewLanding ./internal/hud/ -v
+//	SIDEKICK_VISUAL=1 go test -run TestVisualPreviewLanding ./internal/sidekick/ -v
 func TestVisualPreviewLanding(t *testing.T) {
-	if os.Getenv("HUD_VISUAL") == "" {
-		t.Skip("set HUD_VISUAL=1 to print a rendered frame")
+	if os.Getenv("SIDEKICK_VISUAL") == "" {
+		t.Skip("set SIDEKICK_VISUAL=1 to print a rendered frame")
 	}
 	vs := []verifier.Verifier{
 		{Name: "Architect", Direction: "N"},
 		{Name: "Test Engineer", Direction: "E"},
 		{Name: "Security", Direction: "S"},
 	}
-	l := NewLanding(vs, "0.1", "/Users/u/.hud/sockets/abc.sock", "/Users/u/repos/hud")
+	l := NewLanding(vs, "0.1", "/Users/u/.sidekick/sockets/abc.sock", "/Users/u/repos/sidekick")
 	next, _ := l.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	fmt.Println(next.(Landing).View())
 }

@@ -1,4 +1,4 @@
-module github.com/uriahlevy/hud
+module github.com/meloniteai/sidekick
 
 go 1.26.3
 
