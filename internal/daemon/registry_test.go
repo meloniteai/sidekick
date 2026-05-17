@@ -162,7 +162,21 @@ func testRepoWithWorktree(t *testing.T) (string, string) {
 	testGit(t, trunk, "commit", "--allow-empty", "-q", "-m", "init")
 	wt := filepath.Join(t.TempDir(), "wt")
 	testGit(t, trunk, "worktree", "add", "-q", wt)
-	return trunk, wt
+	// macOS t.TempDir() returns paths under /var/folders, but git
+	// resolves them through the /var -> /private/var symlink. Tests
+	// assert that stored session worktrees match these paths, so
+	// canonicalise here once and let every assertion see the same
+	// form the factory will see.
+	return canonicalForTest(t, trunk), canonicalForTest(t, wt)
+}
+
+func canonicalForTest(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", path, err)
+	}
+	return resolved
 }
 
 func testGit(t *testing.T, dir string, args ...string) {

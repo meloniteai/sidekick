@@ -73,6 +73,15 @@ func normalizeSessionKey(worktree string) string {
 	if abs, err := filepath.Abs(worktree); err == nil {
 		worktree = abs
 	}
+	// EvalSymlinks so paths that traverse a symlink (e.g. macOS /var ->
+	// /private/var, or a user's symlinked workspace) hash to the same
+	// key as their resolved form. git's `rev-parse --show-toplevel`
+	// always returns the resolved path, so without this the caller's
+	// cwd and the registry's stored key would diverge and the daemon
+	// would lazily create a duplicate session for the same worktree.
+	if resolved, err := filepath.EvalSymlinks(worktree); err == nil {
+		worktree = resolved
+	}
 	return filepath.Clean(worktree)
 }
 
