@@ -10,10 +10,17 @@ import (
 // to MCP clients, and shown in the TUI header.
 var version string
 
+// hudSkillBody is the embedded contents of skills/hud/SKILL.md, injected
+// at startup so `hud install` can write it into the agent's skill dirs.
+var hudSkillBody []byte
+
 // New returns the root command, fully assembled. v is the release string
-// (typically the contents of the repo-root `version` file).
-func New(v string) *cobra.Command {
+// (typically the contents of the repo-root `version` file). skill is the
+// embedded SKILL.md body shipped with the binary (typically the contents
+// of skills/hud/SKILL.md, also //go:embed'd at the repo root).
+func New(v string, skill []byte) *cobra.Command {
 	version = v
+	hudSkillBody = skill
 	root := &cobra.Command{
 		Use:           "hud",
 		Short:         "A live HUD-like TUI for agentic coding sessions",
@@ -28,5 +35,6 @@ func New(v string) *cobra.Command {
 	root.AddCommand(newMcpCmd())
 	root.AddCommand(newMenubarCmd())
 	root.AddCommand(newVerifierCmd())
+	root.AddCommand(newInstallCmd())
 	return root
 }
