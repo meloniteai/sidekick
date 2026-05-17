@@ -106,16 +106,16 @@ func testGit(t *testing.T, dir string, args ...string) {
 func TestModelToggleGitPanelKey(t *testing.T) {
 	state := daemon.NewState()
 	m := New(state)
-	if m.showGitPanel {
+	if m.gitPanel != nil {
 		t.Fatal("git panel should start hidden")
 	}
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
-	if !next.(Model).showGitPanel {
-		t.Fatal("g should toggle git panel on")
+	if next.(Model).gitPanel == nil {
+		t.Fatal("g should open git panel modal")
 	}
 	after, _ := next.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
-	if after.(Model).showGitPanel {
-		t.Fatal("second g should toggle git panel off")
+	if after.(Model).gitPanel != nil {
+		t.Fatal("second g should dismiss git panel modal")
 	}
 }
 

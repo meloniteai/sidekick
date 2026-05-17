@@ -64,7 +64,6 @@ type Model struct {
 	snapshot          ipc.StatusReply
 	events            []daemon.EventEntry
 	showEventLog      bool
-	showGitPanel      bool
 	width             int
 	height            int
 	tick              int
@@ -81,6 +80,7 @@ type Model struct {
 	status            *StatusWizard
 	palette           *Palette
 	switcher          *SessionSwitcher
+	gitPanel          *GitPanel
 	// anims is keyed by verifier name. We seed an entry on first observation
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
@@ -199,6 +199,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.switcher.width = msg.Width
 			m.switcher.height = msg.Height
 		}
+		if m.gitPanel != nil {
+			m.gitPanel.width = msg.Width
+			m.gitPanel.height = msg.Height
+		}
 	case tickMsg:
 		m.snapshot = m.currentSnapshot()
 		m.events = m.currentEvents()
@@ -212,6 +216,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshAnims()
 		m.refreshOrbs()
 		m.refreshWorkspace()
+		m.refreshGitPanel()
 		return m, tick()
 	}
 	if m.palette != nil {
@@ -240,6 +245,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		m.switcher = &next
+		return m, cmd
+	}
+	if m.gitPanel != nil {
+		next, cmd, done := m.gitPanel.Update(msg)
+		if done {
+			m.gitPanel = nil
+			return m, cmd
+		}
+		m.gitPanel = &next
 		return m, cmd
 	}
 	if m.status != nil {
@@ -325,11 +339,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "l", "ctrl+l":
 			m.showEventLog = !m.showEventLog
 		case "g", "ctrl+g":
-			m.showGitPanel = !m.showGitPanel
-			// Force a refresh on toggle so the user doesn't see stale data
-			// the first time they open the panel.
-			m.workspaceFetchAt = 0
-			m.refreshWorkspace()
+			m.toggleGitPanel()
 		default:
 			if idx, ok := toggleKeyIndex(msg.String()); ok && idx < len(m.snapshot.Verifiers) {
 				m.toggleVerifierByName(m.snapshot.Verifiers[idx].Name)
@@ -453,9 +463,7 @@ func (m *Model) dispatchPaletteAction(action paletteAction) {
 		editor.height = m.height
 		m.editor = &editor
 	case paletteActionToggleGitPanel:
-		m.showGitPanel = !m.showGitPanel
-		m.workspaceFetchAt = 0
-		m.refreshWorkspace()
+		m.toggleGitPanel()
 	case paletteActionToggleEventLog:
 		m.showEventLog = !m.showEventLog
 	case paletteActionSwitchSession:
@@ -471,6 +479,28 @@ func (m *Model) openSessionSwitcher() {
 	switcher.width = m.width
 	switcher.height = m.height
 	m.switcher = &switcher
+}
+
+func (m *Model) toggleGitPanel() {
+	if m.gitPanel != nil {
+		m.gitPanel = nil
+		return
+	}
+	// Force a refresh on open so the popup doesn't paint stale workspace data
+	// before the next periodic tick fires.
+	m.workspaceFetchAt = 0
+	m.refreshWorkspace()
+	panel := NewGitPanel(m.workspace)
+	panel.width = m.width
+	panel.height = m.height
+	m.gitPanel = &panel
+}
+
+func (m *Model) refreshGitPanel() {
+	if m.gitPanel == nil {
+		return
+	}
+	m.gitPanel.workspace = m.workspace
 }
 
 func (m Model) currentState() *daemon.State {

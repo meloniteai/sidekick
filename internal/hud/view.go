@@ -169,6 +169,9 @@ func (m Model) View() string {
 	if m.switcher != nil {
 		return m.switcher.View()
 	}
+	if m.gitPanel != nil {
+		return m.gitPanel.View()
+	}
 	if m.status != nil {
 		return m.status.View()
 	}
@@ -181,7 +184,6 @@ func (m Model) View() string {
 	header := m.renderHeader(m.width)
 	headerLines := strings.Count(header, "\n") + 1
 	listLines := m.listLineCount()
-	gitLines := m.gitPanelLineCount()
 
 	totalW := m.width - styleGrid.GetHorizontalFrameSize()
 	gridW := totalW
@@ -206,7 +208,7 @@ func (m Model) View() string {
 			gridW = gridW - logW - 2
 		}
 	}
-	gridH := m.height - headerLines - 2 - listLines - gitLines
+	gridH := m.height - headerLines - 2 - listLines
 	// 5 is the smallest compass that still places labels around all 8 wind
 	// markers; below that the layout collapses. The min keeps the compass
 	// usable on a 24-row terminal without pushing the view past the bottom
@@ -224,10 +226,6 @@ func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n")
-	if m.showGitPanel {
-		b.WriteString(m.renderGitPanel(m.width))
-		b.WriteString("\n")
-	}
 	compass := styleGrid.Render(reanchorBrandBg(m.renderGrid(gridW, gridH)))
 	if logW > 0 {
 		// gutter is a 2-column brand-bg block sitting between compass and
@@ -252,60 +250,8 @@ func (m Model) View() string {
 	return b.String()
 }
 
-// gitPanelLineCount returns the number of lines the per-file git panel
-// would render (including its border). Returns 0 when the panel is hidden
-// or there is nothing to show.
-func (m Model) gitPanelLineCount() int {
-	if !m.showGitPanel {
-		return 0
-	}
-	border := styleListBorder.GetVerticalFrameSize()
-	// Header line + at least one body line (we render "(no files yet)" when
-	// the file list is empty so the layout doesn't reflow on toggle).
-	bodyLines := len(m.workspace.Files)
-	if bodyLines == 0 {
-		bodyLines = 1
-	}
-	return border + 1 + bodyLines
-}
-
-// renderGitPanel draws the per-file workspace panel: each touched file with
-// +N -M counts. Rendered below the verifier browser when m.showGitPanel is
-// true. Width matches the verifier browser so the borders line up.
-func (m Model) renderGitPanel(maxWidth int) string {
-	innerW := maxWidth - styleListBorder.GetHorizontalFrameSize()
-	if innerW < 1 {
-		innerW = 1
-	}
-	header := styleHeader.Render("workspace files") + "  " +
-		styleHeaderLabel.Render(fmt.Sprintf("worktree=%s branch=%s",
-			defaultString(m.workspace.WorktreeName, "?"),
-			defaultString(m.workspace.Branch, "?"),
-		))
-	rows := []string{truncate(header, innerW)}
-	switch {
-	case m.workspace.BaseRefUnset:
-		// No session anchor yet (goal hasn't been set, or the daemon was
-		// started outside a repo). Tell the user why the file list is
-		// empty instead of implying nothing has changed.
-		rows = append(rows, styleReason.Render(truncate("(session_base_ref not set — diffs not calculated; set a goal to anchor)", innerW)))
-	case len(m.workspace.Files) == 0:
-		rows = append(rows, styleReason.Render(truncate("(no files edited yet this session)", innerW)))
-	default:
-		// Column widths: keep +/-/binary chips narrow on the right; give the
-		// path everything that remains so long paths read naturally.
-		const countW = 6 // "+9999" / "-9999" — generous in practice
-		pathW := innerW - 2*countW - 2
-		if pathW < 8 {
-			pathW = 8
-		}
-		for _, f := range m.workspace.Files {
-			rows = append(rows, renderGitFileRow(f, pathW, countW))
-		}
-	}
-	return styleListBorder.Render(reanchorBrandBg(strings.Join(rows, "\n")))
-}
-
+// renderGitFileRow formats one file row used by the git changes popup: path
+// on the left, +added/-removed (or "bin") chips on the right.
 func renderGitFileRow(f gitstats.FileStat, pathW, countW int) string {
 	path := truncate(f.Path, pathW)
 	path = padCell(path, pathW)
@@ -491,10 +437,8 @@ func (m Model) renderGitHeaderRow(contentW int) string {
 		row += styleGitBranch.Render(ws.Branch)
 	}
 	row += "  " + renderDiffSummary(ws.TotalAdded, ws.TotalRemoved, len(ws.Files))
-	if m.showGitPanel {
-		row += "  " + styleHeaderLabel.Render("(g to collapse)")
-	} else if len(ws.Files) > 0 {
-		row += "  " + styleHeaderLabel.Render("(g to expand)")
+	if len(ws.Files) > 0 {
+		row += "  " + styleHeaderLabel.Render("(g for details)")
 	}
 	return truncate(row, contentW)
 }
