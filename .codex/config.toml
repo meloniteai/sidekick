@@ -1,3 +1,0 @@
-[mcp_servers.hud]
-args = ["mcp"]
-command = "hud"
