@@ -140,8 +140,8 @@ func openPalette(t *testing.T, m Model) Model {
 func TestPaletteDispatchTogglesGitPanel(t *testing.T) {
 	m := New(daemon.NewState())
 	m.width, m.height = 120, 40
-	if m.showGitPanel {
-		t.Fatalf("precondition: showGitPanel should start false")
+	if m.gitPanel != nil {
+		t.Fatalf("precondition: gitPanel should start nil")
 	}
 	m = openPalette(t, m)
 
@@ -154,8 +154,8 @@ func TestPaletteDispatchTogglesGitPanel(t *testing.T) {
 	if m.palette != nil {
 		t.Fatalf("palette should close after enter; still open")
 	}
-	if !m.showGitPanel {
-		t.Fatalf("dispatch did not flip showGitPanel; got false, want true")
+	if m.gitPanel == nil {
+		t.Fatalf("dispatch did not open git panel modal; got nil")
 	}
 }
 

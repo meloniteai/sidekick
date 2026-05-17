@@ -622,7 +622,7 @@ func TestRenderHeaderShowsGitSummaryWhenWorkspacePresent(t *testing.T) {
 		snapshot: ipc.StatusReply{Goal: "ship the panel"},
 	}
 	out := m.renderHeader(120)
-	for _, want := range []string{"git: ", "hud", "main", "+42", "-7", "2 files", "(g to expand)"} {
+	for _, want := range []string{"git: ", "hud", "main", "+42", "-7", "2 files", "(g for details)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("git header missing %q in:\n%s", want, out)
 		}
@@ -661,23 +661,19 @@ func TestRenderHeaderOmitsGitRowWhenWorkspaceEmpty(t *testing.T) {
 }
 
 func TestRenderGitPanelListsFilesWithCounts(t *testing.T) {
-	m := Model{
-		width:        140,
-		height:       40,
-		showGitPanel: true,
-		workspace: gitstats.Workspace{
-			WorktreeName: "hud",
-			Branch:       "feat/git-panel",
-			Files: []gitstats.FileStat{
-				{Path: "internal/foo.go", Added: 30, Removed: 5},
-				{Path: "assets/logo.png", Binary: true},
-				{Path: "internal/bar.go", Added: 0, Removed: 0},
-			},
+	p := NewGitPanel(gitstats.Workspace{
+		WorktreeName: "hud",
+		Branch:       "feat/git-panel",
+		Files: []gitstats.FileStat{
+			{Path: "internal/foo.go", Added: 30, Removed: 5},
+			{Path: "assets/logo.png", Binary: true},
+			{Path: "internal/bar.go", Added: 0, Removed: 0},
 		},
-	}
-	out := m.renderGitPanel(140)
+	})
+	p.width, p.height = 140, 40
+	out := p.View()
 	for _, want := range []string{
-		"workspace files", "worktree=hud", "branch=feat/git-panel",
+		"Changes", "worktree=hud", "branch=feat/git-panel",
 		"internal/foo.go", "+30", "-5",
 		"assets/logo.png", "bin",
 		"internal/bar.go",
@@ -689,17 +685,13 @@ func TestRenderGitPanelListsFilesWithCounts(t *testing.T) {
 }
 
 func TestRenderGitPanelHintsWhenBaseRefUnset(t *testing.T) {
-	m := Model{
-		width:        140,
-		height:       40,
-		showGitPanel: true,
-		workspace: gitstats.Workspace{
-			WorktreeName: "hud",
-			Branch:       "main",
-			BaseRefUnset: true,
-		},
-	}
-	out := m.renderGitPanel(140)
+	p := NewGitPanel(gitstats.Workspace{
+		WorktreeName: "hud",
+		Branch:       "main",
+		BaseRefUnset: true,
+	})
+	p.width, p.height = 140, 40
+	out := p.View()
 	if !strings.Contains(out, "session_base_ref not set") {
 		t.Fatalf("git panel should hint that base ref is unset:\n%s", out)
 	}
@@ -725,12 +717,14 @@ func TestViewIncludesGitPanelOnlyWhenToggled(t *testing.T) {
 			},
 		},
 	}
-	if strings.Contains(m.View(), "workspace files") {
-		t.Fatalf("git panel should be hidden by default")
+	if strings.Contains(m.View(), "Changes") {
+		t.Fatalf("git panel modal should be hidden by default")
 	}
-	m.showGitPanel = true
-	if !strings.Contains(m.View(), "workspace files") {
-		t.Fatalf("git panel should appear after toggle:\n%s", m.View())
+	panel := NewGitPanel(m.workspace)
+	panel.width, panel.height = m.width, m.height
+	m.gitPanel = &panel
+	if !strings.Contains(m.View(), "Changes") {
+		t.Fatalf("git panel modal should render when opened:\n%s", m.View())
 	}
 }
 
