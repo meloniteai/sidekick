@@ -182,11 +182,16 @@ func TestRenderListShowsBrowserActionsAndSelection(t *testing.T) {
 	out := m.renderList(180)
 	for _, want := range []string{
 		"key", "verifier", "dir", "type", "status", "reason",
-		"keys:", "enter status", "space toggle", "r run one", "t all", "ctrl+p commands", "1-9/0 toggle",
+		"keys:", "enter status", "space toggle", "r run one", "t all",
 		">", "[2]", "Test",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("browser footer missing %q in:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"ctrl+p", "^P", "ctrl+w", "^W", "q quit", "esc stop", "1-9/0"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("browser footer should only include verifier controls, found %q in:\n%s", unwanted, out)
 		}
 	}
 	firstLine := strings.SplitN(out, "\n", 2)[0]
@@ -585,13 +590,17 @@ func TestRenderHeaderFields(t *testing.T) {
 		"last mcp: ", "12:34:55",
 		"verifiers: ", "2/3",
 		"goal: ", "ship the header",
+		"ctrl+p palette", "ctrl+w sessions", "n new", "e edit", "g diff", "l log", "esc stop", "q quit",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("header missing %q in:\n%s", want, out)
 		}
 	}
+	if strings.Contains(out, "app:") || strings.Contains(out, "^P") || strings.Contains(out, "^W") {
+		t.Errorf("header should render shortcuts without app: or caret notation:\n%s", out)
+	}
 	if strings.Contains(out, "keys: ") {
-		t.Errorf("header should not render shortcut labels after moving them to the footer:\n%s", out)
+		t.Errorf("header should render global shortcuts without footer keys labels:\n%s", out)
 	}
 
 	// Zero-value timestamps must still render (em-dash placeholder), not

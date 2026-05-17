@@ -101,6 +101,11 @@ var (
 	styleGitBranch    = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(brandBgColor).Bold(true)
 )
 
+const (
+	headerShortcutHelp = "ctrl+p palette  ctrl+w sessions  n new  e edit  g diff  l log  esc stop  q quit"
+	footerShortcutHelp = "keys: up/down select | enter status | space toggle | r run one | t all"
+)
+
 // directionArrow points outward along each compass axis (away from goal toward
 // the orb) and is used when distance grew. directionArrowInward points the
 // opposite way for when distance shrank.
@@ -338,7 +343,15 @@ func (m Model) renderHeader(totalW int) string {
 		banner := styleHeaderBrand.Render(padBannerLine(bl, brandW))
 		rows[i] = left + strings.Repeat(" ", gutter) + banner
 	}
+	rows = append(rows, m.renderHeaderShortcutRow(contentW))
 	return styleHeaderBox.Width(styleW).Render(reanchorBrandBg(strings.Join(rows, "\n")))
+}
+
+func (m Model) renderHeaderShortcutRow(contentW int) string {
+	if contentW < 1 {
+		contentW = 1
+	}
+	return styleHeaderLabel.Render(truncate(headerShortcutHelp, contentW))
 }
 
 // padToWidth right-pads s with spaces so it occupies exactly width cells.
@@ -810,7 +823,7 @@ func renderListTitleRow(innerW int) string {
 }
 
 func (m Model) renderFooterHelp(maxWidth int) string {
-	text := "keys: up/down select | enter status | space toggle | r run one | t all | esc stop | ctrl+w sessions | q quit | 1-9/0 toggle | ctrl+p commands"
+	text := footerShortcutHelp
 	if m.footerNotice != "" && m.tick < m.footerNoticeUntil {
 		text = m.footerNotice
 	}

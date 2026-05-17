@@ -309,7 +309,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selectedVerifier < len(m.snapshot.Verifiers)-1 {
 				m.selectedVerifier++
 			}
-		case " ", "x":
+		case " ":
 			m.toggleSelectedVerifier()
 		case "r":
 			if v, ok := m.selectedStatus(); ok && m.onTriggerVerifier != nil {
@@ -340,10 +340,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showEventLog = !m.showEventLog
 		case "g", "ctrl+g":
 			m.toggleGitPanel()
-		default:
-			if idx, ok := toggleKeyIndex(msg.String()); ok && idx < len(m.snapshot.Verifiers) {
-				m.toggleVerifierByName(m.snapshot.Verifiers[idx].Name)
-			}
 		}
 	}
 	return m, nil
@@ -426,20 +422,6 @@ func (m *Model) refreshStatusWizard() {
 		}
 	}
 	m.status.errMsg = "verifier no longer exists"
-}
-
-func toggleKeyIndex(key string) (int, bool) {
-	if len(key) != 1 {
-		return 0, false
-	}
-	ch := key[0]
-	if ch >= '1' && ch <= '9' {
-		return int(ch - '1'), true
-	}
-	if ch == '0' {
-		return 9, true
-	}
-	return 0, false
 }
 
 func tick() tea.Cmd {
