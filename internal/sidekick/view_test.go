@@ -583,7 +583,7 @@ func TestRenderHeaderFields(t *testing.T) {
 		},
 	}
 	// 100 cells is the floor where the metadata column still fits all
-	// fields alongside the ~25-cell Sidekick banner; below that the
+	// fields alongside the ~22-cell Sidekick banner; below that the
 	// "verifiers: N/M" tail truncates by design (user told us "truncate
 	// if it doesn't fit when sizing down" rather than swapping layouts).
 	out := m.renderHeader(100)
@@ -643,10 +643,10 @@ func TestRenderHeaderShowsGitSummaryWhenWorkspacePresent(t *testing.T) {
 }
 
 // TestRenderHeaderShowsBlockBannerInRightColumn pins the header banner:
-// the right column hosts the compact ANSI-shadow "Sidekick" wordmark (same
-// font as the splash banner, short form). The banner is fixed-size, not
-// responsive, so a couple of unmistakable glyph sequences should appear
-// on every terminal wide enough to fit the box at all.
+// the right column hosts the compact "SIDEKICK" wordmark in the figlet
+// smblock font. The banner is fixed-size, not responsive, so a couple
+// of unmistakable glyph sequences should appear on every terminal wide
+// enough to fit the box at all.
 func TestRenderHeaderShowsBlockBannerInRightColumn(t *testing.T) {
 	m := Model{
 		width:    120,
@@ -654,7 +654,7 @@ func TestRenderHeaderShowsBlockBannerInRightColumn(t *testing.T) {
 		snapshot: ipc.StatusReply{Goal: "banner in header"},
 	}
 	out := m.renderHeader(120)
-	for _, want := range []string{"██╗", "╚═╝", "███████║"} {
+	for _, want := range []string{"▞▀▖", "▝▀", "▙▞"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("header missing banner glyph %q in:\n%s", want, out)
 		}

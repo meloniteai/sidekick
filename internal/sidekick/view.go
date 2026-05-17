@@ -281,17 +281,17 @@ func defaultString(s, fallback string) string {
 	return s
 }
 
-// sidekickHeaderBanner is the compact ANSI-shadow "SK" monogram stamped
-// on the right side of the main header. Same chunky block aesthetic as
-// the splash banner for brand continuity, but pared to a two-letter
-// monogram so it sits inside the existing header band without adding
-// vertical space and the metadata column still has room to breathe on
-// the classic 80×24 terminal. The splash keeps the full 6-row "Sidekick"
-// since it owns its own screen.
-const sidekickHeaderBanner = `███████╗█████╔╝
-╚════██║██╔═██╗
-███████║██║  ██╗
-╚══════╝╚═╝  ╚═╝`
+// sidekickHeaderBanner is the compact "SIDEKICK" wordmark stamped on the
+// right side of the main header. Drawn in the figlet smblock font (4 rows
+// × 22 cells) — narrow enough that the metadata column to its left still
+// fits the longest verifier/timestamp line on an 80–100-cell terminal,
+// while keeping a chunky block aesthetic that echoes the splash's full
+// ANSI-Shadow SIDEKICK. The splash keeps the full 6-row wordmark since
+// it owns its own screen.
+const sidekickHeaderBanner = `▞▀▖▜▘▛▀▖▛▀▘▌ ▌▜▘▞▀▖▌ ▌
+▚▄ ▐ ▌ ▌▙▄ ▙▞ ▐ ▌  ▙▞
+▖ ▌▐ ▌ ▌▌  ▌▝▖▐ ▌ ▖▌▝▖
+▝▀ ▀▘▀▀ ▀▀▘▘ ▘▀▘▝▀ ▘ ▘`
 
 // renderHeader builds the framed metadata box at the top of the screen.
 // The box stretches to the same total width as the grid so it visually
