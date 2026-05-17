@@ -74,6 +74,7 @@ jobs:
           cache: true
 
       - if: steps.gate.outputs.release == 'true'
+        id: goreleaser
         name: GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -81,3 +82,16 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - if: failure() && steps.gate.outputs.release == 'true' && steps.goreleaser.conclusion == 'failure'
+        name: Roll back tag on goreleaser failure
+        # Goreleaser expects the tag to already exist when it runs, so we
+        # push the tag before invoking it. If goreleaser then fails, the
+        # tag is orphaned on origin and permanently blocks that version
+        # number from being re-released. Delete it so the next push of
+        # the same `version` re-triggers the release cleanly.
+        run: |
+          TAG="${{ steps.gate.outputs.tag }}"
+          echo "Rolling back tag $TAG after goreleaser failure..."
+          git push origin ":refs/tags/${TAG}" || true
+          git tag -d "${TAG}" || true
