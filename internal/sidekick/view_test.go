@@ -643,10 +643,11 @@ func TestRenderHeaderShowsGitSummaryWhenWorkspacePresent(t *testing.T) {
 }
 
 // TestRenderHeaderShowsBlockBannerInRightColumn pins the header banner:
-// the right column hosts the compact "SIDEKICK" wordmark in the figlet
-// smblock font. The banner is fixed-size, not responsive, so a couple
-// of unmistakable glyph sequences should appear on every terminal wide
-// enough to fit the box at all.
+// the right column hosts the compact ANSI-Shadow "SK" monogram (same
+// font as the splash's full SIDEKICK wordmark, just the bottom 4 rows
+// of the 2-letter short form). The banner is fixed-size, not
+// responsive, so a couple of unmistakable glyph sequences should appear
+// on every terminal wide enough to fit the box at all.
 func TestRenderHeaderShowsBlockBannerInRightColumn(t *testing.T) {
 	m := Model{
 		width:    120,
@@ -654,7 +655,7 @@ func TestRenderHeaderShowsBlockBannerInRightColumn(t *testing.T) {
 		snapshot: ipc.StatusReply{Goal: "banner in header"},
 	}
 	out := m.renderHeader(120)
-	for _, want := range []string{"▞▀▖", "▝▀", "▙▞"} {
+	for _, want := range []string{"██╗", "╚═╝", "███████║"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("header missing banner glyph %q in:\n%s", want, out)
 		}
