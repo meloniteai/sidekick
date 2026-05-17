@@ -45,6 +45,7 @@ const eventBufferCap = 500
 type State struct {
 	mu              sync.RWMutex
 	goal            string
+	goalLocked      bool
 	sessionBaseRef  string
 	sessionWorktree string
 	verifiers       map[string]ipc.VerifierStatus
@@ -124,10 +125,25 @@ func (s *State) SessionEdits() []string {
 	return out
 }
 
-// SetGoal replaces the active goal.
+// SetGoal replaces the active goal. When the goal has been locked via
+// LockGoal (typically by `hud start --goal`), SetGoal is a no-op so the
+// agent's hud_set_goal calls and manual triggers cannot overwrite the
+// user-supplied goal.
 func (s *State) SetGoal(goal string) {
 	s.mu.Lock()
+	if !s.goalLocked {
+		s.goal = goal
+	}
+	s.mu.Unlock()
+}
+
+// LockGoal sets the active goal and pins it: subsequent SetGoal calls
+// are ignored until the daemon restarts. Used by `hud start --goal` so
+// the operator's framing survives the agent's own hud_set_goal traffic.
+func (s *State) LockGoal(goal string) {
+	s.mu.Lock()
 	s.goal = goal
+	s.goalLocked = true
 	s.mu.Unlock()
 }
 
@@ -136,6 +152,13 @@ func (s *State) Goal() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.goal
+}
+
+// GoalLocked reports whether the goal was pinned at startup.
+func (s *State) GoalLocked() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.goalLocked
 }
 
 // SetSessionBaseRef records the git SHA HEAD pointed at when the session
@@ -310,6 +333,7 @@ func (s *State) Snapshot() ipc.StatusReply {
 	defer s.mu.RUnlock()
 	out := ipc.StatusReply{
 		Goal:           s.goal,
+		GoalLocked:     s.goalLocked,
 		Version:        s.version,
 		LastSocketAt:   s.lastSocketAt,
 		LastMCPAt:      s.lastMCPAt,

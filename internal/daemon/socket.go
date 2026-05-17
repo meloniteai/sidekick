@@ -152,7 +152,10 @@ func (s *Server) dispatch(req ipc.Request) ipc.Response {
 		}
 		session.MarkSocketActivity(req.Source == ipc.SourceMCP)
 		s.handler.OnGoal(session, p.Goal)
-		return okData(struct{}{})
+		return okData(ipc.GoalAck{
+			Goal:   session.Goal(),
+			Locked: session.GoalLocked(),
+		})
 	case ipc.TypeStatus:
 		session, err := s.registry.SessionForCWD(req.Cwd)
 		if err != nil {

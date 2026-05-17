@@ -47,6 +47,22 @@ func TestRunnerHandlerGoalDoesNotTriggerVerifiers(t *testing.T) {
 	}
 }
 
+func TestRunnerHandlerLockedGoalSurvivesOnGoal(t *testing.T) {
+	state := daemon.NewState()
+	state.LockGoal("operator-pinned goal")
+	runtimes := newSessionRuntimeManager(context.Background(), "test", "")
+	h := &runnerHandler{runtimes: runtimes}
+
+	h.OnGoal(state, "agent override")
+
+	if got := state.Goal(); got != "operator-pinned goal" {
+		t.Fatalf("goal: got %q, want locked value", got)
+	}
+	if !state.GoalLocked() {
+		t.Fatal("GoalLocked: got false after agent override attempt")
+	}
+}
+
 // TestMirrorDisabledToConfig writes each landing-chosen Disabled flag back
 // to hud.yaml so the persisted file reflects the active session. A row the
 // user re-enabled at landing should flip from disabled:true to disabled:false

@@ -156,8 +156,22 @@ func setGoalHandler(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeGoal, Source: ipc.SourceMCP, Data: data}, cwd); err != nil {
+	resp, err := ipc.SendFrom(ipc.Request{Type: ipc.TypeGoal, Source: ipc.SourceMCP, Data: data}, cwd)
+	if err != nil {
 		return nil, fmt.Errorf("hud daemon unreachable (is `hud start` running?): %w", err)
+	}
+	var ack ipc.GoalAck
+	// Old daemons reply with `{}`; an unmarshal miss is non-fatal — we
+	// just won't have lock metadata to surface.
+	_ = json.Unmarshal(resp.Data, &ack)
+	if ack.Locked {
+		return mcp.NewToolResultJSON(map[string]any{
+			"goal":     ack.Goal,
+			"locked":   true,
+			"worktree": worktree,
+			"base_ref": baseRef,
+			"note":     "this session's goal was pinned by `hud start --goal`; agent-supplied goals are ignored until the daemon restarts.",
+		})
 	}
 	return mcp.NewToolResultJSON(map[string]any{
 		"goal":     goal,
