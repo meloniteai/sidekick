@@ -392,12 +392,16 @@ func TestStatusWizardShowsFullVerifierStatus(t *testing.T) {
 	w.height = 30
 	out := w.View()
 	for _, want := range []string{
-		"HUD verifier status", "Architect", "direction:", "N", "distance:", "0.42", "computed:", "2026-05-09T12:34:56Z",
+		"Verifier status", "////", "enter close · esc close",
+		"Architect", "direction:", "N", "distance:", "0.42", "computed:", "2026-05-09T12:34:56Z",
 		"agent:", "codex", "model:", "gpt-5.5", "skill:", "./skills/architect/SKILL.md", "reason:", "full reason text",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status wizard missing %q in:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "HUD verifier status") {
+		t.Fatalf("status wizard should use shared modal title, got:\n%s", out)
 	}
 }
 

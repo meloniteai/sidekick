@@ -11,8 +11,15 @@ import (
 	"github.com/uriahlevy/hud/internal/ipc"
 )
 
-// StatusWizard renders the selected verifier's full last-known HUD status as
-// a focused, full-screen view.
+var (
+	statusValueStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(brandBgColor)
+	statusReasonStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
+	statusErrorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
+)
+
+// StatusWizard renders the selected verifier's full last-known HUD status in
+// the same centered modal chrome as the palette, session switcher, and git
+// changes panel.
 type StatusWizard struct {
 	verifier string
 	status   ipc.VerifierStatus
@@ -44,26 +51,32 @@ func (w StatusWizard) Update(msg tea.Msg) (StatusWizard, tea.Cmd, bool) {
 }
 
 func (w StatusWizard) View() string {
-	width := w.width
-	if width < 60 {
-		width = 60
+	innerW := paletteInnerWidth(w.width)
+	body := w.renderBody(innerW)
+	box := stylePaletteBorder.Width(innerW + stylePaletteBorder.GetHorizontalPadding()).Render(reanchorBrandBg(body))
+	if w.width == 0 || w.height == 0 {
+		return box
 	}
-	contentW := width - styleEditBox.GetHorizontalFrameSize() - styleEditBox.GetHorizontalPadding()
-	if contentW < 20 {
-		contentW = 20
-	}
+	return lipgloss.Place(w.width, w.height, lipgloss.Center, lipgloss.Center, box)
+}
 
+func (w StatusWizard) renderBody(innerW int) string {
 	var b strings.Builder
-	b.WriteString(styleEditTitle.Render("HUD verifier status"))
-	b.WriteString("\n")
-	b.WriteString(styleEditHelp.Render("enter/esc return"))
+	b.WriteString(renderStatusTitleRow(innerW))
 	b.WriteString("\n\n")
-	b.WriteString(w.renderStatus(contentW))
+	b.WriteString(w.renderStatus(innerW))
 	if w.errMsg != "" {
 		b.WriteString("\n")
-		b.WriteString(stylePickerError.Render(w.errMsg))
+		b.WriteString(statusErrorStyle.Render(w.errMsg))
 	}
-	return styleEditBox.Width(width - styleEditBox.GetHorizontalFrameSize()).Render(b.String())
+	b.WriteString("\n\n")
+	b.WriteString(stylePaletteHelp.Render("enter close · esc close"))
+	return b.String()
+}
+
+func renderStatusTitleRow(innerW int) string {
+	title := "Verifier status "
+	return stylePaletteTitle.Render(title) + stylePaletteSlash.Render(strings.Repeat("/", max(innerW-lipgloss.Width(title), 0)))
 }
 
 func (w StatusWizard) renderStatus(width int) string {
@@ -84,7 +97,7 @@ func (w StatusWizard) renderStatus(width int) string {
 		kvLine("type", verifierType(v), width),
 	}
 	rows = append(rows, configLines(v.Config, width)...)
-	rows = append(rows, "reason:")
+	rows = append(rows, styleHeaderLabel.Render("reason:"))
 	rows = append(rows, wrapStatusText(v.Reason, width)...)
 	return strings.Join(rows, "\n")
 }
@@ -123,7 +136,8 @@ func kvLine(key, value string, width int) string {
 		value = "(empty)"
 	}
 	prefix := styleHeaderLabel.Render(key + ": ")
-	return prefix + truncate(value, width-lipgloss.Width(key)-2)
+	valueW := max(width-lipgloss.Width(key)-2, 1)
+	return prefix + statusValueStyle.Render(truncate(value, valueW))
 }
 
 func formatFullTime(t time.Time) string {
@@ -135,16 +149,16 @@ func formatFullTime(t time.Time) string {
 
 func wrapStatusText(s string, width int) []string {
 	if s == "" {
-		return []string{styleReason.Render("(empty)")}
+		return []string{statusReasonStyle.Render("(empty)")}
 	}
 	var rows []string
 	for _, line := range strings.Split(s, "\n") {
 		for lipgloss.Width(line) > width {
 			head, tail := splitVisual(line, width)
-			rows = append(rows, styleReason.Render(head))
+			rows = append(rows, statusReasonStyle.Render(head))
 			line = tail
 		}
-		rows = append(rows, styleReason.Render(line))
+		rows = append(rows, statusReasonStyle.Render(line))
 	}
 	return rows
 }
