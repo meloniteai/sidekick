@@ -94,6 +94,21 @@ sidekick status                           # print JSON snapshot
 echo '{"tool_input":{"file_path":"src/auth.go"}}' | sidekick hook write
 ```
 
+## TUI or Headless execution
+
+Pass `--headless` to run the daemon without the Bubble Tea TUI — useful for
+CI, sandboxes, or remote dev containers. Hooks, MCP, `sidekick status`, and
+`sidekick goal` behave the same; verifiers load from `sidekick.yaml` as
+configured (no landing picker, no mid-session toggles).
+
+```bash
+sidekick start --headless                    # agent sets the goal via MCP
+sidekick start --headless --goal "ship auth" # pin the goal up front
+```
+
+Git worktrees are supported in both modes: the daemon spins up a separate
+session per worktree on first hook event, and the TUI lets you switch between them.
+
 ## Verifiers
 
 There are multiple options. Choose what works best for you:
