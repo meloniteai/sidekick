@@ -43,7 +43,6 @@ instead of finding out at review time.
 | Binary | Role | Lifetime |
 |---|---|---|
 | `sidekick start` | Long-running daemon + Bubble Tea TUI. Owns state, runs verifiers. Listens on a repo-scoped socket under `~/.sidekick/sockets/<fingerprint>.sock` so multiple projects can run side-by-side. | foreground |
-| `sidekick menubar` | macOS menu bar daemon UI. Owns the same state, runner, hooks, and MCP socket as `sidekick start`, but renders only as a compact status-menu item. | foreground |
 | `sidekick hook <event>` | Spawned by Claude Code or Codex hooks. Reads hook JSON on stdin, posts a normalized event to the daemon, exits. | one-shot |
 | `sidekick mcp` | Spawned by the agent client as an MCP server. Proxies `sidekick_status` / `sidekick_explain` to the daemon. | per agent session |
 | `sidekick verifier add <url>` | Fetches a remote SKILL.md or verifier script, pins it by sha256, and registers it in `sidekick.yaml`. | one-shot |
@@ -95,43 +94,14 @@ sidekick status                           # print JSON snapshot
 echo '{"tool_input":{"file_path":"src/auth.go"}}' | sidekick hook write
 ```
 
-On macOS, use the menu bar UI instead of the full terminal UI:
-
-```bash
-sidekick menubar
-```
-
-It starts the same daemon, verifier runner, hook listener, and MCP socket as
-`sidekick start`. The status item shows the current overall distance, and its menu
-keeps the compact Sidekick controls: goal, socket/MCP activity, verifier distance
-and reason rows, manual trigger, stop current run, and quit.
-
-## Configure verifiers
+## Verifiers
 
 There are multiple options. Choose what works best for you:
 
 1. Quickstart: use the remote verifier browser in the tui (`ctrl+w` once inside the sidekick tui)
 2. Configure verifiers in the TUI, or use `sidekick verifier add --local`, to add your own new local verifiers
 
-3. Provision a `sidekick.yaml` next to your code. 
-
-
-For simple pass/fail checks, use `type: binary`; exit code `0` maps to
-`distance = 0`, and any non-zero exit maps to `distance = 1`:
-
-```yaml
-  - name: Unit Tests
-    type: binary
-    direction: E
-    binary:
-      command: ["go", "test", "./..."]
-      pass_reason: "unit tests pass"
-      fail_reason: "unit tests failed"
-```
-
-For fully custom scoring, use `type: command` (or omit `type` for backward
-compatibility). [`examples/verifiers/coverage.sh`](examples/verifiers/coverage.sh)
-is a deterministic command verifier backed by `go test -cover`.
+3. Provision a tracked `sidekick.yaml` next to your code. 
 
 ## Verifier types
 
@@ -166,7 +136,7 @@ The runtime injects a 5-point rubric (0.00 / 0.25 / 0.50 / 0.75 / 1.00)
 into agent verifier prompts so scores stay comparable across runs and
 across verifiers. Free-floating decimals like 0.37 drift between runs
 and become noise; the anchors give the agent a discrete scale to
-calibrate against. See [`CONTRIBUTING-VERIFIERS.md`](CONTRIBUTING-VERIFIERS.md)
+calibrate against. See the [verifier registry](https://github.com/meloniteai/sidekick-verifiers/blob/main/CONTRIBUTING-VERIFIERS.md)
 for the per-dimension calibration each bundled skill uses.
 
 `agent` verifiers internalize the old `run.sh` wrapper: Sidekick loads the
@@ -226,15 +196,9 @@ verifiers:
       network: false
 ```
 
-Then approve the hash before `sidekick start` will execute it:
-
-```bash
-sidekick verifier trust Performance
-```
-
-See [`CONTRIBUTING-VERIFIERS.md`](CONTRIBUTING-VERIFIERS.md) for the
-full protocol and [`examples/community/`](examples/community/) for
-reference verifiers (docs-drift, lint, bench, migration-safety).
+See the [verifier registry](https://github.com/meloniteai/sidekick-verifiers)
+for the full protocol, contribution flow, and a catalog of
+community verifiers.
 
 ## Local verifiers (interactive)
 
