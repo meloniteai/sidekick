@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/887ee725-f1df-4dbe-a838-9a2ce7b4ae12
 
 - The active goal is set by the agent itself via the `sidekick_set_goal` MCP
   tool, driven by the bundled [`sidekick` skill](skills/sidekick/SKILL.md).
-- File-write hooks (`PostToolUse` on `Write|Edit|MultiEdit|NotebookEdit`)
+- File-write hooks 
   trigger a debounced batch run of enabled verifiers.
 - Verifiers can be native LLM skill checks, binary pass/fail commands, or
   custom commands that speak Sidekick's stdin/stdout JSON protocol.
