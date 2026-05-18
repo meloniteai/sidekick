@@ -234,20 +234,38 @@ func (l Landing) View() string {
 	return lipgloss.Place(l.width, l.height, lipgloss.Center, lipgloss.Center, box)
 }
 
-// renderLandingBanner draws the wordmark with the version pill on its own
-// row above the banner, right-aligned to innerW. The pill used to sit on
-// the trailing edge of banner line 1, but that made line 1 wider than the
-// other 5 banner rows; on narrow terminals the extra cells wrapped and the
-// pill spilled onto banner line 2, overlapping the wordmark. Keeping it on
-// a dedicated row means the 6 banner rows stay uniform width and clip
-// together when the terminal is narrower than the wordmark.
+// renderLandingBanner draws the wordmark with the company name on the left
+// and version pill on the right of a dedicated row above the banner. The
+// pill used to sit on the trailing edge of banner line 1, but that made
+// line 1 wider than the other 5 banner rows; on narrow terminals the extra
+// cells wrapped and the pill spilled onto banner line 2, overlapping the
+// wordmark. Keeping the metadata on a dedicated row means the 6 banner rows
+// stay uniform width and clip together when the terminal is narrower than
+// the wordmark.
 func renderLandingBanner(innerW int, version string) string {
+	_ = innerW
 	lines := strings.Split(sidekickBanner, "\n")
+	// Wordmark glyphs carried a single leading space so the banner sat one
+	// column inside the box padding; that shoved "SIDEKICK" one cell right of
+	// the metadata row above it, so the company name no longer lined up with
+	// the "S". Drop the cosmetic space here and align the metadata row to the
+	// wordmark's own width so "Melonite™" stacks above the "S" and "v…" stacks
+	// above the trailing "╗" of the final "K".
+	for i, ln := range lines {
+		lines[i] = strings.TrimPrefix(ln, " ")
+	}
+	bannerW := lipgloss.Width(lines[0])
+
 	var b strings.Builder
+	company := "Melonite™"
+	pill := ""
 	if version != "" {
-		pill := "v" + version
-		pad := max(innerW-lipgloss.Width(pill), 0)
-		b.WriteString(strings.Repeat(" ", pad))
+		pill = "v" + version
+	}
+	if company != "" || pill != "" {
+		gap := max(bannerW-lipgloss.Width(company)-lipgloss.Width(pill), 1)
+		b.WriteString(styleLandingVersion.Render(company))
+		b.WriteString(strings.Repeat(" ", gap))
 		b.WriteString(styleLandingVersion.Render(pill))
 		b.WriteString("\n")
 	}
