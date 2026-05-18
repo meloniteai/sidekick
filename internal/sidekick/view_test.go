@@ -594,7 +594,7 @@ func TestRenderHeaderFields(t *testing.T) {
 		"last mcp: ", "12:34:55",
 		"verifiers: ", "2/3",
 		"goal: ", "ship the header",
-		"ctrl+p palette", "ctrl+w sessions", "n new", "e edit", "g diff", "l log", "esc stop", "q quit",
+		"ctrl+p palette", "ctrl+w sessions", "n new", "e edit", "esc stop", "q quit",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("header missing %q in:\n%s", want, out)

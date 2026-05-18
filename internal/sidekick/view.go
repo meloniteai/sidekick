@@ -102,7 +102,7 @@ var (
 )
 
 const (
-	headerShortcutHelp = "ctrl+p palette  ctrl+w sessions  n new  e edit  g diff  l log  esc stop  q quit"
+	headerShortcutHelp = "ctrl+p palette  ctrl+w sessions  n new  e edit  esc stop  q quit"
 	footerShortcutHelp = "keys: up/down select | enter status | space toggle | r run one | t all"
 )
 
