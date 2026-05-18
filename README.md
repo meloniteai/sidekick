@@ -1,19 +1,17 @@
-# sidekick
+![sidekick](assets/sidekick-hero.png)
 
-**A live compass for coding agents. Set a goal, plug in verifiers, watch the orbs.**
+# Sidekick
 
-`sidekick` runs alongside Claude Code (or any agent that speaks MCP). You set a
-goal in plain English; you plug in verifiers — small rubrics or scripts that
-score how far the working tree is from that goal. After each file edit, sidekick
-re-runs them in parallel and renders the results as orbs on a 2D compass.
+**A live compass for coding agents. Set a goal, plug in verifiers, correct course in-flight.**
+
+`sidekick` runs alongside coding agents. The agent sets the session's goal in plain English; you plug in verifiers — small rubrics or scripts that
+score how far the working tree is from that goal. 
+
+Sidekick fires on file edit, re-runs them in parallel and renders the results as orbs on a 2D compass.
 Each verifier reports a `distance ∈ [0, 1]`: `0` means "satisfied", `1`
 means "maximally unsatisfied". The agent reads the compass via the
 `sidekick_status` and `sidekick_explain` MCP tools and course-corrects mid-session,
 instead of finding out at review time.
-
-> Status: hobbyist OSS MVP. Built in Go, talks to Claude Code via hooks +
-> a stdio MCP server. No training, no reward model — just verifiers your
-> agent reads while it codes.
 
 ---
 
@@ -36,7 +34,6 @@ instead of finding out at review time.
 - Verifiers can be native LLM skill checks, binary pass/fail commands, or
   custom commands that speak Sidekick's stdin/stdout JSON protocol.
 - The TUI re-renders the compass every 200 ms.
-- In the TUI footer, press the verifier's number key (`1`-`9`, `0` for the
   tenth) to toggle that verifier on or off for future runs.
 - Agents call `sidekick_status` to read the snapshot — it never triggers
   recomputation, only file writes do.
@@ -51,11 +48,15 @@ instead of finding out at review time.
 | `sidekick mcp` | Spawned by the agent client as an MCP server. Proxies `sidekick_status` / `sidekick_explain` to the daemon. | per agent session |
 | `sidekick verifier add <url>` | Fetches a remote SKILL.md or verifier script, pins it by sha256, and registers it in `sidekick.yaml`. | one-shot |
 | `sidekick verifier add --local` | Interactive wizard that walks through name, direction, type, command/skill, and timeout, then writes a local entry to `sidekick.yaml`. | one-shot |
-| `sidekick verifier trust ...` | Manages `~/.sidekick/trust.json` — the trust-on-first-use ledger for remote verifiers. | one-shot |
 | `sidekick verifier list` | Prints the verifiers configured in `sidekick.yaml` with source provenance. | one-shot |
 
 ## Install
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/meloniteai/sidekick/main/install.sh | bash
+```
+
+or build from source:
 ```bash
 git clone https://github.com/meloniteai/sidekick
 cd sidekick
@@ -64,102 +65,13 @@ go build -o sidekick .
 mv sidekick ~/bin/
 ```
 
-## Wire up Claude Code
+## Wire up Claude Code, Codex
 
-Drop the contents of [`examples/claude-settings.json`](examples/claude-settings.json)
-into your project's `.claude/settings.json` (or the user-level equivalent).
-That registers the file-write hook and the `sidekick` MCP server.
-
-Then install the bundled skill so the agent knows when to call `sidekick_set_goal`,
-`sidekick_status`, and `sidekick_explain`:
+Use the install command and follow the wizard:
 
 ```bash
-cp -R skills/sidekick ~/.claude/skills/
+sidekick install
 ```
-
-## Wire up Codex
-
-Drop [`examples/codex-hooks.json`](examples/codex-hooks.json) into your
-project's `.codex/hooks.json`, and add the MCP server to `.codex/config.toml`:
-
-```toml
-[mcp_servers.sidekick]
-command = "sidekick"
-args = ["mcp"]
-```
-
-Codex may ask you to review and trust the hooks. The bundled hook config
-triggers Sidekick after `apply_patch` plus Claude-style write/edit tool names.
-
-## Configure verifiers
-
-Drop a `sidekick.yaml` next to your code. The shipped example registers native
-agent verifiers that load bundled `SKILL.md` rubrics and run `claude -p`
-or `codex exec`:
-
-```yaml
-goal_source: prompt
-verifiers:
-  - name: Architect
-    type: agent
-    direction: N
-    timeout: 90s
-    llm:
-      agent: claude
-      model: haiku
-      thinking: low
-      skill: ./skills/architect/SKILL.md
-  - name: Test
-    type: agent
-    direction: E
-    llm:
-      agent: claude
-      model: haiku
-      thinking: low
-      skill: ./skills/test/SKILL.md
-  - name: Security
-    type: agent
-    direction: S
-    llm:
-      agent: claude
-      model: haiku
-      thinking: low
-      skill: ./skills/security/SKILL.md
-  - name: Deployment
-    type: agent
-    direction: W
-    llm:
-      agent: claude
-      model: haiku
-      thinking: low
-      skill: ./skills/deployment/SKILL.md
-  - name: AGENTS.MD
-    type: agent
-    direction: NW
-    timeout: 180s
-    llm:
-      agent: codex
-      model: gpt-5.5
-      thinking: low
-      skill: ./skills/agents-md/SKILL.md
-```
-
-For simple pass/fail checks, use `type: binary`; exit code `0` maps to
-`distance = 0`, and any non-zero exit maps to `distance = 1`:
-
-```yaml
-  - name: Unit Tests
-    type: binary
-    direction: E
-    binary:
-      command: ["go", "test", "./..."]
-      pass_reason: "unit tests pass"
-      fail_reason: "unit tests failed"
-```
-
-For fully custom scoring, use `type: command` (or omit `type` for backward
-compatibility). [`examples/verifiers/coverage.sh`](examples/verifiers/coverage.sh)
-is a deterministic command verifier backed by `go test -cover`.
 
 ## Run
 
@@ -193,6 +105,33 @@ It starts the same daemon, verifier runner, hook listener, and MCP socket as
 `sidekick start`. The status item shows the current overall distance, and its menu
 keeps the compact Sidekick controls: goal, socket/MCP activity, verifier distance
 and reason rows, manual trigger, stop current run, and quit.
+
+## Configure verifiers
+
+There are multiple options. Choose what works best for you:
+
+1. Quickstart: use the remote verifier browser in the tui (`ctrl+w` once inside the sidekick tui)
+2. Configure verifiers in the TUI, or use `sidekick verifier add --local`, to add your own new local verifiers
+
+3. Provision a `sidekick.yaml` next to your code. 
+
+
+For simple pass/fail checks, use `type: binary`; exit code `0` maps to
+`distance = 0`, and any non-zero exit maps to `distance = 1`:
+
+```yaml
+  - name: Unit Tests
+    type: binary
+    direction: E
+    binary:
+      command: ["go", "test", "./..."]
+      pass_reason: "unit tests pass"
+      fail_reason: "unit tests failed"
+```
+
+For fully custom scoring, use `type: command` (or omit `type` for backward
+compatibility). [`examples/verifiers/coverage.sh`](examples/verifiers/coverage.sh)
+is a deterministic command verifier backed by `go test -cover`.
 
 ## Verifier types
 
@@ -311,37 +250,3 @@ command / binary), the per-type config (skill path or command argv),
 optional timeout, and optional advisory permissions, then appends the
 entry to `sidekick.yaml`. `--name`, `--direction`, `--type`, and
 `--permissions` flags pre-fill defaults if you already know them.
-
-## Layout
-
-```
-sidekick/
-├── main.go                       cobra entrypoint
-├── cmd/                          subcommands: start, hook, goal, status, mcp, menubar, verifier
-├── internal/
-│   ├── daemon/                   socket server + shared State
-│   ├── sidekick/                      Bubble Tea TUI (compass + list + sparkline)
-│   ├── verifier/                 subprocess runner, debouncer, history
-│   ├── mcp/                      stdio MCP server (mark3labs/mcp-go)
-│   ├── ipc/                      JSON-line socket protocol shared by all binaries
-│   ├── transcript/               tails CC's session JSONL for context
-│   ├── fetch/                    content-addressed remote artefact cache
-│   ├── trust/                    trust-on-first-use ledger (~/.sidekick/trust.json)
-│   └── config/                   sidekick.yaml loader (validates at load, fetches remote sources)
-├── skills/                       bundled SKILL.md rubrics: architect, test, security, deployment, agents-md, sidekick
-└── examples/
-    ├── sidekick.yaml                  reference config
-    ├── claude-settings.json      Claude Code hook + MCP wiring
-    ├── codex-hooks.json          Codex hook wiring
-    ├── verifiers/                in-tree command verifiers (coverage.sh, run.sh)
-    └── community/                vetted community verifier templates
-```
-
-## What's not here yet
-
-- Codex hook integration (native `type: agent` verifiers can call `codex exec`).
-- Persistence across sessions (history is in-memory only).
-- 8-direction layout when more than 4 verifiers are configured.
-- Enforced (vs advisory) per-verifier sandboxing — `permissions:` blocks
-  are surfaced in the TUI today; future versions will map them onto
-  platform sandboxes.
