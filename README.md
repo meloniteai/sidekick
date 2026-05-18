@@ -17,9 +17,7 @@ instead of finding out at review time.
 
 ## Demo
 
-<video src="assets/sidekick-mov-2x_new.mov" controls muted playsinline width="100%" title="Sidekick demo"></video>
-
-[Open the demo video](assets/sidekick-mov-2x_new.mov)
+https://github.com/user-attachments/assets/887ee725-f1df-4dbe-a838-9a2ce7b4ae12
 
 ## How it works
 
