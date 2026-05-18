@@ -24,10 +24,12 @@ func New(v string, skill []byte) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "sidekick",
 		Short:         "A live Sidekick-like TUI for agentic coding sessions",
+		Long:          "Run `sidekick` to start the daemon and TUI. Use `sidekick --help` for available subcommands.",
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
+	bindStart(root)
 	root.AddCommand(newStartCmd())
 	root.AddCommand(newHookCmd())
 	root.AddCommand(newGoalCmd())

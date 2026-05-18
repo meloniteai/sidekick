@@ -19,8 +19,8 @@ import (
 
 	"github.com/meloniteai/sidekick/internal/config"
 	"github.com/meloniteai/sidekick/internal/daemon"
-	sidekicktui "github.com/meloniteai/sidekick/internal/sidekick"
 	"github.com/meloniteai/sidekick/internal/ipc"
+	sidekicktui "github.com/meloniteai/sidekick/internal/sidekick"
 	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
@@ -122,166 +122,172 @@ func (m *sessionRuntimeManager) StopAll() {
 }
 
 func newStartCmd() *cobra.Command {
-	var headless bool
-	var configPath string
-	var startGoal string
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the Sidekick daemon and TUI",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			sock, err := ipc.SocketPath()
+	}
+	bindStart(cmd)
+	return cmd
+}
+
+// bindStart wires the daemon+TUI handler so both `sidekick` and `sidekick start` launch the TUI.
+func bindStart(cmd *cobra.Command) {
+	var headless bool
+	var configPath string
+	var startGoal string
+	cmd.Args = cobra.NoArgs
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		sock, err := ipc.SocketPath()
+		if err != nil {
+			return err
+		}
+
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+
+		baseRef, worktree, err := captureSessionAnchor()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "[sidekick] session base ref: %s\n", baseRef)
+		fmt.Fprintf(os.Stderr, "[sidekick] session worktree: %s\n", worktree)
+
+		available, quietPeriod, source, loadedConfigPath, err := loadVerifiers(configPath)
+		if err != nil {
+			return err
+		}
+		sessionIdleTimeout := daemon.DefaultSessionIdleTimeout
+		if idle, set, err := loadSessionIdleTimeout(configPath, worktree); err != nil {
+			return err
+		} else if set {
+			sessionIdleTimeout = idle
+		}
+		if loadedConfigPath != "" && len(available) < sidekicktui.MinSelected {
+			return fmt.Errorf("at least %d verifiers must be configured (found %d in %s)",
+				sidekicktui.MinSelected, len(available), source)
+		}
+		fmt.Fprintf(os.Stderr, "[sidekick] verifiers: %s\n", source)
+
+		verifiers := available
+		if !headless && len(available) > 0 {
+			selected, err := runLanding(available, version, sock)
 			if err != nil {
 				return err
 			}
-
-			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer cancel()
-
-			baseRef, worktree, err := captureSessionAnchor()
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(os.Stderr, "[sidekick] session base ref: %s\n", baseRef)
-			fmt.Fprintf(os.Stderr, "[sidekick] session worktree: %s\n", worktree)
-
-			available, quietPeriod, source, loadedConfigPath, err := loadVerifiers(configPath)
-			if err != nil {
-				return err
-			}
-			sessionIdleTimeout := daemon.DefaultSessionIdleTimeout
-			if idle, set, err := loadSessionIdleTimeout(configPath, worktree); err != nil {
-				return err
-			} else if set {
-				sessionIdleTimeout = idle
-			}
-			if loadedConfigPath != "" && len(available) < sidekicktui.MinSelected {
-				return fmt.Errorf("at least %d verifiers must be configured (found %d in %s)",
-					sidekicktui.MinSelected, len(available), source)
-			}
-			fmt.Fprintf(os.Stderr, "[sidekick] verifiers: %s\n", source)
-
-			verifiers := available
-			if !headless && len(available) > 0 {
-				selected, err := runLanding(available, version, sock)
-				if err != nil {
-					return err
-				}
-				verifiers = selected
-				if loadedConfigPath != "" {
-					if err := mirrorDisabledToConfig(loadedConfigPath, verifiers); err != nil {
-						return fmt.Errorf("persist landing choices: %w", err)
-					}
+			verifiers = selected
+			if loadedConfigPath != "" {
+				if err := mirrorDisabledToConfig(loadedConfigPath, verifiers); err != nil {
+					return fmt.Errorf("persist landing choices: %w", err)
 				}
 			}
-			fmt.Fprintf(os.Stderr, "[sidekick] enabled: %s\n", verifierNames(enabledVerifiers(verifiers)))
+		}
+		fmt.Fprintf(os.Stderr, "[sidekick] enabled: %s\n", verifierNames(enabledVerifiers(verifiers)))
 
-			state := daemon.NewState()
-			state.SetSessionBaseRef(baseRef)
-			state.SetSessionWorktree(worktree)
-			state.SetVersion(version)
-			if trimmed := strings.TrimSpace(startGoal); trimmed != "" {
-				state.LockGoal(trimmed)
-				fmt.Fprintf(os.Stderr, "[sidekick] goal locked to: %s\n", trimmed)
+		state := daemon.NewState()
+		state.SetSessionBaseRef(baseRef)
+		state.SetSessionWorktree(worktree)
+		state.SetVersion(version)
+		if trimmed := strings.TrimSpace(startGoal); trimmed != "" {
+			state.LockGoal(trimmed)
+			fmt.Fprintf(os.Stderr, "[sidekick] goal locked to: %s\n", trimmed)
+		}
+		runner := verifier.NewRunner(ctx, state, verifiers)
+		runner.SetQuietPeriod(quietPeriod)
+		fmt.Fprintf(os.Stderr, "[sidekick] quiet period: %s\n", runner.QuietPeriod())
+		fmt.Fprintf(os.Stderr, "[sidekick] session idle timeout: %s\n", sessionIdleTimeout)
+
+		runtimes := newSessionRuntimeManager(ctx, version, configPath)
+		runtimes.Register(state, runner, loadedConfigPath)
+		defer runtimes.StopAll()
+		registry := daemon.NewRegistry(state, runtimes.NewSession)
+		registry.SetCleanup(runtimes.Stop)
+		registry.SetIdleTimeout(sessionIdleTimeout)
+		go registry.StartGC(ctx, time.Minute)
+
+		handler := &runnerHandler{runtimes: runtimes}
+		srv, err := acquireDaemonSocket(sock, registry, handler, !headless)
+		if err != nil {
+			return err
+		}
+		defer srv.Close()
+
+		serveErr := make(chan error, 1)
+		go func() { serveErr <- srv.Serve(ctx) }()
+
+		if headless {
+			fmt.Fprintf(os.Stderr, "[sidekick] listening on %s (headless)\n", sock)
+			return <-serveErr
+		}
+
+		manualTrigger := func() {
+			session := registry.DisplayedSession()
+			session.SetGoal("unset")
+			if runner := runtimes.Runner(session); runner != nil {
+				runner.TriggerImmediate()
 			}
-			runner := verifier.NewRunner(ctx, state, verifiers)
-			runner.SetQuietPeriod(quietPeriod)
-			fmt.Fprintf(os.Stderr, "[sidekick] quiet period: %s\n", runner.QuietPeriod())
-			fmt.Fprintf(os.Stderr, "[sidekick] session idle timeout: %s\n", sessionIdleTimeout)
-
-			runtimes := newSessionRuntimeManager(ctx, version, configPath)
-			runtimes.Register(state, runner, loadedConfigPath)
-			defer runtimes.StopAll()
-			registry := daemon.NewRegistry(state, runtimes.NewSession)
-			registry.SetCleanup(runtimes.Stop)
-			registry.SetIdleTimeout(sessionIdleTimeout)
-			go registry.StartGC(ctx, time.Minute)
-
-			handler := &runnerHandler{runtimes: runtimes}
-			srv, err := acquireDaemonSocket(sock, registry, handler, !headless)
-			if err != nil {
-				return err
-			}
-			defer srv.Close()
-
-			serveErr := make(chan error, 1)
-			go func() { serveErr <- srv.Serve(ctx) }()
-
-			if headless {
-				fmt.Fprintf(os.Stderr, "[sidekick] listening on %s (headless)\n", sock)
-				return <-serveErr
-			}
-
-			manualTrigger := func() {
-				session := registry.DisplayedSession()
-				session.SetGoal("unset")
-				if runner := runtimes.Runner(session); runner != nil {
-					runner.TriggerImmediate()
-				}
-				session.LogEvent(daemon.EventInfo, "all verifiers triggered")
-			}
-			reloadConfig := func() error {
-				session := registry.DisplayedSession()
-				path := runtimes.ConfigPath(session)
-				if path == "" {
-					return nil
-				}
-				next, quiet, _, _, err := loadVerifiersFor(path, session.SessionWorktree())
-				if err != nil {
-					session.LogEvent(daemon.EventError, "reload config failed: %v", err)
-					return err
-				}
-				if runner := runtimes.Runner(session); runner != nil {
-					runner.ReplaceVerifiers(next)
-					runner.SetQuietPeriod(quiet)
-				}
-				session.LogEvent(daemon.EventInfo, "reloaded %d verifiers from %s", len(next), path)
+			session.LogEvent(daemon.EventInfo, "all verifiers triggered")
+		}
+		reloadConfig := func() error {
+			session := registry.DisplayedSession()
+			path := runtimes.ConfigPath(session)
+			if path == "" {
 				return nil
 			}
-			p := tea.NewProgram(
-				sidekicktui.NewRegistry(registry).
-					WithManualTrigger(manualTrigger).
-					WithTriggerVerifier(func(name string) {
-						session := registry.DisplayedSession()
-						if runner := runtimes.Runner(session); runner != nil && runner.TriggerVerifierImmediate(name) {
-							session.LogEvent(daemon.EventInfo, "verifier %s triggered", name)
-						}
-					}).
-					WithToggleVerifier(func(name string) {
-						session := registry.DisplayedSession()
-						disabled, ok := session.ToggleVerifierDisabled(name)
-						path := runtimes.ConfigPath(session)
-						if !ok || path == "" {
-							return
-						}
-						if err := config.SetVerifierDisabled(path, name, disabled); err != nil {
-							session.LogEvent(daemon.EventError, "persist verifier toggle failed: %v", err)
-							return
-						}
-					}).
-					WithStopAll(func() {
-						if runner := runtimes.Runner(registry.DisplayedSession()); runner != nil {
-							runner.KillBatch()
-						}
-					}).
-					WithConfigEditor(loadedConfigPath).
-					WithConfigPathFunc(func() string { return runtimes.ConfigPath(registry.DisplayedSession()) }).
-					WithConfigSaved(reloadConfig),
-				tea.WithAltScreen(),
-			)
-			if _, err := p.Run(); err != nil {
-				cancel()
-				<-serveErr
+			next, quiet, _, _, err := loadVerifiersFor(path, session.SessionWorktree())
+			if err != nil {
+				session.LogEvent(daemon.EventError, "reload config failed: %v", err)
 				return err
 			}
+			if runner := runtimes.Runner(session); runner != nil {
+				runner.ReplaceVerifiers(next)
+				runner.SetQuietPeriod(quiet)
+			}
+			session.LogEvent(daemon.EventInfo, "reloaded %d verifiers from %s", len(next), path)
+			return nil
+		}
+		p := tea.NewProgram(
+			sidekicktui.NewRegistry(registry).
+				WithManualTrigger(manualTrigger).
+				WithTriggerVerifier(func(name string) {
+					session := registry.DisplayedSession()
+					if runner := runtimes.Runner(session); runner != nil && runner.TriggerVerifierImmediate(name) {
+						session.LogEvent(daemon.EventInfo, "verifier %s triggered", name)
+					}
+				}).
+				WithToggleVerifier(func(name string) {
+					session := registry.DisplayedSession()
+					disabled, ok := session.ToggleVerifierDisabled(name)
+					path := runtimes.ConfigPath(session)
+					if !ok || path == "" {
+						return
+					}
+					if err := config.SetVerifierDisabled(path, name, disabled); err != nil {
+						session.LogEvent(daemon.EventError, "persist verifier toggle failed: %v", err)
+						return
+					}
+				}).
+				WithStopAll(func() {
+					if runner := runtimes.Runner(registry.DisplayedSession()); runner != nil {
+						runner.KillBatch()
+					}
+				}).
+				WithConfigEditor(loadedConfigPath).
+				WithConfigPathFunc(func() string { return runtimes.ConfigPath(registry.DisplayedSession()) }).
+				WithConfigSaved(reloadConfig),
+			tea.WithAltScreen(),
+		)
+		if _, err := p.Run(); err != nil {
 			cancel()
 			<-serveErr
-			return nil
-		},
+			return err
+		}
+		cancel()
+		<-serveErr
+		return nil
 	}
 	cmd.Flags().BoolVar(&headless, "headless", false, "run only the daemon (no TUI); useful for tests")
 	cmd.Flags().StringVar(&configPath, "config", "", "path to sidekick.yaml (default: nearest sidekick.yaml above cwd)")
 	cmd.Flags().StringVar(&startGoal, "goal", "", "pin the session goal up-front; the agent's sidekick_set_goal calls become no-ops while this is set")
-	return cmd
 }
 
 // acquireDaemonSocket calls daemon.Listen and, if the socket is held by
