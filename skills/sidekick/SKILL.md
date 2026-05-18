@@ -21,7 +21,11 @@ The first thing you do on a substantive task is call `sidekick_set_goal` with on
 Good: `"Add OAuth2 PKCE support to the auth module"`
 Bad: `"read auth.go"` (that's a step, not a goal)
 
-Re-set the goal whenever the user pivots, you start a clearly distinct sub-task, or you realize the original framing was wrong. Don't reset it on every message — only when the target genuinely changes.
+**Working in a git worktree? Create or `cd` into it BEFORE calling `sidekick_set_goal`.** The goal call anchors the session to your current working directory, and the write hook only fires verifiers for files under that anchored path. If you set the goal from the repo root and then move work into a worktree (or vice versa), edits land outside the anchor, no verifier runs trigger, and the compass silently goes stale. If you realize mid-task that the work belongs in a different worktree, switch cwd first and call `sidekick_set_goal` again to re-anchor.
+
+Sidekick supports — and encourages — running parallel sessions, one per worktree or one per repo. Each session keeps its own compass scoped to the cwd it was anchored to at `sidekick_set_goal` time, so getting the cwd right on that first call is what lets the parallel sessions coexist without stepping on each other.
+
+Re-set the goal whenever the user pivots, you start a clearly distinct sub-task, you switch worktrees, or you realize the original framing was wrong. Don't reset it on every message — only when the target (or the cwd it's anchored to) genuinely changes.
 
 ### 2. Read the compass after meaningful edits
 
