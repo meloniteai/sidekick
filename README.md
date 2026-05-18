@@ -17,7 +17,7 @@ instead of finding out at review time.
 
 ## Demo
 
-https://github.com/user-attachments/assets/887ee725-f1df-4dbe-a838-9a2ce7b4ae12
+https://github.com/user-attachments/assets/07dd4bd8-afa5-4194-9f21-7bcf8aef113d
 
 ## How it works
 
