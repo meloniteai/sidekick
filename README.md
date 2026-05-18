@@ -103,66 +103,41 @@ There are multiple options. Choose what works best for you:
 
 3. Provision a tracked `sidekick.yaml` next to your code. 
 
-## Verifier types
+## Agent verifiers
 
-`command` verifiers are the protocol-level extension point. They must:
+Use `type: agent` for qualitative checks that benefit from an LLM reviewing
+the active goal, base ref, changed files, and recent context. Sidekick loads
+the configured `SKILL.md`, adds the JSON output contract and score anchors,
+then shells out to `claude`, `codex`, or a custom CLI. Authentication and
+model access stay with the user's installed agent CLI.
 
-1. Read one line of JSON on stdin. The shape is:
-   ```json
-   {
-     "goal": "...",
-     "changed_files": ["...", "..."],
-     "last_messages": ["user: ...", "assistant: ..."],
-     "verifier_name": "Architect"
-   }
-   ```
-2. Print exactly one JSON object on stdout (additional log lines on
-   preceding lines OR trailing lines are tolerated — Sidekick scans the
-   stream for the last balanced object containing `"distance"`):
-   ```json
-   {"distance": 0.42, "reason": "one short sentence", "status": "ok"}
-   ```
-   `status` is optional. Set it to `"unknown"` if your verifier ran but
-   could not score this run (tooling missing, no diff to evaluate). Sidekick
-   preserves the previous distance instead of fabricating one, and the
-   row renders with a distinct `?` badge so agents can disambiguate.
-3. Exit zero. Any non-zero exit, missing JSON, or timeout (default 60s)
-   pins the verifier at `distance = 1.0` with `status = "error"` and the
-   failure reason.
-
-### Score anchors
-
-The runtime injects a 5-point rubric (0.00 / 0.25 / 0.50 / 0.75 / 1.00)
-into agent verifier prompts so scores stay comparable across runs and
-across verifiers. Free-floating decimals like 0.37 drift between runs
-and become noise; the anchors give the agent a discrete scale to
-calibrate against. See the [verifier registry](https://github.com/meloniteai/sidekick-verifiers/blob/main/CONTRIBUTING-VERIFIERS.md)
+Score anchors use a fixed 5-point scale (0.00 / 0.25 / 0.50 / 0.75 / 1.00)
+so agent scores stay comparable across runs. See the [verifier registry](https://github.com/meloniteai/sidekick-verifiers/blob/main/CONTRIBUTING-VERIFIERS.md)
 for the per-dimension calibration each bundled skill uses.
 
-`agent` verifiers internalize the old `run.sh` wrapper: Sidekick loads the
-configured `SKILL.md`, appends the active goal, `SESSION_BASE_REF`,
-changed files, and the JSON output contract (with score anchors), then
-shells out to `claude` or `codex`. Authentication and model access
-still stay with the user's installed agent CLI.
-
-Set `agent: custom` to plug in any other LLM CLI via a templated argv:
+Basic Claude-backed verifier:
 
 ```yaml
-- name: GeminiArchitect
+- name: Architect
   type: agent
   direction: N
+  timeout: 90s
   llm:
-    agent: custom
-    model: gemini-1.5-flash
+    agent: claude
+    model: haiku
     thinking: low
     skill: ./skills/architect/SKILL.md
-    custom:
-      command: ["my-llm", "--model={{.Model}}", "--effort={{.Thinking}}", "-"]
 ```
 
 `binary` verifiers receive the same session JSON on stdin and
 `SESSION_BASE_REF` in the environment, but Sidekick scores them purely from
 exit code.
+
+Use `type: command` only when you need a deterministic script or custom tool
+to compute its own score. Command verifiers read the session JSON on stdin,
+print one JSON object with `distance`, `reason`, and optional `status`, and
+exit zero. Non-zero exits, missing JSON, or timeouts are reported as verifier
+errors.
 
 ## Remote (community) verifiers
 
