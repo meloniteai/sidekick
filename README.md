@@ -124,7 +124,7 @@ Basic Claude-backed verifier:
   timeout: 90s
   llm:
     agent: claude
-    model: haiku
+    model: sonnet
     thinking: low
     skill: ./skills/architect/SKILL.md
 ```
