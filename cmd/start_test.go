@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/meloniteai/sidekick/internal/config"
 	"github.com/meloniteai/sidekick/internal/daemon"
 	"github.com/meloniteai/sidekick/internal/verifier"
@@ -123,6 +125,80 @@ func TestEnabledVerifiers(t *testing.T) {
 			names[i] = v.Name
 		}
 		t.Fatalf("enabled = %v, want [A C]", names)
+	}
+}
+
+func TestBindStartDispatch(t *testing.T) {
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{}, "sidekick"},
+		{[]string{"start"}, "start"},
+	}
+	for _, tc := range cases {
+		root := New("test", nil)
+		target, _, err := root.Find(tc.args)
+		if err != nil {
+			t.Fatalf("Find(%v): %v", tc.args, err)
+		}
+		if target.Name() != tc.want {
+			t.Fatalf("dispatch %v: got %q, want %q", tc.args, target.Name(), tc.want)
+		}
+		if target.RunE == nil {
+			t.Fatalf("dispatch %v: target %q has nil RunE", tc.args, target.Name())
+		}
+	}
+}
+
+func TestBindStartContract(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  func() *cobra.Command
+	}{
+		{"root", func() *cobra.Command { return New("test", nil) }},
+		{"start", func() *cobra.Command {
+			// The start subcommand is reachable as a child of the root.
+			root := New("test", nil)
+			for _, c := range root.Commands() {
+				if c.Name() == "start" {
+					return c
+				}
+			}
+			t.Fatalf("start subcommand not found on root")
+			return nil
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := tc.cmd()
+			for _, name := range []string{"headless", "config", "goal"} {
+				if c.Flags().Lookup(name) == nil {
+					t.Errorf("%s missing --%s flag", tc.name, name)
+				}
+			}
+			if err := c.ParseFlags([]string{"--headless", "--config", "/tmp/x", "--goal", "ship"}); err != nil {
+				t.Fatalf("%s ParseFlags: %v", tc.name, err)
+			}
+			if got, _ := c.Flags().GetBool("headless"); !got {
+				t.Errorf("%s --headless did not parse to true", tc.name)
+			}
+			if got, _ := c.Flags().GetString("config"); got != "/tmp/x" {
+				t.Errorf("%s --config = %q, want /tmp/x", tc.name, got)
+			}
+			if got, _ := c.Flags().GetString("goal"); got != "ship" {
+				t.Errorf("%s --goal = %q, want ship", tc.name, got)
+			}
+			if c.RunE == nil {
+				t.Fatalf("%s.RunE is nil; would print help instead of launching the TUI", tc.name)
+			}
+			if c.Args == nil {
+				t.Fatalf("%s.Args is nil; unknown positional args would fall through to TUI", tc.name)
+			}
+			if err := c.Args(c, []string{"unexpected-positional"}); err == nil {
+				t.Fatalf("%s accepted an unknown positional arg; expected NoArgs rejection", tc.name)
+			}
+		})
 	}
 }
 
