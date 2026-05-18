@@ -15,6 +15,12 @@ instead of finding out at review time.
 
 ---
 
+## Demo
+
+<video src="assets/sidekick-mov-2x_new.mov" controls muted playsinline width="100%" title="Sidekick demo"></video>
+
+[Open the demo video](assets/sidekick-mov-2x_new.mov)
+
 ## How it works
 
 ```
