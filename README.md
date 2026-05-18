@@ -46,7 +46,7 @@ https://github.com/user-attachments/assets/07dd4bd8-afa5-4194-9f21-7bcf8aef113d
 
 | Binary | Role | Lifetime |
 |---|---|---|
-| `sidekick start` | Long-running daemon + Bubble Tea TUI. Owns state, runs verifiers. Listens on a repo-scoped socket under `~/.sidekick/sockets/<fingerprint>.sock` so multiple projects can run side-by-side. | foreground |
+| `sidekick` | Long-running daemon + Bubble Tea TUI. Owns state, runs verifiers. Listens on a repo-scoped socket under `~/.sidekick/sockets/<fingerprint>.sock` so multiple projects can run side-by-side. | foreground |
 | `sidekick hook <event>` | Spawned by Claude Code or Codex hooks. Reads hook JSON on stdin, posts a normalized event to the daemon, exits. | one-shot |
 | `sidekick mcp` | Spawned by the agent client as an MCP server. Proxies `sidekick_status` / `sidekick_explain` to the daemon. | per agent session |
 | `sidekick verifier add <url>` | Fetches a remote SKILL.md or verifier script, pins it by sha256, and registers it in `sidekick.yaml`. | one-shot |
@@ -80,7 +80,7 @@ sidekick install
 
 ```bash
 # 1. Start the Sidekick in a terminal
-sidekick start
+sidekick 
 
 # 2. In another terminal, run Claude Code as usual
 claude
@@ -106,8 +106,8 @@ CI, sandboxes, or remote dev containers. Hooks, MCP, `sidekick status`, and
 configured (no landing picker, no mid-session toggles).
 
 ```bash
-sidekick start --headless                    # agent sets the goal via MCP
-sidekick start --headless --goal "ship auth" # pin the goal up front
+sidekick --headless                    # agent sets the goal via MCP
+sidekick --headless --goal "ship auth" # pin the goal up front
 ```
 
 Git worktrees are supported in both modes: the daemon spins up a separate
