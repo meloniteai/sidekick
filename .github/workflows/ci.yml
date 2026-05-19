@@ -54,9 +54,13 @@ jobs:
   e2e-agents:
     name: E2E (agents)
     runs-on: ubuntu-latest
-    # Skip when the Anthropic key secret is missing (e.g. on PRs from
-    # forks). When it runs and fails, it gates release alongside test/e2e.
-    if: ${{ vars.RUN_AGENT_E2E == '1' || secrets.ANTHROPIC_API_KEY != '' }}
+    # Opt-in via the repo-level `RUN_AGENT_E2E` variable. Secrets cannot be
+    # referenced from a job-level `if` (GitHub blocks it to prevent secret
+    # leakage via expression evaluation), so we gate on a variable instead.
+    # Enable in Settings → Secrets and variables → Actions → Variables:
+    # set RUN_AGENT_E2E=1 once ANTHROPIC_API_KEY / OPENAI_API_KEY are also
+    # configured as secrets.
+    if: ${{ vars.RUN_AGENT_E2E == '1' }}
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
