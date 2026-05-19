@@ -90,13 +90,11 @@ claude
 # 5. The agent calls sidekick_status to read the compass and course-correct.
 ```
 
-You can also poke the daemon directly:
+Once the TUI is up, hit `ctrl+v` to open the remote verifier browser and
+install your first verifiers from the community registry — no editing
+`sidekick.yaml` by hand required.
 
-```bash
-sidekick goal "ship the auth module"     # set goal explicitly
-sidekick status                           # print JSON snapshot
-echo '{"tool_input":{"file_path":"src/auth.go"}}' | sidekick hook write
-```
+https://github.com/user-attachments/assets/24796075-a805-4789-a858-58ece7a31179
 
 ## TUI or Headless execution
 
@@ -117,7 +115,7 @@ session per worktree on first hook event, and the TUI lets you switch between th
 
 There are multiple options. Choose what works best for you:
 
-1. Quickstart: use the remote verifier browser in the tui (`ctrl+w` once inside the sidekick tui)
+1. Quickstart: use the remote verifier browser in the tui (`ctrl+v` once inside the sidekick tui)
 2. Configure verifiers in the TUI, or use `sidekick verifier add --local`, to add your own new local verifiers
 
 3. Provision a tracked `sidekick.yaml` next to your code. 
