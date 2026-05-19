@@ -32,7 +32,7 @@ type paletteItem struct {
 var paletteItems = []paletteItem{
 	{label: "New Verifier", shortcut: "ctrl+n", action: paletteActionNewVerifier},
 	{label: "Edit Verifier", shortcut: "ctrl+e", action: paletteActionEditVerifier},
-	{label: "Browse Verifiers", shortcut: "", action: paletteActionBrowseVerifiers},
+	{label: "Browse Verifiers", shortcut: "ctrl+v", action: paletteActionBrowseVerifiers},
 	{label: "Switch Session", shortcut: "ctrl+w", action: paletteActionSwitchSession},
 	{label: "Toggle Git Changes", shortcut: "ctrl+g", action: paletteActionToggleGitPanel},
 	{label: "Toggle Event Log", shortcut: "ctrl+l", action: paletteActionToggleEventLog},

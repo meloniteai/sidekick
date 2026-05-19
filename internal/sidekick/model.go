@@ -321,6 +321,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+w":
 			m.openSessionSwitcher()
 			return m, nil
+		case "ctrl+v":
+			return m, m.dispatchPaletteAction(paletteActionBrowseVerifiers)
 		case "t":
 			if m.onManualTrigger != nil {
 				m.onManualTrigger()

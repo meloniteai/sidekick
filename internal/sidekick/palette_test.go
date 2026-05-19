@@ -28,7 +28,7 @@ func TestPaletteRenderShape(t *testing.T) {
 		"Switch Session",
 		"Toggle Git Changes",
 		"Toggle Event Log",
-		"ctrl+n", "ctrl+e", "ctrl+w", "ctrl+g", "ctrl+l",
+		"ctrl+n", "ctrl+e", "ctrl+v", "ctrl+w", "ctrl+g", "ctrl+l",
 		"↑/↓ choose", "enter confirm", "esc cancel",
 	} {
 		if !strings.Contains(out, want) {
