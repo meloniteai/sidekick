@@ -81,11 +81,15 @@ if [ -n "${SIDEKICK_VERSION:-}" ]; then
   step "Using pinned version ${CORAL_SOFT}${VERSION}${RESET}"
 else
   step "Resolving latest release from github.com/${REPO}"
-  TAG="$(
-    curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-      | grep -m1 '"tag_name":' \
-      | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/'
-  )"
+  # Capture the full API response before parsing instead of piping curl
+  # straight into `grep -m1`. With curl 8.5 (the version ubuntu 24.04 ships)
+  # `set -o pipefail` promotes grep's early-close into a curl write error
+  # (exit 23) and the whole script aborts — even though the tag was already
+  # received. Reading into a variable first buys atomicity without losing
+  # the safety nets.
+  LATEST_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")" \
+    || fail "could not fetch latest release info"
+  TAG="$(printf '%s\n' "$LATEST_JSON" | grep -m1 '"tag_name":' | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
   [ -n "$TAG" ] || fail "could not determine latest release tag"
   VERSION="${TAG#v}"
 fi

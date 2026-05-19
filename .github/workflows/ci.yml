@@ -31,10 +31,67 @@ jobs:
       - name: Test
         run: go test ./...
 
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Configure git identity for tests
+        # The e2e harness shells out to `git init` + `git commit` in scratch
+        # repos; CI runners ship without an identity, so configure one.
+        run: |
+          git config --global user.email "ci@sidekick.local"
+          git config --global user.name  "sidekick-ci"
+      - name: E2E suite
+        # Includes the installer tests (T6/T7), which require Docker.
+        # ubuntu-latest runners ship with Docker preinstalled.
+        run: make e2e
+
+  e2e-agents:
+    name: E2E (agents)
+    runs-on: ubuntu-latest
+    # Skip when the Anthropic key secret is missing (e.g. on PRs from
+    # forks). When it runs and fails, it gates release alongside test/e2e.
+    if: ${{ vars.RUN_AGENT_E2E == '1' || secrets.ANTHROPIC_API_KEY != '' }}
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.email "ci@sidekick.local"
+          git config --global user.name  "sidekick-ci"
+      - name: Agent e2e suite
+        run: make e2e-agents
+
   release:
     name: Release
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, e2e, e2e-agents]
+    # When the Anthropic key is unset, e2e-agents is skipped; we still want
+    # release to proceed. When it ran, it must have succeeded.
+    if: |
+      always()
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && needs.test.result == 'success'
+      && needs.e2e.result == 'success'
+      && (needs.e2e-agents.result == 'success' || needs.e2e-agents.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
