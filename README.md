@@ -94,7 +94,7 @@ Once the TUI is up, hit `ctrl+v` to open the remote verifier browser and
 install your first verifiers from the community registry — no editing
 `sidekick.yaml` by hand required.
 
-https://github.com/user-attachments/assets/24796075-a805-4789-a858-58ece7a31179
+![Remote verifier browser](https://github.com/user-attachments/assets/24796075-a805-4789-a858-58ece7a31179)
 
 ## TUI or Headless execution
 
