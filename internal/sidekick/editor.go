@@ -16,11 +16,9 @@ import (
 	"github.com/meloniteai/sidekick/internal/fetch"
 )
 
-// Reasons shown when the editor blocks a write: a global config is immutable
-// in-session, and a cache-pinned remote skill must be re-forked at project
-// scope before it can be edited.
+// Reason shown when the editor blocks a write: a cache-pinned remote skill must
+// be re-forked at project scope before it can be edited.
 const (
-	globalReadOnlyNote = "global verifiers are read-only — install at project scope (ctrl+v) to edit"
 	remoteReadOnlyNote = "remote verifier — skill is cached and read-only; reinstall at project scope to edit"
 )
 
@@ -87,10 +85,10 @@ type EditWizard struct {
 	configDir  string
 	file       config.File
 
-	// readOnly is set when configPath is the global sidekick.yaml. The whole
-	// wizard then refuses writes (metadata and skill) and surfaces why — see
-	// globalReadOnlyNote. Project configs are fully editable.
-	readOnly bool
+	// globalConfig is set when configPath is the global sidekick.yaml. This is
+	// only a UI scope label; editability is determined per verifier by whether
+	// it is source-pinned to a remote cached artefact.
+	globalConfig bool
 
 	phase    editPhase
 	cursor   int
@@ -142,7 +140,7 @@ func NewEditWizard(configPath string) EditWizard {
 	}
 	w.configPath = path
 	w.configDir = filepath.Dir(path)
-	w.readOnly = isGlobalConfig(path)
+	w.globalConfig = isGlobalConfig(path)
 	w.file = *f
 	w.startSelect()
 	return w
@@ -151,7 +149,7 @@ func NewEditWizard(configPath string) EditWizard {
 // isGlobalConfig reports whether path is the global sidekick.yaml
 // (config.GlobalPath, typically ~/.sidekick/sidekick.yaml). When the loader
 // falls back to the global config — no project sidekick.yaml on the path up
-// from cwd — the editor opens in read-only mode.
+// from cwd — the editor labels that scope but still allows local edits.
 func isGlobalConfig(path string) bool {
 	if path == "" {
 		return false
@@ -282,13 +280,13 @@ func (w EditWizard) updateSelect(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
 }
 
 func (w EditWizard) updateMetadata(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
-	if w.readOnly {
-		// Global config: no writes. ctrl+s/ctrl+n both advance to the
-		// (read-only) skill view; everything else is inert.
+	if w.selectedRemotePinned() {
 		switch key.String() {
 		case "ctrl+s", "ctrl+n":
 			w.startSkill()
-			w.message = globalReadOnlyNote
+			if w.message == "" {
+				w.message = remoteReadOnlyNote
+			}
 		}
 		return w, nil, false
 	}
@@ -513,9 +511,8 @@ func (w *EditWizard) startSelect() {
 	}
 	title := "Pick a verifier to edit"
 	desc := "↑/↓ move · enter edit · esc abort"
-	if w.readOnly {
-		title = "Pick a verifier to view (global config — read-only)"
-		desc = "↑/↓ move · enter view · esc abort"
+	if w.globalConfig {
+		title = "Pick a verifier to edit (global config)"
 	}
 	field := huh.NewSelect[string]().
 		Title(title).
@@ -784,10 +781,10 @@ func (w EditWizard) saveSkill() error {
 // verifiers carry an editable rubric; command/binary verifiers return an empty
 // path (their script is edited via the metadata step, not here).
 //
-//   - Local skill (llm.skill set): editable unless the config is global.
-//   - Remote skill (source pin, no local path): the cached copy is hash-pinned
-//     and shared, so it is shown read-only. An un-fetched remote returns an
-//     empty path with a note.
+//   - Local skill (llm.skill set): editable in both project and global config.
+//   - Remote skill (source URL): the cached copy is hash-pinned and shared, so
+//     it is shown read-only even if the spec also carries llm.skill.
+//     An un-fetched or malformed remote returns an empty path with a note.
 func (w EditWizard) selectedSkill() (path string, editable bool, note string) {
 	if w.selected < 0 || w.selected >= len(w.file.Verifiers) {
 		return "", false, ""
@@ -800,20 +797,28 @@ func (w EditWizard) selectedSkill() (path string, editable bool, note string) {
 	if kind != createTypeAgent {
 		return "", false, "" // only agent verifiers have an editable SKILL.md
 	}
+	if vs.Source != nil && vs.Source.URL != "" {
+		if vs.Source.SHA256 != "" {
+			if p, ok := fetch.CachedPath(fetch.Pin{URL: vs.Source.URL, SHA256: vs.Source.SHA256, Ext: ".md"}); ok {
+				return p, false, remoteReadOnlyNote
+			}
+			return "", false, "remote verifier — skill has not been fetched yet"
+		}
+		return "", false, "remote verifier — missing sha256 pin"
+	}
 	if strings.TrimSpace(vs.LLM.Skill) != "" {
 		p := config.ResolveLocalPath(w.configDir, vs.LLM.Skill)
-		if w.readOnly {
-			return p, false, globalReadOnlyNote
-		}
 		return p, true, ""
 	}
-	if vs.Source != nil && vs.Source.URL != "" && vs.Source.SHA256 != "" {
-		if p, ok := fetch.CachedPath(fetch.Pin{URL: vs.Source.URL, SHA256: vs.Source.SHA256, Ext: ".md"}); ok {
-			return p, false, remoteReadOnlyNote
-		}
-		return "", false, "remote verifier — skill has not been fetched yet"
-	}
 	return "", false, ""
+}
+
+func (w EditWizard) selectedRemotePinned() bool {
+	if w.selected < 0 || w.selected >= len(w.file.Verifiers) {
+		return false
+	}
+	vs := w.file.Verifiers[w.selected]
+	return vs.Source != nil && vs.Source.URL != ""
 }
 
 func (w EditWizard) draftSkillPath() string {
@@ -923,10 +928,10 @@ func (w EditWizard) title() string {
 }
 
 // scopeSuffix tags the title with the config scope so the user always knows
-// whether they're editing the project or the (read-only) global config.
+// whether they're editing the project or the global config.
 func (w EditWizard) scopeSuffix() string {
-	if w.readOnly {
-		return " — global (read-only)"
+	if w.globalConfig {
+		return " — global"
 	}
 	return ""
 }
@@ -934,13 +939,10 @@ func (w EditWizard) scopeSuffix() string {
 func (w EditWizard) help() string {
 	switch w.phase {
 	case editSelect:
-		if w.readOnly {
-			return "up/down choose verifier | enter view | esc abort"
-		}
 		return "up/down choose verifier | enter edit | esc abort"
 	case editMetadata:
-		if w.readOnly {
-			return "read-only (global config) | ctrl+n view skill | esc abort"
+		if w.selectedRemotePinned() {
+			return "remote verifier is read-only | ctrl+n view skill | esc abort"
 		}
 		return "edit verifier YAML | ctrl+s save and continue | ctrl+n skip | esc abort"
 	case editSkill:

@@ -93,24 +93,23 @@ llm:
 	}
 }
 
-// TestEditWizardGlobalConfigIsReadOnly verifies that when the editor opens the
-// global sidekick.yaml, every write is blocked: metadata edits don't persist,
-// the skill phase is read-only, and the user is told why.
-func TestEditWizardGlobalConfigIsReadOnly(t *testing.T) {
+// TestEditWizardGlobalConfigIsEditable verifies that global sidekick.yaml is a
+// scope, not an edit lock. Only source-pinned remote verifiers are immutable.
+func TestEditWizardGlobalConfigIsEditable(t *testing.T) {
 	cfg, skill := writeEditorFixture(t)
 	// Make the fixture path *be* the global config so isGlobalConfig matches.
 	t.Setenv("SIDEKICK_GLOBAL_CONFIG", cfg)
 
 	w := NewEditWizard(cfg)
-	if !w.readOnly {
-		t.Fatal("editor on global config should be read-only")
+	if !w.globalConfig {
+		t.Fatal("editor should detect global config scope")
 	}
 
-	// enter → metadata (view), ctrl+s must NOT save and should advance to skill.
+	// enter -> metadata, ctrl+s saves just like a project-level local verifier.
 	next, _, done := w.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	w = next
 	if done || w.phase != editMetadata {
-		t.Fatalf("enter should open metadata view, phase=%v done=%v", w.phase, done)
+		t.Fatalf("enter should open metadata editor, phase=%v done=%v", w.phase, done)
 	}
 	w.text = newTextBuffer(`name: Architect
 type: agent
@@ -122,36 +121,80 @@ llm:
 	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	w = next
 	if done || w.phase != editSkill {
-		t.Fatalf("ctrl+s on read-only metadata should advance to skill without saving, phase=%v done=%v", w.phase, done)
-	}
-	if !strings.Contains(w.message, "read-only") {
-		t.Fatalf("expected read-only message, got %q", w.message)
+		t.Fatalf("ctrl+s should save metadata and advance to skill, phase=%v done=%v err=%q", w.phase, done, w.errMsg)
 	}
 
 	f, _, err := config.Load(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Verifiers[0].Direction != "N" || f.Verifiers[0].Timeout != "90s" {
-		t.Fatalf("read-only metadata must not persist: %+v", f.Verifiers[0])
+	if f.Verifiers[0].Direction != "SE" || f.Verifiers[0].Timeout != "1s" || f.Verifiers[0].LLM.Agent != "codex" {
+		t.Fatalf("global metadata should persist: %+v", f.Verifiers[0])
 	}
 
-	// Skill phase: editable=false, ctrl+s refuses and leaves the file alone.
-	if w.skillEditable {
-		t.Fatal("skill in global config should not be editable")
+	// Skill phase: local SKILL.md remains editable in global config.
+	if !w.skillEditable {
+		t.Fatal("local skill in global config should be editable")
 	}
-	w.text = newTextBuffer("# Hijacked")
+	w.text = newTextBuffer("# Global update")
 	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	w = next
-	if done {
-		t.Fatal("ctrl+s on read-only skill should not finish")
+	if !done || w.errMsg != "" {
+		t.Fatalf("ctrl+s should save global local skill and finish, done=%v err=%q", done, w.errMsg)
 	}
 	raw, err := os.ReadFile(skill)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(raw) != "# Old\n" {
-		t.Fatalf("read-only skill must not be written, got %q", raw)
+	if string(raw) != "# Global update\n" {
+		t.Fatalf("global local skill should be written, got %q", raw)
+	}
+}
+
+func TestCreateWizardGlobalVerifierRemainsEditable(t *testing.T) {
+	cfg, _ := writeEditorFixture(t)
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", cfg)
+
+	w := NewCreateWizard(cfg)
+	if !w.globalConfig {
+		t.Fatal("create wizard should detect global config scope")
+	}
+	w.text = newTextBuffer(`name: Quality
+direction: E
+timeout: 2m`)
+	next, _, done := w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if done || w.phase != editCreateType {
+		t.Fatalf("basics should continue to type, phase=%v done=%v err=%q", w.phase, done, w.errMsg)
+	}
+	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if done || w.phase != editCreateConfig || w.createKind != createTypeAgent {
+		t.Fatalf("type should continue to agent config, phase=%v kind=%q done=%v", w.phase, w.createKind, done)
+	}
+	w.text = newTextBuffer(`llm:
+    agent: codex
+    skill: ./skills/quality/SKILL.md`)
+	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if done || w.phase != editCreateSkill {
+		t.Fatalf("agent config should continue to skill, phase=%v done=%v err=%q", w.phase, done, w.errMsg)
+	}
+	w.text = newTextBuffer("# Quality\nscore global sessions")
+	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if !done || w.errMsg != "" || !w.saved {
+		t.Fatalf("skill save should create global verifier, done=%v saved=%v err=%q", done, w.saved, w.errMsg)
+	}
+
+	w = NewEditWizardFor(cfg, "Quality")
+	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	w = next
+	if done || w.phase != editSkill {
+		t.Fatalf("ctrl+n should advance created verifier to skill, phase=%v done=%v", w.phase, done)
+	}
+	if !w.skillEditable {
+		t.Fatal("newly created global verifier skill should remain editable")
 	}
 }
 
@@ -163,7 +206,7 @@ func TestEditWizardRemoteSkillIsReadOnly(t *testing.T) {
 	dir := t.TempDir()
 	cacheDir := t.TempDir()
 	t.Setenv("SIDEKICK_CACHE_DIR", cacheDir)
-	// Point the global config elsewhere so this project cfg is NOT read-only.
+	// Point the global config elsewhere so this project cfg is not global.
 	t.Setenv("SIDEKICK_GLOBAL_CONFIG", filepath.Join(dir, "global-sidekick.yaml"))
 
 	body := []byte("# Remote rubric\nscore it\n")
@@ -189,16 +232,33 @@ func TestEditWizardRemoteSkillIsReadOnly(t *testing.T) {
 	}
 
 	w := NewEditWizard(cfg)
-	if w.readOnly {
-		t.Fatal("project config should not be globally read-only")
+	if w.globalConfig {
+		t.Fatal("project config should not be marked global")
 	}
-	// enter → metadata, ctrl+n → skill (skip avoids a metadata Resolve).
+	// enter -> metadata, ctrl+s must not save a source-pinned verifier and
+	// should advance to the cached read-only skill view.
 	next, _, _ := w.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	w = next
-	next, _, done := w.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	w.text = newTextBuffer(`name: Remote
+type: agent
+direction: S
+timeout: 1s
+llm:
+    agent: codex
+source:
+    url: https://example.com/SKILL.md
+    sha256: ` + sha)
+	next, _, done := w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	w = next
 	if done || w.phase != editSkill {
-		t.Fatalf("ctrl+n should advance to skill, phase=%v done=%v", w.phase, done)
+		t.Fatalf("ctrl+s should advance remote verifier to skill without saving, phase=%v done=%v", w.phase, done)
+	}
+	f, _, err := config.Load(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Verifiers[0].Direction != "N" || f.Verifiers[0].Timeout != "90s" || f.Verifiers[0].LLM.Agent != "claude" {
+		t.Fatalf("remote metadata must not persist: %+v", f.Verifiers[0])
 	}
 	if w.skillFile == "" || !strings.HasPrefix(w.skillFile, cacheDir) {
 		t.Fatalf("remote skill should resolve to the cache, got %q", w.skillFile)
