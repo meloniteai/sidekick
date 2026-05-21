@@ -13,6 +13,15 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/meloniteai/sidekick/internal/config"
+	"github.com/meloniteai/sidekick/internal/fetch"
+)
+
+// Reasons shown when the editor blocks a write: a global config is immutable
+// in-session, and a cache-pinned remote skill must be re-forked at project
+// scope before it can be edited.
+const (
+	globalReadOnlyNote = "global verifiers are read-only — install at project scope (ctrl+v) to edit"
+	remoteReadOnlyNote = "remote verifier — skill is cached and read-only; reinstall at project scope to edit"
 )
 
 type editPhase int
@@ -78,6 +87,11 @@ type EditWizard struct {
 	configDir  string
 	file       config.File
 
+	// readOnly is set when configPath is the global sidekick.yaml. The whole
+	// wizard then refuses writes (metadata and skill) and surfaces why — see
+	// globalReadOnlyNote. Project configs are fully editable.
+	readOnly bool
+
 	phase    editPhase
 	cursor   int
 	selected int
@@ -85,6 +99,15 @@ type EditWizard struct {
 
 	draft      config.VerifierSpec
 	createKind string
+
+	// Resolved skill state for the currently-selected verifier, computed on
+	// entry to the skill phase (see selectedSkill). skillFile is the on-disk
+	// path shown/edited; skillEditable gates writes; skillNote explains a
+	// read-only path. Held on the wizard so the per-frame help/render paths
+	// don't recompute (and re-stat the cache) on every keystroke.
+	skillFile     string
+	skillEditable bool
+	skillNote     string
 
 	text    textBuffer
 	message string
@@ -119,9 +142,30 @@ func NewEditWizard(configPath string) EditWizard {
 	}
 	w.configPath = path
 	w.configDir = filepath.Dir(path)
+	w.readOnly = isGlobalConfig(path)
 	w.file = *f
 	w.startSelect()
 	return w
+}
+
+// isGlobalConfig reports whether path is the global sidekick.yaml
+// (config.GlobalPath, typically ~/.sidekick/sidekick.yaml). When the loader
+// falls back to the global config — no project sidekick.yaml on the path up
+// from cwd — the editor opens in read-only mode.
+func isGlobalConfig(path string) bool {
+	if path == "" {
+		return false
+	}
+	gp, err := config.GlobalPath()
+	if err != nil || gp == "" {
+		return false
+	}
+	a, errA := filepath.Abs(path)
+	b, errB := filepath.Abs(gp)
+	if errA != nil || errB != nil {
+		return filepath.Clean(path) == filepath.Clean(gp)
+	}
+	return a == b
 }
 
 // NewCreateWizard loads sidekick.yaml and starts a guided verifier creation flow.
@@ -238,6 +282,16 @@ func (w EditWizard) updateSelect(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
 }
 
 func (w EditWizard) updateMetadata(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
+	if w.readOnly {
+		// Global config: no writes. ctrl+s/ctrl+n both advance to the
+		// (read-only) skill view; everything else is inert.
+		switch key.String() {
+		case "ctrl+s", "ctrl+n":
+			w.startSkill()
+			w.message = globalReadOnlyNote
+		}
+		return w, nil, false
+	}
 	switch key.String() {
 	case "ctrl+s":
 		if err := w.saveMetadata(); err != nil {
@@ -258,6 +312,10 @@ func (w EditWizard) updateMetadata(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
 func (w EditWizard) updateSkill(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
 	switch key.String() {
 	case "ctrl+s":
+		if !w.skillEditable {
+			w.message = w.skillReadOnlyReason()
+			return w, nil, false
+		}
 		if err := w.saveSkill(); err != nil {
 			w.errMsg = err.Error()
 			return w, nil, false
@@ -268,12 +326,21 @@ func (w EditWizard) updateSkill(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
 		w.message = "skill skipped"
 		return w, nil, true
 	default:
-		if w.skillPath() == "" {
+		if !w.skillEditable || w.skillFile == "" {
 			return w, nil, false
 		}
 		w.text.Update(key)
 	}
 	return w, nil, false
+}
+
+// skillReadOnlyReason returns the most specific note for why the current skill
+// can't be written, falling back to a generic line.
+func (w EditWizard) skillReadOnlyReason() string {
+	if w.skillNote != "" {
+		return w.skillNote
+	}
+	return "this skill is read-only"
 }
 
 func (w EditWizard) updateCreateBasics(key tea.KeyMsg) (EditWizard, tea.Cmd, bool) {
@@ -435,12 +502,24 @@ func (w *EditWizard) startSelect() {
 		if kind == "" {
 			kind = "command"
 		}
-		label := fmt.Sprintf("%-16s %-7s %-3s %s", v.Name, kind, strings.ToUpper(v.Direction), v.LLM.Skill)
+		// Show "(remote)" for source-pinned verifiers — their artefact lives
+		// in the shared cache, so the path column would otherwise be blank.
+		detail := v.LLM.Skill
+		if v.Source != nil && v.Source.URL != "" {
+			detail = "(remote)"
+		}
+		label := fmt.Sprintf("%-16s %-7s %-3s %s", v.Name, kind, strings.ToUpper(v.Direction), detail)
 		opts[i] = huh.NewOption(strings.TrimRight(label, " "), v.Name)
 	}
+	title := "Pick a verifier to edit"
+	desc := "↑/↓ move · enter edit · esc abort"
+	if w.readOnly {
+		title = "Pick a verifier to view (global config — read-only)"
+		desc = "↑/↓ move · enter view · esc abort"
+	}
 	field := huh.NewSelect[string]().
-		Title("Pick a verifier to edit").
-		Description("↑/↓ move · enter edit · esc abort").
+		Title(title).
+		Description(desc).
 		Options(opts...).
 		Value(w.selectValue)
 	w.selectForm = huh.NewForm(huh.NewGroup(field)).
@@ -466,10 +545,17 @@ func (w *EditWizard) startMetadata() {
 func (w *EditWizard) startSkill() {
 	w.phase = editSkill
 	w.errMsg = ""
-	path := w.skillPath()
+	path, editable, note := w.selectedSkill()
+	w.skillFile = path
+	w.skillEditable = editable
+	w.skillNote = note
 	if path == "" {
 		w.text = newTextBuffer("")
-		w.message = "no llm.skill path for this verifier; skip to finish"
+		if note != "" {
+			w.message = note + "; skip to finish"
+		} else {
+			w.message = "no skill file for this verifier; skip to finish"
+		}
 		return
 	}
 	raw, err := os.ReadFile(path)
@@ -479,6 +565,9 @@ func (w *EditWizard) startSkill() {
 		return
 	}
 	w.text = newTextBuffer(strings.TrimRight(string(raw), "\n"))
+	if !editable && note != "" {
+		w.message = note
+	}
 }
 
 func (w *EditWizard) startCreateBasics() {
@@ -665,7 +754,7 @@ func (w *EditWizard) saveNewVerifier(writeSkill bool) error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 		}
-		if err := writeFileAtomic(path, []byte(w.text.String()+"\n"), 0o600); err != nil {
+		if err := config.WriteFileAtomic(path, []byte(w.text.String()+"\n"), 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 	}
@@ -681,47 +770,50 @@ func (w *EditWizard) saveNewVerifier(writeSkill bool) error {
 }
 
 func (w EditWizard) saveSkill() error {
-	path := w.skillPath()
-	if path == "" {
-		return fmt.Errorf("selected verifier has no llm.skill path")
+	if !w.skillEditable || w.skillFile == "" {
+		return fmt.Errorf("%s", w.skillReadOnlyReason())
 	}
-	if err := writeFileAtomic(path, []byte(w.text.String()+"\n"), 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+	if err := config.WriteFileAtomic(w.skillFile, []byte(w.text.String()+"\n"), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", w.skillFile, err)
 	}
 	return nil
 }
 
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
-}
-
-func (w EditWizard) skillPath() string {
+// selectedSkill resolves the SKILL.md of the currently-selected verifier into
+// an on-disk path plus whether it can be written and, if not, why. Only agent
+// verifiers carry an editable rubric; command/binary verifiers return an empty
+// path (their script is edited via the metadata step, not here).
+//
+//   - Local skill (llm.skill set): editable unless the config is global.
+//   - Remote skill (source pin, no local path): the cached copy is hash-pinned
+//     and shared, so it is shown read-only. An un-fetched remote returns an
+//     empty path with a note.
+func (w EditWizard) selectedSkill() (path string, editable bool, note string) {
 	if w.selected < 0 || w.selected >= len(w.file.Verifiers) {
-		return ""
+		return "", false, ""
 	}
-	p := w.file.Verifiers[w.selected].LLM.Skill
-	if p == "" {
-		return ""
+	vs := w.file.Verifiers[w.selected]
+	kind := strings.ToLower(vs.Type)
+	if kind == "llm" {
+		kind = createTypeAgent
 	}
-	return config.ResolveLocalPath(w.configDir, p)
+	if kind != createTypeAgent {
+		return "", false, "" // only agent verifiers have an editable SKILL.md
+	}
+	if strings.TrimSpace(vs.LLM.Skill) != "" {
+		p := config.ResolveLocalPath(w.configDir, vs.LLM.Skill)
+		if w.readOnly {
+			return p, false, globalReadOnlyNote
+		}
+		return p, true, ""
+	}
+	if vs.Source != nil && vs.Source.URL != "" && vs.Source.SHA256 != "" {
+		if p, ok := fetch.CachedPath(fetch.Pin{URL: vs.Source.URL, SHA256: vs.Source.SHA256, Ext: ".md"}); ok {
+			return p, false, remoteReadOnlyNote
+		}
+		return "", false, "remote verifier — skill has not been fetched yet"
+	}
+	return "", false, ""
 }
 
 func (w EditWizard) draftSkillPath() string {
@@ -812,11 +904,11 @@ func renderEditorTitleRow(title string, innerW int) string {
 func (w EditWizard) title() string {
 	switch w.phase {
 	case editSelect:
-		return "Sidekick verifier editor"
+		return "Sidekick verifier editor" + w.scopeSuffix()
 	case editMetadata:
-		return "Step 1/2: sidekick.yaml metadata"
+		return "Step 1/2: sidekick.yaml metadata" + w.scopeSuffix()
 	case editSkill:
-		return "Step 2/2: SKILL.md content"
+		return "Step 2/2: SKILL.md content" + w.scopeSuffix()
 	case editCreateBasics:
 		return "New verifier 1/4: basics"
 	case editCreateType:
@@ -830,15 +922,33 @@ func (w EditWizard) title() string {
 	}
 }
 
+// scopeSuffix tags the title with the config scope so the user always knows
+// whether they're editing the project or the (read-only) global config.
+func (w EditWizard) scopeSuffix() string {
+	if w.readOnly {
+		return " — global (read-only)"
+	}
+	return ""
+}
+
 func (w EditWizard) help() string {
 	switch w.phase {
 	case editSelect:
+		if w.readOnly {
+			return "up/down choose verifier | enter view | esc abort"
+		}
 		return "up/down choose verifier | enter edit | esc abort"
 	case editMetadata:
+		if w.readOnly {
+			return "read-only (global config) | ctrl+n view skill | esc abort"
+		}
 		return "edit verifier YAML | ctrl+s save and continue | ctrl+n skip | esc abort"
 	case editSkill:
-		if w.skillPath() == "" {
+		if w.skillFile == "" {
 			return "no skill file for this verifier | ctrl+n finish | esc abort"
+		}
+		if !w.skillEditable {
+			return "read-only skill | ctrl+n finish | esc abort"
 		}
 		return "edit SKILL.md | ctrl+s save and finish | ctrl+n skip | esc abort"
 	case editCreateBasics:
@@ -882,8 +992,8 @@ func (w EditWizard) renderEditor(width int) string {
 	if rows > 28 {
 		rows = 28
 	}
-	if w.phase == editSkill && w.skillPath() != "" {
-		return renderEditorFileLine(w.skillPath(), width) + "\n" + w.text.View(width, rows-1)
+	if w.phase == editSkill && w.skillFile != "" {
+		return renderEditorFileLine(w.skillFile, width) + "\n" + w.text.View(width, rows-1)
 	}
 	if w.phase == editCreateSkill && w.draftSkillPath() != "" {
 		return renderEditorFileLine(w.draftSkillPath(), width) + "\n" + w.text.View(width, rows-1)

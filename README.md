@@ -96,6 +96,13 @@ install your first verifiers from the community registry — no editing
 
 ![Remote verifier browser](https://github.com/user-attachments/assets/24796075-a805-4789-a858-58ece7a31179)
 
+Installs come in two scopes (toggle with `p`/`g` in the browser). **Project**
+copies the verifier's skill into `.sidekick/` next to your `sidekick.yaml`, so
+it is fully editable in-session — press `e` on it to open the SKILL.md editor.
+**Global** pins it in the shared cache under `~/.sidekick/`, where it stays
+read-only across every repo; the editor shows it but blocks edits. Install at
+project scope to fork a global verifier you want to tweak.
+
 ## TUI or Headless execution
 
 Pass `--headless` to run the daemon without the Bubble Tea TUI — useful for
