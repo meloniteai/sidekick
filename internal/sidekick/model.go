@@ -82,6 +82,10 @@ type Model struct {
 	switcher          *SessionSwitcher
 	gitPanel          *GitPanel
 	browser           *RemoteBrowser
+	// telemetryView is the session-telemetry side panel. Non-nil = shown. Like
+	// showEventLog it renders beside the compass and never captures input; it
+	// holds a read-only handle to the SQLite telemetry store.
+	telemetryView *telemetryPanel
 	// anims is keyed by verifier name. We seed an entry on first observation
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
@@ -222,6 +226,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshOrbs()
 		m.refreshWorkspace()
 		m.refreshGitPanel()
+		m.refreshTelemetryPanel(false)
 		return m, tick()
 	}
 	if m.palette != nil {
@@ -264,6 +269,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectedVerifier = 0
 				m.workspaceFetchAt = 0
 				m.refreshWorkspace()
+				// The displayed episode changed — re-scope the telemetry panel
+				// (and reopen the store if the worktree's repo differs) now,
+				// not on the next throttled tick.
+				m.refreshTelemetryPanel(true)
 			}
 			m.switcher = nil
 			return m, cmd
@@ -312,6 +321,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
+			m.closeTelemetryPanel()
 			return m, tea.Quit
 		case "ctrl+p":
 			p := NewPalette()
@@ -366,6 +376,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showEventLog = !m.showEventLog
 		case "g", "ctrl+g":
 			m.toggleGitPanel()
+		case "y", "ctrl+y":
+			m.toggleTelemetryPanel()
 		}
 	}
 	return m, nil
@@ -482,6 +494,8 @@ func (m *Model) dispatchPaletteAction(action paletteAction) tea.Cmd {
 		m.toggleGitPanel()
 	case paletteActionToggleEventLog:
 		m.showEventLog = !m.showEventLog
+	case paletteActionToggleTelemetry:
+		m.toggleTelemetryPanel()
 	case paletteActionSwitchSession:
 		m.openSessionSwitcher()
 	}
