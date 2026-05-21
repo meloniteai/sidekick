@@ -196,10 +196,12 @@ func (m Model) View() string {
 	totalW := m.width - styleGrid.GetHorizontalFrameSize()
 	gridW := totalW
 	logW := 0
-	if m.showEventLog {
-		// Split the available width between compass and log panel. The log
-		// gets ~a third, capped so it stays scannable on wide terminals and
-		// doesn't squeeze the compass on narrow ones.
+	if m.showEventLog || m.telemetryView != nil {
+		// Split the available width between the compass and the side column.
+		// The column gets ~a third, capped so it stays scannable on wide
+		// terminals and doesn't squeeze the compass on narrow ones. Both the
+		// event log and the telemetry panel share this one column (stacked when
+		// both are open), so the compass only ever loses a single column.
 		logW = m.width / 3
 		if logW < 36 {
 			logW = 36
@@ -245,7 +247,7 @@ func (m Model) View() string {
 		compassH := lipgloss.Height(compass)
 		gutterCell := styleSpacerBg.Render("  ")
 		gutter := strings.Repeat(gutterCell+"\n", compassH-1) + gutterCell
-		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, compass, gutter, m.renderEventLog(logW, gridH)))
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, compass, gutter, m.renderSidePanels(logW, gridH)))
 	} else {
 		b.WriteString(compass)
 	}
@@ -256,6 +258,42 @@ func (m Model) View() string {
 	}
 	b.WriteString(styleListBorder.Render(reanchorBrandBg(m.renderList(listInnerW))))
 	return b.String()
+}
+
+// renderSidePanels composes the active side panels (telemetry on top, event log
+// below) into one column the same total height as the compass, so the compass
+// only ever cedes a single column regardless of how many panels are open. A lone
+// panel fills the full height (the unchanged event-log-only path); when both are
+// open the column height is split between them.
+func (m Model) renderSidePanels(width, gridH int) string {
+	type panel func(w, h int) string
+	var panels []panel
+	if m.telemetryView != nil {
+		panels = append(panels, m.renderTelemetryPanel)
+	}
+	if m.showEventLog {
+		panels = append(panels, m.renderEventLog)
+	}
+	switch len(panels) {
+	case 0:
+		return ""
+	case 1:
+		return panels[0](width, gridH)
+	default:
+		// Two stacked boxes each add 2 border rows; to total gridH+2 (the
+		// compass height) their inner heights must sum to gridH-2. Fall back to
+		// a single panel when there isn't room to split cleanly.
+		inner := gridH - 2
+		if inner < 4 {
+			return panels[0](width, gridH)
+		}
+		topH := inner / 2
+		botH := inner - topH
+		return lipgloss.JoinVertical(lipgloss.Left,
+			panels[0](width, topH),
+			panels[1](width, botH),
+		)
+	}
 }
 
 // renderGitFileRow formats one file row used by the git changes popup: path

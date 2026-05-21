@@ -20,6 +20,7 @@ const (
 	paletteActionBrowseVerifiers
 	paletteActionToggleGitPanel
 	paletteActionToggleEventLog
+	paletteActionToggleTelemetry
 	paletteActionSwitchSession
 )
 
@@ -36,6 +37,7 @@ var paletteItems = []paletteItem{
 	{label: "Switch Session", shortcut: "ctrl+w", action: paletteActionSwitchSession},
 	{label: "Toggle Git Changes", shortcut: "ctrl+g", action: paletteActionToggleGitPanel},
 	{label: "Toggle Event Log", shortcut: "ctrl+l", action: paletteActionToggleEventLog},
+	{label: "Toggle Session Telemetry", shortcut: "ctrl+y", action: paletteActionToggleTelemetry},
 }
 
 // Palette colors share the Melonite coral accent family with the landing
