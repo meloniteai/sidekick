@@ -324,12 +324,7 @@ func bindStart(cmd *cobra.Command) {
 			if err != nil {
 				return "", err
 			}
-			if target == verifierregistry.ScopeProject {
-				runtimes.SetConfigPath(session, res.Path)
-				if err := reloadConfig(); err != nil {
-					return "", err
-				}
-			} else if res.Path == sourcePath {
+			if res.Path == sourcePath {
 				if err := reloadConfig(); err != nil {
 					return "", err
 				}

@@ -23,6 +23,7 @@ var (
 type StatusWizard struct {
 	verifier string
 	status   ipc.VerifierStatus
+	global   bool
 	errMsg   string
 	notice   string
 	width    int
@@ -31,6 +32,11 @@ type StatusWizard struct {
 
 func NewStatusWizard(status ipc.VerifierStatus) StatusWizard {
 	return StatusWizard{verifier: status.Name, status: status}
+}
+
+func (w StatusWizard) WithConfigPath(path string) StatusWizard {
+	w.global = isGlobalConfig(path)
+	return w
 }
 
 func (w StatusWizard) Update(msg tea.Msg) (StatusWizard, tea.Cmd, bool) {
@@ -75,8 +81,15 @@ func (w StatusWizard) renderBody(innerW int) string {
 		b.WriteString(statusErrorStyle.Render(w.errMsg))
 	}
 	b.WriteString("\n\n")
-	b.WriteString(stylePaletteHelp.Render("p copy to project · g copy to global · enter close · esc close"))
+	b.WriteString(stylePaletteHelp.Render(w.helpText()))
 	return b.String()
+}
+
+func (w StatusWizard) helpText() string {
+	if w.global {
+		return "p copy to project · enter close · esc close"
+	}
+	return "g copy to global · enter close · esc close"
 }
 
 func renderStatusTitleRow(innerW int) string {

@@ -134,3 +134,34 @@ func TestModelDoesNotAdoptGlobalInstallOverProjectConfig(t *testing.T) {
 		t.Fatal("global install should still run the normal reload callback")
 	}
 }
+
+func TestModelCopyVerifierKeepsCurrentScope(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "repo", ".sidekick", "sidekick.yaml")
+	called := false
+	m := New(daemon.NewState()).
+		WithConfigEditor(project).
+		WithConfigInstalled(func(path string) error {
+			t.Fatalf("copy must not adopt copied-to config path %q", path)
+			return nil
+		}).
+		WithCopyVerifier(func(name string, target registry.Scope) (string, error) {
+			called = true
+			if name != "Architect" || target != registry.ScopeGlobal {
+				t.Fatalf("copy args = %q/%v, want Architect/global", name, target)
+			}
+			return "copied", nil
+		})
+	m.status = &StatusWizard{verifier: "Architect"}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	got := next.(Model)
+	if !called {
+		t.Fatal("copy callback was not called")
+	}
+	if got.status == nil || got.status.notice != "copied" {
+		t.Fatalf("copy notice = %#v", got.status)
+	}
+	if got.currentConfigPath() != project {
+		t.Fatalf("config path changed to %q, want %q", got.currentConfigPath(), project)
+	}
+}

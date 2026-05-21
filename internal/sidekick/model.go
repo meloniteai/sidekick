@@ -313,12 +313,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key, ok := msg.(tea.KeyMsg); ok {
 			switch key.String() {
 			case "p":
-				m.copyStatusVerifier(registry.ScopeProject)
-				m.snapshot = m.currentSnapshot()
+				if m.status.global {
+					m.copyStatusVerifier(registry.ScopeProject)
+					m.snapshot = m.currentSnapshot()
+				}
 				return m, nil
 			case "g":
-				m.copyStatusVerifier(registry.ScopeGlobal)
-				m.snapshot = m.currentSnapshot()
+				if !m.status.global {
+					m.copyStatusVerifier(registry.ScopeGlobal)
+					m.snapshot = m.currentSnapshot()
+				}
 				return m, nil
 			}
 		}
@@ -399,7 +403,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.editor = &editor
 		case "enter":
 			if v, ok := m.selectedStatus(); ok {
-				status := NewStatusWizard(v)
+				status := NewStatusWizard(v).WithConfigPath(m.currentConfigPath())
 				status.width = m.width
 				status.height = m.height
 				m.status = &status

@@ -393,7 +393,7 @@ func TestStatusWizardShowsFullVerifierStatus(t *testing.T) {
 	w.height = 30
 	out := w.View()
 	for _, want := range []string{
-		"Verifier status", "////", "enter close · esc close",
+		"Verifier status", "////", "g copy to global", "enter close · esc close",
 		"Architect", "direction:", "N", "distance:", "0.42", "computed:", "2026-05-09T12:34:56Z",
 		"agent:", "codex", "model:", "gpt-5.5", "skill:", "./skills/architect/SKILL.md", "reason:", "full reason text",
 	} {
@@ -403,6 +403,20 @@ func TestStatusWizardShowsFullVerifierStatus(t *testing.T) {
 	}
 	if strings.Contains(out, "Sidekick verifier status") {
 		t.Fatalf("status wizard should use shared modal title, got:\n%s", out)
+	}
+}
+
+func TestStatusWizardShowsOppositeCopyActionForGlobalConfig(t *testing.T) {
+	dir := t.TempDir()
+	global := filepath.Join(dir, "home", ".sidekick", "sidekick.yaml")
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", global)
+	w := NewStatusWizard(ipc.VerifierStatus{Name: "Architect"}).WithConfigPath(global)
+	out := w.View()
+	if !strings.Contains(out, "p copy to project") {
+		t.Fatalf("global status wizard should offer project copy:\n%s", out)
+	}
+	if strings.Contains(out, "g copy to global") {
+		t.Fatalf("global status wizard should not offer global copy:\n%s", out)
 	}
 }
 
