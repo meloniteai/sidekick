@@ -3,6 +3,7 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,25 @@ type InstallOptions struct {
 // from Manifest.Name only when the name collided in the target file and
 // we appended a "-2"/"-3"/… suffix to keep the install idempotent.
 type InstallResult struct {
+	Path      string
+	FinalName string
+}
+
+// CopyVerifierOptions describes copying one existing verifier entry between
+// project and global sidekick.yaml scopes.
+type CopyVerifierOptions struct {
+	SourcePath  string
+	Target      Scope
+	ProjectPath string
+	Name        string
+
+	// Fetch retrieves remote artefact bytes when copying a source-pinned
+	// verifier into project scope. Nil uses verifiedDownload.
+	Fetch func(rawURL, sha256 string) ([]byte, error)
+}
+
+// CopyVerifierResult describes the copied verifier entry.
+type CopyVerifierResult struct {
 	Path      string
 	FinalName string
 }
@@ -127,6 +147,69 @@ func Install(opts InstallOptions) (InstallResult, error) {
 	return InstallResult{Path: path, FinalName: spec.Name}, nil
 }
 
+// CopyVerifier copies an existing verifier from SourcePath into the target
+// scope. Remote verifiers copied to project scope are materialised into an
+// editable project-owned file, matching Install(ScopeProject). Local
+// skill/script artefacts are copied beside the target config and the YAML path
+// is rewritten relative to that config.
+func CopyVerifier(opts CopyVerifierOptions) (CopyVerifierResult, error) {
+	if strings.TrimSpace(opts.SourcePath) == "" {
+		return CopyVerifierResult{}, errors.New("source config path is required")
+	}
+	if strings.TrimSpace(opts.Name) == "" {
+		return CopyVerifierResult{}, errors.New("verifier name is required")
+	}
+	targetPath, err := resolveTargetPath(InstallOptions{Scope: opts.Target, ProjectPath: opts.ProjectPath})
+	if err != nil {
+		return CopyVerifierResult{}, err
+	}
+	if sameFilesystemPath(opts.SourcePath, targetPath) {
+		return CopyVerifierResult{}, fmt.Errorf("source and target are both %s", targetPath)
+	}
+	sourceFile, sourcePath, err := config.Load(opts.SourcePath)
+	if err != nil {
+		return CopyVerifierResult{}, fmt.Errorf("load %s: %w", opts.SourcePath, err)
+	}
+	sourceSpec, ok := verifierSpecByName(sourceFile, opts.Name)
+	if !ok {
+		return CopyVerifierResult{}, fmt.Errorf("verifier %q not found in %s", opts.Name, sourcePath)
+	}
+	if err := ensureFile(targetPath); err != nil {
+		return CopyVerifierResult{}, err
+	}
+	targetFile, _, err := config.Load(targetPath)
+	if err != nil {
+		return CopyVerifierResult{}, fmt.Errorf("load %s: %w", targetPath, err)
+	}
+	if targetFile == nil {
+		targetFile = &config.File{}
+	}
+
+	spec := cloneVerifierSpec(sourceSpec)
+	spec.Name = uniqueName(targetFile, spec.Name)
+	targetDir := filepath.Dir(targetPath)
+	sourceDir := filepath.Dir(sourcePath)
+	if opts.Target == ScopeProject && spec.Source != nil && spec.Source.URL != "" {
+		m := manifestFromSpec(spec)
+		if m.SHA256 == "" {
+			return CopyVerifierResult{}, fmt.Errorf("verifier %q remote source is missing sha256", sourceSpec.Name)
+		}
+		if err := materialiseIntoProject(targetDir, &spec, InstallOptions{Manifest: m, Fetch: opts.Fetch}); err != nil {
+			return CopyVerifierResult{}, err
+		}
+	} else if spec.Source == nil || spec.Source.URL == "" {
+		if err := copyLocalArtefact(sourceDir, targetDir, &spec); err != nil {
+			return CopyVerifierResult{}, err
+		}
+	}
+
+	targetFile.Verifiers = append(targetFile.Verifiers, spec)
+	if err := config.Save(targetPath, targetFile); err != nil {
+		return CopyVerifierResult{}, fmt.Errorf("save %s: %w", targetPath, err)
+	}
+	return CopyVerifierResult{Path: targetPath, FinalName: spec.Name}, nil
+}
+
 func resolveTargetPath(opts InstallOptions) (string, error) {
 	switch opts.Scope {
 	case ScopeGlobal:
@@ -189,6 +272,164 @@ func nameExists(f *config.File, name string) bool {
 		}
 	}
 	return false
+}
+
+func verifierSpecByName(f *config.File, name string) (config.VerifierSpec, bool) {
+	for _, v := range f.Verifiers {
+		if strings.EqualFold(v.Name, name) {
+			return v, true
+		}
+	}
+	return config.VerifierSpec{}, false
+}
+
+func cloneVerifierSpec(in config.VerifierSpec) config.VerifierSpec {
+	out := in
+	out.Command = append([]string(nil), in.Command...)
+	if in.LLM.Custom != nil {
+		custom := *in.LLM.Custom
+		custom.Command = append([]string(nil), in.LLM.Custom.Command...)
+		out.LLM.Custom = &custom
+	}
+	out.Binary.Command = append([]string(nil), in.Binary.Command...)
+	if in.Permissions != nil {
+		p := *in.Permissions
+		p.Env = append([]string(nil), in.Permissions.Env...)
+		p.AllowedTools = append([]string(nil), in.Permissions.AllowedTools...)
+		out.Permissions = &p
+	}
+	if in.Source != nil {
+		s := *in.Source
+		out.Source = &s
+	}
+	return out
+}
+
+func manifestFromSpec(spec config.VerifierSpec) Manifest {
+	kind := strings.ToLower(spec.Type)
+	if kind == "" {
+		kind = "command"
+	}
+	m := Manifest{
+		Name:           spec.Name,
+		Type:           kind,
+		Direction:      spec.Direction,
+		Slug:           slugify(spec.Name),
+		DefaultTimeout: spec.Timeout,
+	}
+	if spec.Source != nil {
+		m.RawURL = spec.Source.URL
+		m.SHA256 = spec.Source.SHA256
+	}
+	m.Agent = ManifestAgent{
+		Agent:    spec.LLM.Agent,
+		Model:    spec.LLM.Model,
+		Thinking: spec.LLM.Thinking,
+	}
+	if spec.Permissions != nil {
+		m.Permissions = ManifestPermSet{
+			Network:      spec.Permissions.Network,
+			Filesystem:   spec.Permissions.Filesystem,
+			Env:          append([]string(nil), spec.Permissions.Env...),
+			AllowedTools: append([]string(nil), spec.Permissions.AllowedTools...),
+		}
+	}
+	return m
+}
+
+func copyLocalArtefact(sourceDir, targetDir string, spec *config.VerifierSpec) error {
+	kind := strings.ToLower(spec.Type)
+	if kind == "" {
+		kind = "command"
+	}
+	switch kind {
+	case "agent", "llm":
+		if spec.LLM.Skill == "" {
+			return nil
+		}
+		rel, err := copyOneLocalArtefact(sourceDir, targetDir, spec.LLM.Skill, kind, artefactSlug(spec.Name, ""))
+		if err != nil {
+			return err
+		}
+		spec.LLM.Skill = rel
+	case "binary":
+		if len(spec.Binary.Command) == 0 || !looksLikeLocalPath(spec.Binary.Command[0]) {
+			return nil
+		}
+		rel, err := copyOneLocalArtefact(sourceDir, targetDir, spec.Binary.Command[0], kind, artefactSlug(spec.Name, ""))
+		if err != nil {
+			return err
+		}
+		spec.Binary.Command[0] = rel
+	default:
+		if len(spec.Command) == 0 || !looksLikeLocalPath(spec.Command[0]) {
+			return nil
+		}
+		rel, err := copyOneLocalArtefact(sourceDir, targetDir, spec.Command[0], kind, artefactSlug(spec.Name, ""))
+		if err != nil {
+			return err
+		}
+		spec.Command[0] = rel
+	}
+	return nil
+}
+
+func copyOneLocalArtefact(sourceDir, targetDir, raw, kind, slug string) (string, error) {
+	src := config.ResolveLocalPath(sourceDir, raw)
+	info, err := os.Stat(src)
+	if err != nil {
+		return "", fmt.Errorf("copy local artefact %s: %w", src, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("copy local artefact %s: is a directory", src)
+	}
+	rel, defaultMode := projectArtefactPath(targetDir, kind, slug)
+	dst := filepath.Join(targetDir, rel)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return "", fmt.Errorf("create %s: %w", filepath.Dir(dst), err)
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", src, err)
+	}
+	defer in.Close()
+	body, err := io.ReadAll(in)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", src, err)
+	}
+	mode := info.Mode().Perm()
+	if mode == 0 {
+		mode = defaultMode
+	}
+	if defaultMode&0o100 != 0 {
+		mode |= 0o700
+	}
+	if err := config.WriteFileAtomic(dst, body, mode); err != nil {
+		return "", fmt.Errorf("write %s: %w", dst, err)
+	}
+	return "./" + filepath.ToSlash(rel), nil
+}
+
+func looksLikeLocalPath(p string) bool {
+	return strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "/")
+}
+
+func sameFilesystemPath(a, b string) bool {
+	aa, err := filepath.Abs(a)
+	if err != nil {
+		aa = filepath.Clean(a)
+	}
+	bb, err := filepath.Abs(b)
+	if err != nil {
+		bb = filepath.Clean(b)
+	}
+	if resolved, err := filepath.EvalSymlinks(aa); err == nil {
+		aa = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(bb); err == nil {
+		bb = resolved
+	}
+	return filepath.Clean(aa) == filepath.Clean(bb)
 }
 
 func hasPermissions(p ManifestPermSet) bool {

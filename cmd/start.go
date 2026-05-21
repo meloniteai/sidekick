@@ -20,6 +20,7 @@ import (
 	"github.com/meloniteai/sidekick/internal/config"
 	"github.com/meloniteai/sidekick/internal/daemon"
 	"github.com/meloniteai/sidekick/internal/ipc"
+	verifierregistry "github.com/meloniteai/sidekick/internal/registry"
 	sidekicktui "github.com/meloniteai/sidekick/internal/sidekick"
 	"github.com/meloniteai/sidekick/internal/telemetry"
 	"github.com/meloniteai/sidekick/internal/verifier"
@@ -176,9 +177,19 @@ func bindStart(cmd *cobra.Command) {
 		fmt.Fprintf(os.Stderr, "[sidekick] session base ref: %s\n", baseRef)
 		fmt.Fprintf(os.Stderr, "[sidekick] session worktree: %s\n", worktree)
 
-		available, quietPeriod, source, loadedConfigPath, err := loadVerifiers(configPath)
+		available, quietPeriod, source, loadedConfigPath, err := loadVerifiersFor(configPath, worktree)
 		if err != nil {
 			return err
+		}
+		landingChoices, err := configChoicesForLanding(configPath, worktree)
+		if err != nil {
+			return err
+		}
+		quietByPath := map[string]time.Duration{}
+		for _, choice := range landingChoices {
+			if _, quiet, _, _, err := loadVerifiersFor(choice.Path, worktree); err == nil {
+				quietByPath[choice.Path] = quiet
+			}
 		}
 		sessionIdleTimeout := daemon.DefaultSessionIdleTimeout
 		if idle, set, err := loadSessionIdleTimeout(configPath, worktree); err != nil {
@@ -194,11 +205,22 @@ func bindStart(cmd *cobra.Command) {
 
 		verifiers := available
 		if !headless && len(available) > 0 {
-			selected, err := runLanding(available, version, sock)
+			selected, selectedConfigPath, err := runLanding(available, version, sock, landingChoices)
 			if err != nil {
 				return err
 			}
 			verifiers = selected
+			if selectedConfigPath != "" {
+				loadedConfigPath = selectedConfigPath
+				if quiet, ok := quietByPath[selectedConfigPath]; ok {
+					quietPeriod = quiet
+				}
+				if idle, set, err := loadSessionIdleTimeout(selectedConfigPath, worktree); err != nil {
+					return err
+				} else if set {
+					sessionIdleTimeout = idle
+				}
+			}
 			if loadedConfigPath != "" {
 				if err := mirrorDisabledToConfig(loadedConfigPath, verifiers); err != nil {
 					return fmt.Errorf("persist landing choices: %w", err)
@@ -233,19 +255,19 @@ func bindStart(cmd *cobra.Command) {
 		runtimes.emitter = emitter
 		runtimes.Register(state, runner, loadedConfigPath)
 		defer runtimes.StopAll()
-		registry := daemon.NewRegistry(state, runtimes.NewSession)
-		registry.SetCleanup(runtimes.Stop)
-		registry.SetIdleTimeout(sessionIdleTimeout)
+		daemonRegistry := daemon.NewRegistry(state, runtimes.NewSession)
+		daemonRegistry.SetCleanup(runtimes.Stop)
+		daemonRegistry.SetIdleTimeout(sessionIdleTimeout)
 		// Append a liveness heartbeat per live session on its own cadence; the
 		// session end is derived from the last one.
-		registry.SetHeartbeat(func() {
-			registry.EachSession(func(s *daemon.State) { s.EmitHeartbeat() })
+		daemonRegistry.SetHeartbeat(func() {
+			daemonRegistry.EachSession(func(s *daemon.State) { s.EmitHeartbeat() })
 		})
-		go registry.StartGC(ctx, time.Minute)
-		go registry.StartHeartbeat(ctx, daemon.DefaultHeartbeatInterval)
+		go daemonRegistry.StartGC(ctx, time.Minute)
+		go daemonRegistry.StartHeartbeat(ctx, daemon.DefaultHeartbeatInterval)
 
 		handler := &runnerHandler{runtimes: runtimes}
-		srv, err := acquireDaemonSocket(sock, registry, handler, !headless)
+		srv, err := acquireDaemonSocket(sock, daemonRegistry, handler, !headless)
 		if err != nil {
 			return err
 		}
@@ -260,7 +282,7 @@ func bindStart(cmd *cobra.Command) {
 		}
 
 		manualTrigger := func() {
-			session := registry.DisplayedSession()
+			session := daemonRegistry.DisplayedSession()
 			session.SetGoal("unset")
 			if runner := runtimes.Runner(session); runner != nil {
 				runner.TriggerImmediate()
@@ -268,7 +290,7 @@ func bindStart(cmd *cobra.Command) {
 			session.LogEvent(daemon.EventInfo, "all verifiers triggered")
 		}
 		reloadConfig := func() error {
-			session := registry.DisplayedSession()
+			session := daemonRegistry.DisplayedSession()
 			path := runtimes.ConfigPath(session)
 			if path == "" {
 				return nil
@@ -286,21 +308,45 @@ func bindStart(cmd *cobra.Command) {
 			return nil
 		}
 		adoptConfig := func(path string) error {
-			session := registry.DisplayedSession()
+			session := daemonRegistry.DisplayedSession()
 			runtimes.SetConfigPath(session, path)
 			return reloadConfig()
 		}
+		copyVerifier := func(name string, target verifierregistry.Scope) (string, error) {
+			session := daemonRegistry.DisplayedSession()
+			sourcePath := runtimes.ConfigPath(session)
+			res, err := verifierregistry.CopyVerifier(verifierregistry.CopyVerifierOptions{
+				SourcePath:  sourcePath,
+				Target:      target,
+				ProjectPath: sidekicktui.ProjectInstallPath(sourcePath, session.SessionWorktree()),
+				Name:        name,
+			})
+			if err != nil {
+				return "", err
+			}
+			if target == verifierregistry.ScopeProject {
+				runtimes.SetConfigPath(session, res.Path)
+				if err := reloadConfig(); err != nil {
+					return "", err
+				}
+			} else if res.Path == sourcePath {
+				if err := reloadConfig(); err != nil {
+					return "", err
+				}
+			}
+			return fmt.Sprintf("copied %s to %s", res.FinalName, res.Path), nil
+		}
 		p := tea.NewProgram(
-			sidekicktui.NewRegistry(registry).
+			sidekicktui.NewRegistry(daemonRegistry).
 				WithManualTrigger(manualTrigger).
 				WithTriggerVerifier(func(name string) {
-					session := registry.DisplayedSession()
+					session := daemonRegistry.DisplayedSession()
 					if runner := runtimes.Runner(session); runner != nil && runner.TriggerVerifierImmediate(name) {
 						session.LogEvent(daemon.EventInfo, "verifier %s triggered", name)
 					}
 				}).
 				WithToggleVerifier(func(name string) {
-					session := registry.DisplayedSession()
+					session := daemonRegistry.DisplayedSession()
 					disabled, ok := session.ToggleVerifierDisabled(name)
 					path := runtimes.ConfigPath(session)
 					if !ok || path == "" {
@@ -312,13 +358,14 @@ func bindStart(cmd *cobra.Command) {
 					}
 				}).
 				WithStopAll(func() {
-					if runner := runtimes.Runner(registry.DisplayedSession()); runner != nil {
+					if runner := runtimes.Runner(daemonRegistry.DisplayedSession()); runner != nil {
 						runner.KillBatch()
 					}
 				}).
 				WithConfigEditor(loadedConfigPath).
-				WithConfigPathFunc(func() string { return runtimes.ConfigPath(registry.DisplayedSession()) }).
+				WithConfigPathFunc(func() string { return runtimes.ConfigPath(daemonRegistry.DisplayedSession()) }).
 				WithConfigInstalled(adoptConfig).
+				WithCopyVerifier(copyVerifier).
 				WithConfigSaved(reloadConfig),
 			tea.WithAltScreen(),
 		)
@@ -385,25 +432,78 @@ func acquireDaemonSocket(sock string, registry *daemon.Registry, handler daemon.
 // verifiers selected" message they used to get from the huh picker. The
 // landing screen itself lives in internal/sidekick so the visual styling stays
 // adjacent to the command palette it mirrors.
-func runLanding(available []verifier.Verifier, version, socketPath string) ([]verifier.Verifier, error) {
+func runLanding(available []verifier.Verifier, version, socketPath string, choices []sidekicktui.LandingConfigChoice) ([]verifier.Verifier, string, error) {
 	cwd, _ := os.Getwd()
 	model := sidekicktui.NewLanding(available, version, socketPath, cwd)
+	if len(choices) > 1 {
+		model = model.WithConfigChoices(choices)
+	}
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	final, err := p.Run()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	landing, ok := final.(sidekicktui.Landing)
 	if !ok {
-		return nil, fmt.Errorf("landing screen returned unexpected model %T", final)
+		return nil, "", fmt.Errorf("landing screen returned unexpected model %T", final)
 	}
 	if landing.Aborted() || !landing.Confirmed() {
-		return nil, fmt.Errorf("aborted: no verifiers selected")
+		return nil, "", fmt.Errorf("aborted: no verifiers selected")
 	}
 	if landing.EnabledCount() < sidekicktui.MinSelected {
-		return nil, fmt.Errorf("landing returned %d enabled verifiers, need at least %d", landing.EnabledCount(), sidekicktui.MinSelected)
+		return nil, "", fmt.Errorf("landing returned %d enabled verifiers, need at least %d", landing.EnabledCount(), sidekicktui.MinSelected)
 	}
-	return landing.Verifiers(), nil
+	return landing.Verifiers(), landing.ConfigPath(), nil
+}
+
+func configChoicesForLanding(configPath, worktree string) ([]sidekicktui.LandingConfigChoice, error) {
+	if configPath != "" {
+		return nil, nil
+	}
+	d, err := config.Discover(worktree)
+	if err != nil {
+		return nil, err
+	}
+	if d.ProjectPath == "" || d.GlobalPath == "" || sameConfigPath(d.ProjectPath, d.GlobalPath) {
+		return nil, nil
+	}
+	var choices []sidekicktui.LandingConfigChoice
+	for _, item := range []struct {
+		label string
+		path  string
+	}{
+		{label: "project", path: d.ProjectPath},
+		{label: "global", path: d.GlobalPath},
+	} {
+		vs, _, _, _, err := loadVerifiersFor(item.path, worktree)
+		if err != nil {
+			return nil, err
+		}
+		choices = append(choices, sidekicktui.LandingConfigChoice{
+			Label:     item.label,
+			Path:      item.path,
+			Verifiers: vs,
+		})
+	}
+	return choices, nil
+}
+
+func sameConfigPath(a, b string) bool {
+	aa, err := filepath.Abs(a)
+	if err != nil {
+		aa = filepath.Clean(a)
+	}
+	bb, err := filepath.Abs(b)
+	if err != nil {
+		bb = filepath.Clean(b)
+	}
+	if resolved, err := filepath.EvalSymlinks(aa); err == nil {
+		aa = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(bb); err == nil {
+		bb = resolved
+	}
+	return filepath.Clean(aa) == filepath.Clean(bb)
 }
 
 // mirrorDisabledToConfig persists each verifier's Disabled flag back to

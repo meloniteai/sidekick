@@ -69,6 +69,8 @@ type Landing struct {
 	verifiers     []verifier.Verifier
 	enabled       []bool
 	cursor        int
+	configChoices []LandingConfigChoice
+	configCursor  int
 	width, height int
 	version       string
 	socketPath    string
@@ -78,22 +80,40 @@ type Landing struct {
 	confirmed     bool
 }
 
+// LandingConfigChoice is one sidekick.yaml the startup screen can run for this
+// session. The landing uses it to switch the verifier picker between project
+// and global configs before the daemon starts.
+type LandingConfigChoice struct {
+	Label     string
+	Path      string
+	Verifiers []verifier.Verifier
+}
+
 // NewLanding builds a Landing seeded from each verifier's Disabled flag, so
 // the picker reflects the persisted sidekick.yaml state and a hit-enter user gets
 // the same set they ran last session. Users can still toggle freely; on
 // confirm the resulting toggle state is mirrored back to yaml by the caller.
 func NewLanding(verifiers []verifier.Verifier, version, socketPath, cwd string) Landing {
-	enabled := make([]bool, len(verifiers))
-	for i, v := range verifiers {
-		enabled[i] = !v.Disabled
-	}
 	return Landing{
 		verifiers:  verifiers,
-		enabled:    enabled,
+		enabled:    landingEnabled(verifiers),
 		version:    version,
 		socketPath: socketPath,
 		cwd:        cwd,
 	}
+}
+
+// WithConfigChoices adds project/global config choices to the splash screen.
+// The first choice is selected by default and should match the verifiers passed
+// to NewLanding.
+func (l Landing) WithConfigChoices(choices []LandingConfigChoice) Landing {
+	l.configChoices = append([]LandingConfigChoice(nil), choices...)
+	if len(l.configChoices) > 0 {
+		l.configCursor = 0
+		l.verifiers = append([]verifier.Verifier(nil), l.configChoices[0].Verifiers...)
+		l.enabled = landingEnabled(l.verifiers)
+	}
+	return l
 }
 
 // Init satisfies tea.Model.
@@ -118,6 +138,12 @@ func (l Landing) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if l.cursor < len(l.verifiers)-1 {
 				l.cursor++
 			}
+		case "tab":
+			l.switchConfig((l.configCursor + 1) % max(len(l.configChoices), 1))
+		case "p":
+			l.switchConfigByLabel("project")
+		case "g":
+			l.switchConfigByLabel("global")
 		case " ", "x":
 			if l.cursor >= 0 && l.cursor < len(l.enabled) {
 				l.enabled[l.cursor] = !l.enabled[l.cursor]
@@ -168,6 +194,15 @@ func (l Landing) Aborted() bool { return l.aborted }
 // Confirmed reports whether the user pressed enter on a valid selection.
 func (l Landing) Confirmed() bool { return l.confirmed }
 
+// ConfigPath returns the selected sidekick.yaml path, if the landing was given
+// project/global config choices.
+func (l Landing) ConfigPath() string {
+	if l.configCursor >= 0 && l.configCursor < len(l.configChoices) {
+		return l.configChoices[l.configCursor].Path
+	}
+	return ""
+}
+
 func (l Landing) selectedCount() int {
 	n := 0
 	for _, b := range l.enabled {
@@ -176,6 +211,36 @@ func (l Landing) selectedCount() int {
 		}
 	}
 	return n
+}
+
+func (l *Landing) switchConfigByLabel(label string) {
+	for i, choice := range l.configChoices {
+		if strings.EqualFold(choice.Label, label) {
+			l.switchConfig(i)
+			return
+		}
+	}
+}
+
+func (l *Landing) switchConfig(idx int) {
+	if idx < 0 || idx >= len(l.configChoices) || idx == l.configCursor {
+		return
+	}
+	l.configCursor = idx
+	l.verifiers = append([]verifier.Verifier(nil), l.configChoices[idx].Verifiers...)
+	l.enabled = landingEnabled(l.verifiers)
+	if l.cursor >= len(l.verifiers) {
+		l.cursor = max(len(l.verifiers)-1, 0)
+	}
+	l.err = ""
+}
+
+func landingEnabled(verifiers []verifier.Verifier) []bool {
+	enabled := make([]bool, len(verifiers))
+	for i, v := range verifiers {
+		enabled[i] = !v.Disabled
+	}
+	return enabled
 }
 
 // View renders the landing screen sized to fit the host terminal. When the
@@ -198,6 +263,16 @@ func (l Landing) View() string {
 		b.WriteString(styleLandingLabel.Render("Socket  "))
 		b.WriteString(styleLandingValue.Render(prettyPath(l.socketPath)))
 		b.WriteString("\n\n")
+	}
+
+	if len(l.configChoices) > 1 {
+		b.WriteString(styleLandingTitle.Render("Config"))
+		b.WriteString("\n\n")
+		for i, choice := range l.configChoices {
+			b.WriteString(renderLandingConfigRow(choice, i == l.configCursor, innerW))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
 	}
 
 	b.WriteString(styleLandingSeparator.Render(strings.Repeat("─", innerW)))
@@ -225,7 +300,11 @@ func (l Landing) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(styleLandingHelp.Render("↑/↓ navigate · space toggle · a select all · enter start · esc abort"))
+	help := "↑/↓ navigate · space toggle · a select all · enter start · esc abort"
+	if len(l.configChoices) > 1 {
+		help = "p project · g global · tab switch · " + help
+	}
+	b.WriteString(styleLandingHelp.Render(help))
 
 	box := styleLandingBorder.Width(innerW + styleLandingBorder.GetHorizontalPadding()).Render(reanchorBrandBg(b.String()))
 	if l.width == 0 || l.height == 0 {
@@ -300,6 +379,22 @@ func renderLandingVerifierRow(v verifier.Verifier, enabled, selected bool, nameW
 		bulletStyle = styleLandingBulletOn
 	}
 	return " " + bulletStyle.Render(bullet) + "  " + styleLandingValue.Render(name) + "  " + styleLandingDirection.Render(v.Direction)
+}
+
+func renderLandingConfigRow(choice LandingConfigChoice, selected bool, innerW int) string {
+	bullet := "○"
+	if selected {
+		bullet = "●"
+	}
+	plain := fmt.Sprintf(" %s  %-7s  %s", bullet, choice.Label, prettyPath(choice.Path))
+	if selected {
+		return styleLandingSelected.Render(truncate(plain+strings.Repeat(" ", max(innerW-lipgloss.Width(plain), 0)), innerW))
+	}
+	bulletStyle := styleLandingBulletOff
+	if selected {
+		bulletStyle = styleLandingBulletOn
+	}
+	return truncate(" "+bulletStyle.Render(bullet)+"  "+styleLandingValue.Render(fmt.Sprintf("%-7s", choice.Label))+"  "+styleLandingDirection.Render(prettyPath(choice.Path)), innerW)
 }
 
 // landingInnerWidth picks the content width for the landing modal. Sized

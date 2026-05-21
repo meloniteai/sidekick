@@ -13,6 +13,7 @@ import (
 
 	"github.com/meloniteai/sidekick/internal/config"
 	"github.com/meloniteai/sidekick/internal/fetch"
+	verifierregistry "github.com/meloniteai/sidekick/internal/registry"
 	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
@@ -29,6 +30,48 @@ func newVerifierCmd() *cobra.Command {
 	cmd.AddCommand(newVerifierAddCmd())
 	cmd.AddCommand(newVerifierListCmd())
 	cmd.AddCommand(newVerifierRemoveCmd())
+	cmd.AddCommand(newVerifierCopyCmd())
+	return cmd
+}
+
+func newVerifierCopyCmd() *cobra.Command {
+	var (
+		configPath  string
+		toScope     string
+		projectPath string
+	)
+	cmd := &cobra.Command{
+		Use:   "copy <name>",
+		Short: "Copy a verifier between project and global sidekick.yaml scopes",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target, err := parseCopyScope(toScope)
+			if err != nil {
+				return err
+			}
+			if configPath == "" {
+				_, path, err := config.Load("")
+				if err != nil {
+					return fmt.Errorf("load source sidekick.yaml: %w", err)
+				}
+				configPath = path
+			}
+			res, err := verifierregistry.CopyVerifier(verifierregistry.CopyVerifierOptions{
+				SourcePath:  configPath,
+				Target:      target,
+				ProjectPath: projectPath,
+				Name:        args[0],
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Copied %q to %s as %q.\n", args[0], res.Path, res.FinalName)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&configPath, "config", "", "source sidekick.yaml (default: resolved active config)")
+	cmd.Flags().StringVar(&toScope, "to", "project", "target scope: project | global")
+	cmd.Flags().StringVar(&projectPath, "project-config", "", "project sidekick.yaml path when --to=project (default: cwd/.sidekick/sidekick.yaml)")
 	return cmd
 }
 
@@ -328,6 +371,17 @@ func displayType(t string) string {
 		return "agent"
 	}
 	return t
+}
+
+func parseCopyScope(raw string) (verifierregistry.Scope, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "project", "local":
+		return verifierregistry.ScopeProject, nil
+	case "global":
+		return verifierregistry.ScopeGlobal, nil
+	default:
+		return verifierregistry.ScopeProject, fmt.Errorf("--to must be project or global, got %q", raw)
+	}
 }
 
 func short(s string) string {

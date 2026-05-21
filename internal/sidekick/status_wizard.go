@@ -24,6 +24,7 @@ type StatusWizard struct {
 	verifier string
 	status   ipc.VerifierStatus
 	errMsg   string
+	notice   string
 	width    int
 	height   int
 }
@@ -65,12 +66,16 @@ func (w StatusWizard) renderBody(innerW int) string {
 	b.WriteString(renderStatusTitleRow(innerW))
 	b.WriteString("\n\n")
 	b.WriteString(w.renderStatus(innerW))
+	if w.notice != "" {
+		b.WriteString("\n")
+		b.WriteString(statusReasonStyle.Render(w.notice))
+	}
 	if w.errMsg != "" {
 		b.WriteString("\n")
 		b.WriteString(statusErrorStyle.Render(w.errMsg))
 	}
 	b.WriteString("\n\n")
-	b.WriteString(stylePaletteHelp.Render("enter close · esc close"))
+	b.WriteString(stylePaletteHelp.Render("p copy to project · g copy to global · enter close · esc close"))
 	return b.String()
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -29,6 +30,13 @@ type File struct {
 	// idle GC.
 	SessionIdleTimeout string         `yaml:"session_idle_timeout,omitempty"`
 	Verifiers          []VerifierSpec `yaml:"verifiers"`
+}
+
+// Discovery reports the project and global sidekick.yaml files visible from a
+// start directory. Empty fields mean that scope has no readable config.
+type Discovery struct {
+	ProjectPath string
+	GlobalPath  string
 }
 
 // VerifierSpec mirrors verifier.Verifier with YAML tags.
@@ -160,6 +168,27 @@ func GlobalPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(home, ".sidekick", "sidekick.yaml"), nil
+}
+
+// Discover reports the project-scope config found from startDir and the global
+// config. It does not merge them; callers use this to decide whether an
+// interactive scope choice is needed before loading one of the files.
+func Discover(startDir string) (Discovery, error) {
+	var d Discovery
+	project, err := findProjectConfigUpwardsFrom(startDir)
+	if err == nil {
+		d.ProjectPath = project
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return d, err
+	}
+	global, err := GlobalPath()
+	if err != nil {
+		return d, nil
+	}
+	if _, err := os.Stat(global); err == nil {
+		d.GlobalPath = global
+	}
+	return d, nil
 }
 
 // Save writes f back to path as sidekick.yaml.
@@ -619,6 +648,7 @@ func findProjectConfigUpwardsFrom(startDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	origin := dir
 	skipPaths := map[string]bool{}
 	if gp, err := GlobalPath(); err == nil {
 		skipPaths[cleanAbs(gp)] = true
@@ -627,21 +657,19 @@ func findProjectConfigUpwardsFrom(startDir string) (string, error) {
 		skipPaths[cleanAbs(filepath.Join(home, ".sidekick", "sidekick.yaml"))] = true
 	}
 	for {
-		for _, rel := range []string{filepath.Join(".sidekick", "sidekick.yaml"), "sidekick.yaml"} {
-			p := filepath.Join(dir, rel)
-			if _, err := os.Stat(p); err == nil {
-				if skipPaths[cleanAbs(p)] {
-					continue
-				}
-				return p, nil
-			}
+		if p, ok := projectConfigInDir(dir, skipPaths); ok {
+			return p, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", os.ErrNotExist
+			break
 		}
 		dir = parent
 	}
+	if p, ok := commonWorktreeProjectConfig(origin, skipPaths); ok {
+		return p, nil
+	}
+	return "", os.ErrNotExist
 }
 
 func cleanAbs(path string) string {
@@ -650,4 +678,38 @@ func cleanAbs(path string) string {
 		return filepath.Clean(path)
 	}
 	return filepath.Clean(abs)
+}
+
+func projectConfigInDir(dir string, skipPaths map[string]bool) (string, bool) {
+	for _, rel := range []string{filepath.Join(".sidekick", "sidekick.yaml"), "sidekick.yaml"} {
+		p := filepath.Join(dir, rel)
+		if _, err := os.Stat(p); err == nil {
+			if skipPaths[cleanAbs(p)] {
+				continue
+			}
+			return p, true
+		}
+	}
+	return "", false
+}
+
+func commonWorktreeProjectConfig(startDir string, skipPaths map[string]bool) (string, bool) {
+	cmd := exec.Command("git", "rev-parse", "--git-common-dir")
+	cmd.Dir = startDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	common := strings.TrimSpace(string(out))
+	if common == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(startDir, common)
+	}
+	common, err = filepath.Abs(common)
+	if err != nil {
+		return "", false
+	}
+	return projectConfigInDir(filepath.Dir(common), skipPaths)
 }

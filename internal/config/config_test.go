@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -322,6 +323,58 @@ func TestProjectShadowsGlobal(t *testing.T) {
 	}
 }
 
+func TestLinkedWorktreeFallsBackToCommonProjectBeforeGlobal(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	parent := t.TempDir()
+	main := filepath.Join(parent, "repo")
+	linked := filepath.Join(parent, "repo-linked")
+	runGit(t, parent, "init", main)
+	runGit(t, main, "config", "user.email", "sidekick@example.test")
+	runGit(t, main, "config", "user.name", "Sidekick Test")
+	if err := os.WriteFile(filepath.Join(main, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, main, "add", "README.md")
+	runGit(t, main, "commit", "-m", "init")
+	runGit(t, main, "worktree", "add", linked)
+
+	projectPath := filepath.Join(main, ".sidekick", "sidekick.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(projectPath, []byte(`verifiers:
+  - name: CommonProject
+    direction: N
+    command: ["echo", "hi"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	globalPath := filepath.Join(t.TempDir(), "global.yaml")
+	if err := os.WriteFile(globalPath, []byte(`verifiers:
+  - name: GlobalOnly
+    direction: S
+    command: ["echo", "hi"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", globalPath)
+
+	f, path, err := LoadFrom("", linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same, err := sameFilesystemPathForTest(path, projectPath); err != nil {
+		t.Fatal(err)
+	} else if !same {
+		t.Fatalf("resolved %q, want common worktree project path %q", path, projectPath)
+	}
+	if len(f.Verifiers) != 1 || f.Verifiers[0].Name != "CommonProject" {
+		t.Fatalf("expected CommonProject only, got %+v", f.Verifiers)
+	}
+}
+
 func TestProjectSidekickDirShadowsLegacyRootConfig(t *testing.T) {
 	startDir := t.TempDir()
 	sidekickDirPath := filepath.Join(startDir, ".sidekick", "sidekick.yaml")
@@ -354,6 +407,33 @@ func TestProjectSidekickDirShadowsLegacyRootConfig(t *testing.T) {
 	if len(f.Verifiers) != 1 || f.Verifiers[0].Name != "SidekickDir" {
 		t.Fatalf("expected SidekickDir only, got %+v", f.Verifiers)
 	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+func sameFilesystemPathForTest(a, b string) (bool, error) {
+	aa, err := filepath.Abs(a)
+	if err != nil {
+		return false, err
+	}
+	bb, err := filepath.Abs(b)
+	if err != nil {
+		return false, err
+	}
+	if resolved, err := filepath.EvalSymlinks(aa); err == nil {
+		aa = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(bb); err == nil {
+		bb = resolved
+	}
+	return filepath.Clean(aa) == filepath.Clean(bb), nil
 }
 
 // TestAllowedToolsRoundTrip ensures the new permissions.allowed_tools

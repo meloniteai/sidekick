@@ -27,10 +27,10 @@ func TestLandingRenderShape(t *testing.T) {
 
 	out := l.View()
 	for _, want := range []string{
-		"██",          // wordmark
-		"v0.1",        // version pill
-		"Socket",      // socket label
-		"Verifiers",   // section title
+		"██",        // wordmark
+		"v0.1",      // version pill
+		"Socket",    // socket label
+		"Verifiers", // section title
 		"Architect", "Test", "Security",
 		"N", "E", "S",
 		"↑/↓ navigate", "space toggle", "enter start", "esc abort",
@@ -162,5 +162,30 @@ func TestLandingEscAborts(t *testing.T) {
 
 	if !final.Aborted() || final.Confirmed() {
 		t.Fatalf("esc should abort; aborted=%v confirmed=%v", final.Aborted(), final.Confirmed())
+	}
+}
+
+func TestLandingConfigChoiceSwitchesVerifierSet(t *testing.T) {
+	project := []verifier.Verifier{{Name: "Project", Direction: "N"}}
+	global := []verifier.Verifier{{Name: "GlobalA", Direction: "E"}, {Name: "GlobalB", Direction: "S"}}
+	l := NewLanding(project, "0.1", "/sock", "/cwd").WithConfigChoices([]LandingConfigChoice{
+		{Label: "project", Path: "/repo/.sidekick/sidekick.yaml", Verifiers: project},
+		{Label: "global", Path: "/home/u/.sidekick/sidekick.yaml", Verifiers: global},
+	})
+	l.width, l.height = 120, 40
+
+	if !strings.Contains(l.View(), "Config") || !strings.Contains(l.View(), "project") || !strings.Contains(l.View(), "global") {
+		t.Fatalf("config choices not rendered:\n%s", l.View())
+	}
+	next, _ := l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	switched := next.(Landing)
+	if switched.ConfigPath() != "/home/u/.sidekick/sidekick.yaml" {
+		t.Fatalf("ConfigPath = %q, want global", switched.ConfigPath())
+	}
+	finalModel, _ := switched.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	final := finalModel.(Landing)
+	got := final.Verifiers()
+	if len(got) != 2 || got[0].Name != "GlobalA" || got[1].Name != "GlobalB" {
+		t.Fatalf("verifiers after global switch = %+v", got)
 	}
 }

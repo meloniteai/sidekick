@@ -168,7 +168,7 @@ func TestInstall_ProjectDefaultPathIsSidekickDir(t *testing.T) {
 		t.Fatalf("Install: %v", err)
 	}
 	want := filepath.Join(dir, ".sidekick", "sidekick.yaml")
-	if same, err := sameFilesystemPath(res.Path, want); err != nil {
+	if same, err := sameFilesystemPathForTest(res.Path, want); err != nil {
 		t.Fatal(err)
 	} else if !same {
 		t.Fatalf("Path = %q, want %q", res.Path, want)
@@ -275,7 +275,100 @@ func TestInstall_RejectsManifestWithoutSHA(t *testing.T) {
 	}
 }
 
-func sameFilesystemPath(a, b string) (bool, error) {
+func TestCopyVerifier_GlobalRemoteToProjectMaterialises(t *testing.T) {
+	dir := t.TempDir()
+	global := filepath.Join(dir, "home", ".sidekick", "sidekick.yaml")
+	project := filepath.Join(dir, "repo", ".sidekick", "sidekick.yaml")
+	if err := os.MkdirAll(filepath.Dir(global), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(global, &config.File{Verifiers: []config.VerifierSpec{{
+		Name:      "Remote",
+		Type:      "agent",
+		Direction: "N",
+		LLM:       config.AgentVerifierSpec{Agent: "claude", Model: "sonnet"},
+		Source: &config.SourceSpec{
+			URL:    "https://raw.example.com/remote/SKILL.md",
+			SHA256: strings.Repeat("a", 64),
+		},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := CopyVerifier(CopyVerifierOptions{
+		SourcePath:  global,
+		Target:      ScopeProject,
+		ProjectPath: project,
+		Name:        "Remote",
+		Fetch:       stubFetch([]byte("# remote\n")),
+	})
+	if err != nil {
+		t.Fatalf("CopyVerifier: %v", err)
+	}
+	if res.Path != project || res.FinalName != "Remote" {
+		t.Fatalf("result = %+v, want project/Remote", res)
+	}
+	f, _, err := config.Load(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs := f.Verifiers[0]
+	if vs.Source != nil {
+		t.Fatalf("project copy should be local, got source %+v", vs.Source)
+	}
+	if vs.LLM.Skill != "./skills/remote/SKILL.md" {
+		t.Fatalf("skill = %q", vs.LLM.Skill)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "repo", ".sidekick", "skills", "remote", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	} else if string(got) != "# remote\n" {
+		t.Fatalf("copied body = %q", got)
+	}
+}
+
+func TestCopyVerifier_ProjectLocalToGlobalCopiesSkill(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, "repo", ".sidekick", "sidekick.yaml")
+	global := filepath.Join(dir, "home", ".sidekick", "sidekick.yaml")
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", global)
+	skill := filepath.Join(dir, "repo", ".sidekick", "skills", "local", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skill, []byte("# local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Save(project, &config.File{Verifiers: []config.VerifierSpec{{
+		Name:      "Local",
+		Type:      "agent",
+		Direction: "S",
+		LLM:       config.AgentVerifierSpec{Agent: "claude", Skill: "./skills/local/SKILL.md"},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := CopyVerifier(CopyVerifierOptions{SourcePath: project, Target: ScopeGlobal, Name: "Local"})
+	if err != nil {
+		t.Fatalf("CopyVerifier: %v", err)
+	}
+	if res.Path != global {
+		t.Fatalf("Path = %q, want %q", res.Path, global)
+	}
+	f, _, err := config.Load(global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Verifiers[0].LLM.Skill != "./skills/local/SKILL.md" {
+		t.Fatalf("global skill = %q", f.Verifiers[0].LLM.Skill)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "home", ".sidekick", "skills", "local", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	} else if string(got) != "# local\n" {
+		t.Fatalf("copied body = %q", got)
+	}
+}
+
+func sameFilesystemPathForTest(a, b string) (bool, error) {
 	aa, err := filepath.Abs(a)
 	if err != nil {
 		return false, err

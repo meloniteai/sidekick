@@ -11,6 +11,7 @@ import (
 	"github.com/meloniteai/sidekick/internal/daemon"
 	"github.com/meloniteai/sidekick/internal/gitstats"
 	"github.com/meloniteai/sidekick/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/registry"
 )
 
 // tickInterval drives a periodic re-render so the TUI reflects async verifier
@@ -76,6 +77,7 @@ type Model struct {
 	onStopAll         func()
 	onConfigSaved     func() error
 	onConfigInstalled func(path string) error
+	onCopyVerifier    func(name string, target registry.Scope) (string, error)
 	configPath        string
 	editor            *EditWizard
 	status            *StatusWizard
@@ -184,6 +186,13 @@ func (m Model) WithConfigSaved(fn func() error) Model {
 // session.
 func (m Model) WithConfigInstalled(fn func(path string) error) Model {
 	m.onConfigInstalled = fn
+	return m
+}
+
+// WithCopyVerifier sets a callback used by the status modal to copy the
+// selected verifier between project and global config scopes.
+func (m Model) WithCopyVerifier(fn func(name string, target registry.Scope) (string, error)) Model {
+	m.onCopyVerifier = fn
 	return m
 }
 
@@ -301,6 +310,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if m.status != nil {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "p":
+				m.copyStatusVerifier(registry.ScopeProject)
+				m.snapshot = m.currentSnapshot()
+				return m, nil
+			case "g":
+				m.copyStatusVerifier(registry.ScopeGlobal)
+				m.snapshot = m.currentSnapshot()
+				return m, nil
+			}
+		}
 		next, cmd, done := m.status.Update(msg)
 		if done {
 			m.status = nil
@@ -392,6 +413,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) copyStatusVerifier(target registry.Scope) {
+	if m.status == nil || m.onCopyVerifier == nil {
+		return
+	}
+	msg, err := m.onCopyVerifier(m.status.verifier, target)
+	if err != nil {
+		m.status.errMsg = err.Error()
+		m.status.notice = ""
+		return
+	}
+	m.status.errMsg = ""
+	m.status.notice = msg
 }
 
 func (m *Model) reloadAfterBrowserInstall(installed browserInstalledMsg) error {
