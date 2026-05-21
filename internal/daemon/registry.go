@@ -18,6 +18,10 @@ const (
 	// DefaultSessionIdleTimeout is the daemon-wide fallback for non-default
 	// sessions. A configured timeout of 0 disables idle collection.
 	DefaultSessionIdleTimeout = 30 * time.Minute
+	// DefaultHeartbeatInterval is the cadence at which live sessions emit a
+	// telemetry liveness sample. Kept independent of the GC cadence so the
+	// derived session-end resolution doesn't ride on the idle-reap interval.
+	DefaultHeartbeatInterval = 30 * time.Second
 )
 
 // SessionAnchor is the git context captured when a per-worktree session is
@@ -49,6 +53,7 @@ type Registry struct {
 	idleTimeout  time.Duration
 	factory      SessionFactory
 	cleanup      SessionCleanup
+	heartbeat    func()
 }
 
 // NewRegistry returns a registry seeded with the startup/default session.
@@ -93,6 +98,26 @@ func normalizeSessionKey(worktree string) string {
 
 // SetCleanup installs the callback invoked when idle GC removes a session.
 func (r *Registry) SetCleanup(fn SessionCleanup) { r.cleanup = fn }
+
+// SetHeartbeat installs the callback StartHeartbeat fires each tick to append
+// telemetry liveness samples. Set before StartHeartbeat so the read in the loop
+// happens-after this write. nil disables it.
+func (r *Registry) SetHeartbeat(fn func()) { r.heartbeat = fn }
+
+// EachSession invokes fn for every live session. The session set is snapshotted
+// under the lock and fn runs outside it, so a callback that does I/O (a
+// heartbeat write) can't stall socket routing.
+func (r *Registry) EachSession(fn func(*State)) {
+	r.mu.RLock()
+	states := make([]*State, 0, len(r.sessions))
+	for _, s := range r.sessions {
+		states = append(states, s)
+	}
+	r.mu.RUnlock()
+	for _, s := range states {
+		fn(s)
+	}
+}
 
 // SetIdleTimeout updates the daemon-wide idle timeout. Zero disables GC.
 func (r *Registry) SetIdleTimeout(d time.Duration) {
@@ -301,6 +326,27 @@ func (r *Registry) StartGC(ctx context.Context, interval time.Duration) {
 			return
 		case now := <-t.C:
 			r.CollectIdle(now)
+		}
+	}
+}
+
+// StartHeartbeat fires the SetHeartbeat callback on a fixed cadence until ctx
+// is canceled. Separate from StartGC so the liveness/end resolution is
+// independent of the idle-reap interval. No-op when no callback is installed.
+func (r *Registry) StartHeartbeat(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = DefaultHeartbeatInterval
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if r.heartbeat != nil {
+				r.heartbeat()
+			}
 		}
 	}
 }

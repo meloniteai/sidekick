@@ -21,6 +21,7 @@ import (
 const (
 	defaultSockRel = ".sidekick/sock"
 	envSock        = "SIDEKICK_SOCK"
+	envTelemetryDB = "SIDEKICK_TELEMETRY_DB"
 )
 
 // SocketPath returns the daemon socket path for the process cwd. See
@@ -58,6 +59,26 @@ func SocketPathFor(cwd string) (string, error) {
 		return filepath.Join(home, ".sidekick", "sockets", fp+".sock"), nil
 	}
 	return filepath.Join(home, defaultSockRel), nil
+}
+
+// TelemetryDBPath returns the telemetry SQLite path for the repo resolved from
+// cwd, mirroring the per-repo-fingerprint socket naming. Every worktree of a
+// repo shares one database — the daemon is the single writer — so collection
+// stays coherent no matter which worktree drove a session. Falls back to a
+// single default DB outside a repo. Override with $SIDEKICK_TELEMETRY_DB.
+func TelemetryDBPath(cwd string) (string, error) {
+	if p := os.Getenv(envTelemetryDB); p != "" {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	fp := repoFingerprintFor(cwd)
+	if fp == "" {
+		fp = "default"
+	}
+	return filepath.Join(home, ".sidekick", "telemetry", fp+".db"), nil
 }
 
 // repoFingerprintFor returns a stable short hash identifying the git repo

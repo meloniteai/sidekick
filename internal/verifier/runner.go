@@ -2,12 +2,16 @@ package verifier
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/meloniteai/sidekick/internal/daemon"
 	"github.com/meloniteai/sidekick/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/telemetry"
 	"github.com/meloniteai/sidekick/internal/transcript"
 )
 
@@ -302,7 +306,9 @@ func (r *Runner) runSingle(v Verifier, ctx context.Context) {
 		SessionBaseRef: r.state.SessionBaseRef(),
 		LastMessages:   transcript.LastMessages(cwd, transcriptTurns),
 	}
-	r.executeVerifier(ctx, v, session)
+	// Single "r"-key runs carry no batch/file context, so they are recorded as
+	// batch-less verifier_runs (empty batch id).
+	r.executeVerifier(ctx, v, session, "")
 }
 
 // RunNow runs all verifiers synchronously (used in tests).
@@ -337,6 +343,8 @@ func (r *Runner) runBatch(only string) {
 		LastMessages:    transcript.LastMessages(transcriptDir, transcriptTurns),
 	}
 
+	batchID := r.recordBatch(files)
+
 	var wg sync.WaitGroup
 	for _, v := range verifiers {
 		if only != "" && v.Name != only {
@@ -353,7 +361,7 @@ func (r *Runner) runBatch(only string) {
 		wg.Add(1)
 		go func(v Verifier) {
 			defer wg.Done()
-			r.executeVerifier(batchCtx, v, session)
+			r.executeVerifier(batchCtx, v, session, batchID)
 		}(v)
 	}
 	wg.Wait()
@@ -380,12 +388,17 @@ func (r *Runner) runBatch(only string) {
 
 // executeVerifier runs one verifier and folds its result into State. Shared
 // by the batch and single-trigger paths so they update state identically.
-func (r *Runner) executeVerifier(ctx context.Context, v Verifier, session Session) {
+// batchID attributes the resulting verifier_run to its batch; it is "" for
+// single ("r"-key) runs. Verify() is timed for every verifier type so the
+// telemetry latency lens covers command/binary verifiers (whose Usage is nil).
+func (r *Runner) executeVerifier(ctx context.Context, v Verifier, session Session, batchID string) {
 	if cur, ok := r.state.Verifier(v.Name); ok && cur.Disabled {
 		return
 	}
 	r.state.MarkRunning(v.Name, true)
+	start := time.Now()
 	res, err := v.Verify(ctx, session)
+	elapsed := time.Since(start).Milliseconds()
 	cur, ok := r.state.Verifier(v.Name)
 	if !ok {
 		return
@@ -397,11 +410,13 @@ func (r *Runner) executeVerifier(ctx context.Context, v Verifier, session Sessio
 	}
 	cur.Running = false
 	cur.ComputedAt = time.Now()
+	stopped := false
 	switch {
 	case err != nil && ctx.Err() != nil:
 		// User-initiated stop: keep the previously displayed distance
 		// and just label the row so the kill is visible.
 		cur.Reason = "stopped"
+		stopped = true
 		// Status unchanged.
 		r.state.LogEvent(daemon.EventInfo, "verifier %s stopped", v.Name)
 	case err != nil:
@@ -441,4 +456,80 @@ func (r *Runner) executeVerifier(ctx context.Context, v Verifier, session Sessio
 		ComputedAt: cur.ComputedAt,
 	})
 	r.state.UpsertVerifier(cur)
+
+	// A stopped run produced no measurement (the user killed it), so it is not
+	// recorded — only genuine evaluations become telemetry.
+	if !stopped {
+		r.recordVerifierRun(batchID, v, cur, elapsed, res.Usage)
+	}
+}
+
+// recordBatch emits one batch row and returns its id, which threads into each
+// verifier_run so a distance can be attributed to the files that triggered it.
+// Returns "" (and records nothing) when telemetry is disabled or no goal
+// episode is active.
+func (r *Runner) recordBatch(files []string) string {
+	emitter := r.state.Emitter()
+	sid := r.state.TelemetrySessionID()
+	if emitter == nil || sid == "" {
+		return ""
+	}
+	id := telemetry.NewID()
+	if err := emitter.RecordBatch(telemetry.BatchRecord{
+		BatchID:   id,
+		SessionID: sid,
+		TS:        time.Now(),
+		FileSet:   files,
+		FileCount: len(files),
+		BaseRef:   r.state.SessionBaseRef(),
+	}); err != nil {
+		r.state.LogEvent(daemon.EventError, "telemetry: record batch: %v", err)
+		return id
+	}
+	r.state.IncTelemetryBatchCount()
+	return id
+}
+
+// recordVerifierRun emits one verifier_run row. cur carries the folded result
+// (distance/reason/status); usage is nil for command/binary verifiers.
+func (r *Runner) recordVerifierRun(batchID string, v Verifier, cur ipc.VerifierStatus, durationMS int64, usage *UsageInfo) {
+	emitter := r.state.Emitter()
+	sid := r.state.TelemetrySessionID()
+	if emitter == nil || sid == "" {
+		return
+	}
+	rec := telemetry.VerifierRunRecord{
+		BatchID:         batchID,
+		SessionID:       sid,
+		VerifierName:    v.Name,
+		VerifierVersion: verifierVersion(v),
+		Distance:        cur.Distance,
+		Reason:          cur.Reason,
+		Status:          cur.Status,
+		DurationMS:      durationMS,
+		TS:              time.Now(),
+	}
+	if usage != nil {
+		rec.InputTokens = usage.InputTokens
+		rec.OutputTokens = usage.OutputTokens
+		rec.CacheReads = usage.CacheReads
+		rec.CacheWrites = usage.CacheWrites
+		rec.CostUSD = usage.CostUSD
+	}
+	if err := emitter.RecordVerifierRun(rec); err != nil {
+		r.state.LogEvent(daemon.EventError, "telemetry: record verifier_run: %v", err)
+	}
+}
+
+// verifierVersion is a stable short hash of a verifier's resolved config, so a
+// before/after comparison can tell whether a config change (not just code)
+// moved the metric. Remote verifiers' content SHA256 is part of the config and
+// therefore folded in.
+func verifierVersion(v Verifier) string {
+	b, err := json.Marshal(verifierConfig(v))
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])[:12]
 }

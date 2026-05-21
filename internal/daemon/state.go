@@ -11,6 +11,7 @@ import (
 	charmlog "github.com/charmbracelet/log"
 	"github.com/muesli/termenv"
 	"github.com/meloniteai/sidekick/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/telemetry"
 )
 
 // EventLevel categorises an entry in the in-memory event log. Renderers use
@@ -64,6 +65,16 @@ type State struct {
 	logSink    *eventLogSink
 	pending    EventEntry
 	hasPending bool
+
+	// Telemetry is the durable observability seam. emitter is shared across
+	// all per-worktree sessions; it is nil in unit tests and when collection
+	// is disabled, in which case every telemetry method is a cheap no-op.
+	// telemetrySessionID is the current goal-episode id (minted on goal-set);
+	// the batch/edit counters are per-episode and surfaced in heartbeats.
+	emitter             telemetry.Emitter
+	telemetrySessionID  string
+	telemetryBatchCount int
+	telemetryEditCount  int
 }
 
 // Session is the per-worktree state unit owned by the daemon registry. State
@@ -123,6 +134,121 @@ func (s *State) SessionEdits() []string {
 	out := make([]string, len(s.sessionEditsOrder))
 	copy(out, s.sessionEditsOrder)
 	return out
+}
+
+// SetEmitter installs the shared telemetry emitter. A nil emitter disables all
+// telemetry for this session — the default for unit tests and when collection
+// is turned off.
+func (s *State) SetEmitter(e telemetry.Emitter) {
+	s.mu.Lock()
+	s.emitter = e
+	s.mu.Unlock()
+}
+
+// Emitter returns the telemetry emitter, or nil when telemetry is disabled.
+func (s *State) Emitter() telemetry.Emitter {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.emitter
+}
+
+// TelemetrySessionID returns the current goal-episode id, or "" when no goal
+// has been set yet or telemetry is disabled.
+func (s *State) TelemetrySessionID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.telemetrySessionID
+}
+
+// StartTelemetrySession opens a new goal-episode telemetry session: it mints a
+// fresh session id, resets the per-episode counters, and emits a session row.
+// A telemetry session is bounded by goal-set → next goal-set, the only unit in
+// which "iterations to converge" is meaningful — the underlying daemon.State is
+// reused across many goals. No-op when telemetry is disabled.
+func (s *State) StartTelemetrySession(goal string) {
+	s.mu.Lock()
+	e := s.emitter
+	if e == nil {
+		s.mu.Unlock()
+		return
+	}
+	id := telemetry.NewID()
+	s.telemetrySessionID = id
+	s.telemetryBatchCount = 0
+	s.telemetryEditCount = 0
+	rec := telemetry.SessionRecord{
+		SessionID: id,
+		GoalText:  goal,
+		BaseRef:   s.sessionBaseRef,
+		Worktree:  s.sessionWorktree,
+		StartedAt: time.Now(),
+	}
+	s.mu.Unlock()
+	if err := e.RecordSession(rec); err != nil {
+		s.LogEvent(EventError, "telemetry: record session: %v", err)
+	}
+}
+
+// RecordTelemetryEdit emits one edit row for file, captured before RecordEdit's
+// dedup so repeat touches stay countable, and bumps the session edit counter
+// (which doubles as the row's monotonic seq). Empty paths and disabled
+// telemetry are no-ops.
+func (s *State) RecordTelemetryEdit(file string) {
+	if file == "" {
+		return
+	}
+	s.mu.Lock()
+	e := s.emitter
+	sid := s.telemetrySessionID
+	if e == nil || sid == "" {
+		s.mu.Unlock()
+		return
+	}
+	s.telemetryEditCount++
+	seq := s.telemetryEditCount
+	s.mu.Unlock()
+	if err := e.RecordEdit(telemetry.EditRecord{
+		SessionID: sid,
+		FilePath:  file,
+		Seq:       seq,
+		TS:        time.Now(),
+	}); err != nil {
+		s.LogEvent(EventError, "telemetry: record edit: %v", err)
+	}
+}
+
+// IncTelemetryBatchCount bumps the per-session batch counter surfaced in
+// heartbeats. Called by the verifier runner when it records a batch.
+func (s *State) IncTelemetryBatchCount() {
+	s.mu.Lock()
+	s.telemetryBatchCount++
+	s.mu.Unlock()
+}
+
+// EmitHeartbeat appends a liveness sample for the current session. The session
+// end is derived from the last heartbeat (now − last > grace), and the carried
+// overall_distance gives the convergence trajectory for free. No-op when
+// telemetry is disabled or no goal has been set.
+func (s *State) EmitHeartbeat() {
+	s.mu.RLock()
+	e := s.emitter
+	sid := s.telemetrySessionID
+	batches := s.telemetryBatchCount
+	edits := s.telemetryEditCount
+	s.mu.RUnlock()
+	if e == nil || sid == "" {
+		return
+	}
+	snap := s.Snapshot()
+	if err := e.RecordHeartbeat(telemetry.HeartbeatRecord{
+		SessionID:       sid,
+		TS:              time.Now(),
+		OverallDistance: snap.OverallDistance,
+		BatchCount:      batches,
+		EditCount:       edits,
+	}); err != nil {
+		s.LogEvent(EventError, "telemetry: record heartbeat: %v", err)
+	}
 }
 
 // SetGoal replaces the active goal. When the goal has been locked via

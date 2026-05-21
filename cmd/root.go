@@ -38,5 +38,6 @@ func New(v string, skill []byte) *cobra.Command {
 	root.AddCommand(newMenubarCmd())
 	root.AddCommand(newVerifierCmd())
 	root.AddCommand(newInstallCmd())
+	root.AddCommand(newExportCmd())
 	return root
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/meloniteai/sidekick/internal/daemon"
 	"github.com/meloniteai/sidekick/internal/ipc"
 	sidekicktui "github.com/meloniteai/sidekick/internal/sidekick"
+	"github.com/meloniteai/sidekick/internal/telemetry"
 	"github.com/meloniteai/sidekick/internal/verifier"
 )
 
@@ -31,9 +32,22 @@ type runnerHandler struct {
 }
 
 func (h *runnerHandler) OnGoal(session *daemon.State, goal string) {
+	if session.GoalLocked() {
+		// A startup-pinned goal owns the episode; the agent's goal attempts are
+		// no-ops and must not mint new telemetry sessions.
+		session.SetGoal(goal)
+		return
+	}
 	session.SetGoal(goal)
+	// A telemetry session is one goal episode: open a fresh one on each goal
+	// set (goal-set → next goal-set is the only unit in which "iterations to
+	// converge" is meaningful).
+	session.StartTelemetrySession(goal)
 }
 func (h *runnerHandler) OnWrite(session *daemon.State, file string) {
+	// Tap the edit before RecordEdit dedups it, so repeated touches of the same
+	// file stay countable in the telemetry.
+	session.RecordTelemetryEdit(file)
 	session.RecordEdit(file)
 	if runner := h.runtimes.Runner(session); runner != nil {
 		runner.Trigger(file)
@@ -50,6 +64,7 @@ type sessionRuntimeManager struct {
 	ctx        context.Context
 	version    string
 	configPath string
+	emitter    telemetry.Emitter
 	runtimes   map[*daemon.State]sessionRuntime
 }
 
@@ -74,6 +89,7 @@ func (m *sessionRuntimeManager) NewSession(anchor daemon.SessionAnchor) (*daemon
 	state.SetSessionBaseRef(anchor.BaseRef)
 	state.SetSessionWorktree(anchor.Worktree)
 	state.SetVersion(m.version)
+	state.SetEmitter(m.emitter)
 	runner := verifier.NewRunner(m.ctx, state, verifiers)
 	runner.SetQuietPeriod(quietPeriod)
 	m.Register(state, runner, loadedConfigPath)
@@ -183,12 +199,21 @@ func bindStart(cmd *cobra.Command) {
 		}
 		fmt.Fprintf(os.Stderr, "[sidekick] enabled: %s\n", verifierNames(enabledVerifiers(verifiers)))
 
+		emitter := openTelemetry(worktree)
+		if emitter != nil {
+			defer emitter.Close()
+		}
+
 		state := daemon.NewState()
 		state.SetSessionBaseRef(baseRef)
 		state.SetSessionWorktree(worktree)
 		state.SetVersion(version)
+		state.SetEmitter(emitter)
 		if trimmed := strings.TrimSpace(startGoal); trimmed != "" {
 			state.LockGoal(trimmed)
+			// A pinned goal never flows through OnGoal, so open its telemetry
+			// episode here.
+			state.StartTelemetrySession(trimmed)
 			fmt.Fprintf(os.Stderr, "[sidekick] goal locked to: %s\n", trimmed)
 		}
 		runner := verifier.NewRunner(ctx, state, verifiers)
@@ -197,12 +222,19 @@ func bindStart(cmd *cobra.Command) {
 		fmt.Fprintf(os.Stderr, "[sidekick] session idle timeout: %s\n", sessionIdleTimeout)
 
 		runtimes := newSessionRuntimeManager(ctx, version, configPath)
+		runtimes.emitter = emitter
 		runtimes.Register(state, runner, loadedConfigPath)
 		defer runtimes.StopAll()
 		registry := daemon.NewRegistry(state, runtimes.NewSession)
 		registry.SetCleanup(runtimes.Stop)
 		registry.SetIdleTimeout(sessionIdleTimeout)
+		// Append a liveness heartbeat per live session on its own cadence; the
+		// session end is derived from the last one.
+		registry.SetHeartbeat(func() {
+			registry.EachSession(func(s *daemon.State) { s.EmitHeartbeat() })
+		})
 		go registry.StartGC(ctx, time.Minute)
+		go registry.StartHeartbeat(ctx, daemon.DefaultHeartbeatInterval)
 
 		handler := &runnerHandler{runtimes: runtimes}
 		srv, err := acquireDaemonSocket(sock, registry, handler, !headless)
@@ -392,6 +424,40 @@ func verifierNames(vs []verifier.Verifier) string {
 		names[i] = v.Name
 	}
 	return strings.Join(names, ", ")
+}
+
+// openTelemetry opens the per-repo telemetry store, or returns a nil Emitter
+// (which makes every telemetry call a no-op) when collection is disabled or the
+// store can't be opened. Telemetry must never block the daemon from starting,
+// so an open failure is logged and swallowed. Returns the interface type so the
+// disabled case is a genuine nil interface, not a typed nil.
+func openTelemetry(worktree string) telemetry.Emitter {
+	if !telemetryEnabled() {
+		return nil
+	}
+	path, err := ipc.TelemetryDBPath(worktree)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[sidekick] telemetry disabled: %v\n", err)
+		return nil
+	}
+	store, err := telemetry.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[sidekick] telemetry disabled: %v\n", err)
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "[sidekick] telemetry: %s\n", path)
+	return store
+}
+
+// telemetryEnabled reports whether collection is on. Default is on (the build
+// is dogfooded); set SIDEKICK_TELEMETRY to 0/false/off/no to disable.
+func telemetryEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SIDEKICK_TELEMETRY"))) {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
 }
 
 // captureSessionAnchor snapshots both the current `git rev-parse HEAD`

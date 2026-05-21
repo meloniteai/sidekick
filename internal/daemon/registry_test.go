@@ -3,6 +3,7 @@ package daemon
 import (
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -216,6 +217,27 @@ func canonicalForTest(t *testing.T, path string) string {
 		t.Fatalf("EvalSymlinks(%q): %v", path, err)
 	}
 	return resolved
+}
+
+func TestRegistryStartHeartbeatFires(t *testing.T) {
+	defaultState := NewState()
+	reg := NewRegistry(defaultState, nil)
+
+	var ticks atomic.Int64
+	reg.SetHeartbeat(func() {
+		reg.EachSession(func(*State) { ticks.Add(1) })
+	})
+
+	go reg.StartHeartbeat(t.Context(), 20*time.Millisecond)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ticks.Load() > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("heartbeat callback never fired from StartHeartbeat")
 }
 
 func testGit(t *testing.T, dir string, args ...string) {
