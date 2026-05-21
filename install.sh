@@ -160,5 +160,5 @@ else
   fi
 fi
 
-printf '\n%s%s   Done.%s  Run %s%ssidekick start%s in a repo to launch the daemon.\n\n' \
+printf '\n%s%s   Done.%s  Run %s%ssidekick%s in a repo to launch the daemon.\n\n' \
   "$BOLD" "$OK" "$RESET" "$CORAL_SOFT" "$BOLD" "$RESET" >&2
