@@ -43,7 +43,7 @@ func stubFetch(body []byte) func(string, string) ([]byte, error) {
 // fork, not a cache-pinned remote.
 func TestInstall_ProjectMaterialisesSkill(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "subdir", "sidekick.yaml")
+	target := filepath.Join(dir, "subdir", ".sidekick", "sidekick.yaml")
 	body := []byte("# needs tests\nrubric body\n")
 
 	res, err := Install(InstallOptions{
@@ -73,8 +73,8 @@ func TestInstall_ProjectMaterialisesSkill(t *testing.T) {
 	if vs.Source != nil {
 		t.Fatalf("project install must not pin a source block: %+v", vs.Source)
 	}
-	if vs.LLM.Skill != "./.sidekick/skills/needs-tests/SKILL.md" {
-		t.Fatalf("llm.skill = %q, want ./.sidekick/skills/needs-tests/SKILL.md", vs.LLM.Skill)
+	if vs.LLM.Skill != "./skills/needs-tests/SKILL.md" {
+		t.Fatalf("llm.skill = %q, want ./skills/needs-tests/SKILL.md", vs.LLM.Skill)
 	}
 	if vs.LLM.Agent != "claude" || vs.LLM.Model != "claude-sonnet-4-6" {
 		t.Fatalf("agent llm fields not persisted: %+v", vs.LLM)
@@ -93,7 +93,7 @@ func TestInstall_ProjectMaterialisesSkill(t *testing.T) {
 	}
 
 	// The forked verifier must validate as a normal local agent verifier.
-	if _, err := f.Resolve(filepath.Join(dir, "subdir")); err != nil {
+	if _, err := f.Resolve(filepath.Join(dir, "subdir", ".sidekick")); err != nil {
 		t.Fatalf("Resolve of materialised verifier: %v", err)
 	}
 }
@@ -103,7 +103,7 @@ func TestInstall_ProjectMaterialisesSkill(t *testing.T) {
 // points at it.
 func TestInstall_ProjectMaterialisesScript(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "sidekick.yaml")
+	target := filepath.Join(dir, ".sidekick", "sidekick.yaml")
 	body := []byte("#!/bin/sh\necho '{\"distance\":0,\"reason\":\"ok\"}'\n")
 
 	m := sampleAgentManifest()
@@ -129,7 +129,7 @@ func TestInstall_ProjectMaterialisesScript(t *testing.T) {
 	if vs.Source != nil {
 		t.Fatalf("project install must not pin a source block: %+v", vs.Source)
 	}
-	want := "./.sidekick/verifiers/smoke.sh"
+	want := "./verifiers/smoke.sh"
 	if len(vs.Command) != 1 || vs.Command[0] != want {
 		t.Fatalf("command = %#v, want [%q]", vs.Command, want)
 	}
@@ -143,12 +143,47 @@ func TestInstall_ProjectMaterialisesScript(t *testing.T) {
 	}
 }
 
+func TestInstall_ProjectDefaultPathIsSidekickDir(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte("# rubric\n")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	}()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Install(InstallOptions{
+		Scope:    ScopeProject,
+		Manifest: sampleAgentManifest(),
+		Fetch:    stubFetch(body),
+	})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	want := filepath.Join(dir, ".sidekick", "sidekick.yaml")
+	if same, err := sameFilesystemPath(res.Path, want); err != nil {
+		t.Fatal(err)
+	} else if !same {
+		t.Fatalf("Path = %q, want %q", res.Path, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sidekick", "skills", "needs-tests", "SKILL.md")); err != nil {
+		t.Fatalf("materialised skill not under .sidekick: %v", err)
+	}
+}
+
 // TestInstall_RenamesOnConflict installs the same manifest twice into
 // the same sidekick.yaml — the second install must land on a unique name
 // rather than overwriting the first entry.
 func TestInstall_RenamesOnConflict(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "sidekick.yaml")
+	target := filepath.Join(dir, ".sidekick", "sidekick.yaml")
 	m := sampleAgentManifest()
 	fetch := stubFetch([]byte("# rubric\n"))
 
@@ -175,7 +210,7 @@ func TestInstall_RenamesOnConflict(t *testing.T) {
 	}
 	// The de-duplicated name must drive the on-disk slug so the second
 	// install does not clobber the first verifier's skill.
-	if f.Verifiers[1].LLM.Skill != "./.sidekick/skills/needs-tests-2/SKILL.md" {
+	if f.Verifiers[1].LLM.Skill != "./skills/needs-tests-2/SKILL.md" {
 		t.Fatalf("second skill path = %q, want needs-tests-2 dir", f.Verifiers[1].LLM.Skill)
 	}
 	for _, slug := range []string{"needs-tests", "needs-tests-2"} {
@@ -238,4 +273,22 @@ func TestInstall_RejectsManifestWithoutSHA(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "sha256") {
 		t.Fatalf("expected sha256-required error, got %v", err)
 	}
+}
+
+func sameFilesystemPath(a, b string) (bool, error) {
+	aa, err := filepath.Abs(a)
+	if err != nil {
+		return false, err
+	}
+	bb, err := filepath.Abs(b)
+	if err != nil {
+		return false, err
+	}
+	if resolved, err := filepath.EvalSymlinks(aa); err == nil {
+		aa = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(bb); err == nil {
+		bb = resolved
+	}
+	return filepath.Clean(aa) == filepath.Clean(bb), nil
 }

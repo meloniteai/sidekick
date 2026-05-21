@@ -386,14 +386,9 @@ func (m Model) renderHeader(totalW int) string {
 	// the gutter, then stamp the banner line styled coral. Banner lines
 	// are padded to brandW so trailing spaces stay inside the brand bg.
 	//
-	// When the banner is taller than the metadata column (the 6-row
-	// ANSI-Shadow "SK" against a 3–4-row metadata stack), the shortcut
-	// row rides on the *last* banner row instead of being appended as
-	// its own line — otherwise the empty banner-rows-3-to-N leave an
-	// awkward gap between goal: and the keys row. The hoisted shortcut
-	// is allowed to consume the gutter (it abuts the banner glyph
-	// directly) so the full keys list survives at the 100-cell width
-	// the tests pin.
+	// When the banner is taller than the metadata column, place the shortcut
+	// row immediately after the metadata instead of appending it after blank
+	// banner rows. That keeps the config/goal context adjacent to the hot keys.
 	hoistShortcut := len(bannerLines) > len(leftLines)
 	rows := make([]string, len(bannerLines))
 	for i, bl := range bannerLines {
@@ -403,7 +398,7 @@ func (m Model) renderHeader(totalW int) string {
 		switch {
 		case i < len(leftLines):
 			left = leftLines[i]
-		case hoistShortcut && i == len(bannerLines)-1:
+		case hoistShortcut && i == len(leftLines):
 			leftCellW = max(contentW-brandW, 0)
 			gutterW = 0
 			left = m.renderHeaderShortcutRow(leftCellW)
@@ -494,7 +489,21 @@ func (m Model) headerTelemetryRows(colW int) []string {
 		goalRow += truncate(goal, colW-len("goal: ")-2)
 	}
 	rows = append(rows, goalRow)
+	rows = append(rows, m.renderConfigHeaderRow(colW))
 	return rows
+}
+
+func (m Model) renderConfigHeaderRow(colW int) string {
+	path := m.currentConfigPath()
+	if path == "" {
+		return truncate(styleHeaderLabel.Render("using no config"), colW)
+	}
+	scope := "project"
+	if isGlobalConfig(path) {
+		scope = "global"
+	}
+	row := styleHeaderLabel.Render("using ") + scope + styleHeaderLabel.Render(" config from ") + path
+	return truncate(row, colW)
 }
 
 // renderGitHeaderRow renders the single-line git summary always shown in

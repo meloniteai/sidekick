@@ -133,13 +133,20 @@ func canonical(t *testing.T, p string) string {
 	return r
 }
 
-// WriteSidekickYAML writes sidekick.yaml into dir.
+// WriteSidekickYAML writes the project config into dir/.sidekick/sidekick.yaml.
 func WriteSidekickYAML(t *testing.T, dir, body string) {
 	t.Helper()
-	path := filepath.Join(dir, "sidekick.yaml")
+	path := ProjectSidekickYAML(dir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func ProjectSidekickYAML(dir string) string {
+	return filepath.Join(dir, ".sidekick", "sidekick.yaml")
 }
 
 // Daemon wraps a `sidekick start --headless` subprocess and the socket it

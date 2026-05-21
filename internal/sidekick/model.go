@@ -75,6 +75,7 @@ type Model struct {
 	onToggleVerifier  func(name string)
 	onStopAll         func()
 	onConfigSaved     func() error
+	onConfigInstalled func(path string) error
 	configPath        string
 	editor            *EditWizard
 	status            *StatusWizard
@@ -178,6 +179,14 @@ func (m Model) WithConfigSaved(fn func() error) Model {
 	return m
 }
 
+// WithConfigInstalled sets a callback invoked after the browser installs a
+// verifier into a config path that should become active for the displayed
+// session.
+func (m Model) WithConfigInstalled(fn func(path string) error) Model {
+	m.onConfigInstalled = fn
+	return m
+}
+
 // Init satisfies tea.Model.
 func (m Model) Init() tea.Cmd {
 	return tick()
@@ -248,8 +257,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// On a successful install, refresh the daemon's config so the
 		// new verifier shows up on the compass immediately — same
 		// callback the edit wizard fires on save.
-		if installed, ok := msg.(browserInstalledMsg); ok && installed.err == nil && m.onConfigSaved != nil {
-			_ = m.onConfigSaved()
+		if installed, ok := msg.(browserInstalledMsg); ok && installed.err == nil {
+			if err := m.reloadAfterBrowserInstall(installed); err != nil {
+				next.installMsg = "installed, but reload failed: " + err.Error()
+			}
 			m.snapshot = m.currentSnapshot()
 		}
 		if done {
@@ -383,6 +394,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) reloadAfterBrowserInstall(installed browserInstalledMsg) error {
+	if installed.project || m.shouldAdoptGlobalInstall() {
+		if m.onConfigInstalled != nil {
+			return m.onConfigInstalled(installed.path)
+		}
+	}
+	if m.onConfigSaved != nil {
+		return m.onConfigSaved()
+	}
+	return nil
+}
+
+func (m Model) shouldAdoptGlobalInstall() bool {
+	path := m.currentConfigPath()
+	return path == "" || isGlobalConfig(path)
+}
+
 func (m *Model) clampSelectedVerifier() {
 	if len(m.snapshot.Verifiers) == 0 {
 		m.selectedVerifier = 0
@@ -485,7 +513,7 @@ func (m *Model) dispatchPaletteAction(action paletteAction) tea.Cmd {
 		editor.height = m.height
 		m.editor = &editor
 	case paletteActionBrowseVerifiers:
-		browser := NewRemoteBrowser(m.currentConfigPath())
+		browser := NewRemoteBrowser(m.currentConfigPath(), m.currentWorktree())
 		browser.width = m.width
 		browser.height = m.height
 		m.browser = &browser
@@ -564,6 +592,14 @@ func (m Model) currentConfigPath() string {
 		return m.configPathFunc()
 	}
 	return m.configPath
+}
+
+func (m Model) currentWorktree() string {
+	state := m.currentState()
+	if state == nil {
+		return ""
+	}
+	return state.SessionWorktree()
 }
 
 // refreshWorkspace refetches git workspace metadata when enough ticks have

@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,7 +16,7 @@ import (
 // --local` with a scripted stdin, exercising the non-TTY text wizard. The
 // wizard's TTY (palette) and text paths share the same persistence logic
 // (loadOrInit → append → config.Save), so the cheaper text path is
-// sufficient to gate that "wizard finished → sidekick.yaml gained an entry".
+// sufficient to gate that "wizard finished → .sidekick/sidekick.yaml gained an entry".
 // We don't run the verifier; the goal is to validate file persistence.
 func TestLocalVerifierWizardCreatesEntry(t *testing.T) {
 	repo := ScratchRepo(t)
@@ -44,7 +43,7 @@ func TestLocalVerifierWizardCreatesEntry(t *testing.T) {
 		t.Fatalf("verifier add --local: %v\noutput:\n%s", err, out)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(repo, "sidekick.yaml"))
+	raw, err := os.ReadFile(ProjectSidekickYAML(repo))
 	if err != nil {
 		t.Fatalf("read sidekick.yaml: %v\nadd output:\n%s", err, out)
 	}

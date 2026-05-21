@@ -242,13 +242,56 @@ func TestLoadFallsBackToGlobal(t *testing.T) {
 	}
 }
 
+func TestLoadSkipsHomeSidekickWhenGlobalOverrideSet(t *testing.T) {
+	home := t.TempDir()
+	startDir := filepath.Join(home, "repos", "project")
+	if err := os.MkdirAll(startDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defaultGlobal := filepath.Join(home, ".sidekick", "sidekick.yaml")
+	if err := os.MkdirAll(filepath.Dir(defaultGlobal), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(defaultGlobal, []byte(`verifiers:
+  - name: DefaultHomeGlobal
+    direction: N
+    command: ["echo", "hi"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	overrideGlobal := filepath.Join(t.TempDir(), "global.yaml")
+	if err := os.WriteFile(overrideGlobal, []byte(`verifiers:
+  - name: OverrideGlobal
+    direction: S
+    command: ["echo", "hi"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", overrideGlobal)
+
+	f, path, err := LoadFrom("", startDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != overrideGlobal {
+		t.Fatalf("resolved %q, want override global %q", path, overrideGlobal)
+	}
+	if len(f.Verifiers) != 1 || f.Verifiers[0].Name != "OverrideGlobal" {
+		t.Fatalf("expected OverrideGlobal only, got %+v", f.Verifiers)
+	}
+}
+
 // TestProjectShadowsGlobal verifies that when both a project sidekick.yaml
 // and a global one exist, the project file wins and the global is
 // ignored entirely (no merging). The user's decision: project replaces
 // global.
 func TestProjectShadowsGlobal(t *testing.T) {
 	startDir := t.TempDir()
-	projectPath := filepath.Join(startDir, "sidekick.yaml")
+	projectPath := filepath.Join(startDir, ".sidekick", "sidekick.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(projectPath, []byte(`verifiers:
   - name: ProjectOnly
     direction: N
@@ -276,6 +319,40 @@ func TestProjectShadowsGlobal(t *testing.T) {
 	}
 	if len(f.Verifiers) != 1 || f.Verifiers[0].Name != "ProjectOnly" {
 		t.Fatalf("expected ProjectOnly only, got %+v", f.Verifiers)
+	}
+}
+
+func TestProjectSidekickDirShadowsLegacyRootConfig(t *testing.T) {
+	startDir := t.TempDir()
+	sidekickDirPath := filepath.Join(startDir, ".sidekick", "sidekick.yaml")
+	if err := os.MkdirAll(filepath.Dir(sidekickDirPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sidekickDirPath, []byte(`verifiers:
+  - name: SidekickDir
+    direction: N
+    command: ["echo", "hi"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(startDir, "sidekick.yaml")
+	if err := os.WriteFile(legacyPath, []byte(`verifiers:
+  - name: LegacyRoot
+    direction: S
+    command: ["echo", "hi"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, path, err := LoadFrom("", startDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != sidekickDirPath {
+		t.Fatalf("resolved %q, want .sidekick path %q", path, sidekickDirPath)
+	}
+	if len(f.Verifiers) != 1 || f.Verifiers[0].Name != "SidekickDir" {
+		t.Fatalf("expected SidekickDir only, got %+v", f.Verifiers)
 	}
 }
 

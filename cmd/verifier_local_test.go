@@ -47,7 +47,7 @@ func drive(t *testing.T, scriptedStdin string, args ...string) (*config.File, st
 		t.Fatalf("execute: %v\n--- output ---\n%s", err, out.String())
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, "sidekick.yaml"))
+	raw, err := os.ReadFile(filepath.Join(dir, ".sidekick", "sidekick.yaml"))
 	if err != nil {
 		t.Fatalf("read sidekick.yaml: %v", err)
 	}
@@ -200,20 +200,24 @@ verifiers:
     command:
       - ./verifiers/existing.sh
 `)
-	if err := os.WriteFile(filepath.Join(dir, "sidekick.yaml"), preExisting, 0o600); err != nil {
+	configPath := filepath.Join(dir, ".sidekick", "sidekick.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatalf("mkdir seed dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, preExisting, 0o600); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
 
 	// First attempt with duplicate name should re-prompt; second answer succeeds.
 	stdin := strings.Join([]string{
-		"Existing",   // duplicate → re-prompt
-		"Fresh",      // good
-		"E",          // Direction
-		"2",          // command
-		"./ok.sh",    // command
-		"",           // timeout
-		"",           // permissions? -> N
-		"y",          // confirm
+		"Existing", // duplicate → re-prompt
+		"Fresh",    // good
+		"E",        // Direction
+		"2",        // command
+		"./ok.sh",  // command
+		"",         // timeout
+		"",         // permissions? -> N
+		"y",        // confirm
 		"",
 	}, "\n")
 
@@ -230,7 +234,7 @@ verifiers:
 		t.Errorf("expected duplicate-name error in output, got:\n%s", out.String())
 	}
 
-	raw, _ := os.ReadFile(filepath.Join(dir, "sidekick.yaml"))
+	raw, _ := os.ReadFile(configPath)
 	var f config.File
 	if err := yaml.Unmarshal(raw, &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -273,7 +277,7 @@ func TestLocalAddWizardAbortOnConfirmNo(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "aborted") {
 		t.Fatalf("expected aborted error, got err=%v output=%s", err, out.String())
 	}
-	if _, err := os.Stat(filepath.Join(dir, "sidekick.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, ".sidekick", "sidekick.yaml")); !os.IsNotExist(err) {
 		t.Errorf("sidekick.yaml should not have been written on abort: err=%v", err)
 	}
 }

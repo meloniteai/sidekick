@@ -115,6 +115,14 @@ func (m *sessionRuntimeManager) ConfigPath(state *daemon.State) string {
 	return m.runtimes[state].configPath
 }
 
+func (m *sessionRuntimeManager) SetConfigPath(state *daemon.State, configPath string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt := m.runtimes[state]
+	rt.configPath = configPath
+	m.runtimes[state] = rt
+}
+
 func (m *sessionRuntimeManager) Stop(state *daemon.State) {
 	m.mu.Lock()
 	rt := m.runtimes[state]
@@ -277,6 +285,11 @@ func bindStart(cmd *cobra.Command) {
 			session.LogEvent(daemon.EventInfo, "reloaded %d verifiers from %s", len(next), path)
 			return nil
 		}
+		adoptConfig := func(path string) error {
+			session := registry.DisplayedSession()
+			runtimes.SetConfigPath(session, path)
+			return reloadConfig()
+		}
 		p := tea.NewProgram(
 			sidekicktui.NewRegistry(registry).
 				WithManualTrigger(manualTrigger).
@@ -305,6 +318,7 @@ func bindStart(cmd *cobra.Command) {
 				}).
 				WithConfigEditor(loadedConfigPath).
 				WithConfigPathFunc(func() string { return runtimes.ConfigPath(registry.DisplayedSession()) }).
+				WithConfigInstalled(adoptConfig).
 				WithConfigSaved(reloadConfig),
 			tea.WithAltScreen(),
 		)

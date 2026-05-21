@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,12 +15,12 @@ import (
 // catalogSkill is a known-stable SKILL.md in the public verifier catalog.
 // The artefact is a markdown skill body — `sidekick verifier add` sniffs the
 // content and classifies it as an agent verifier, downloads it, computes a
-// sha256, and writes a pinned source entry into sidekick.yaml.
+// sha256, and writes a pinned source entry into .sidekick/sidekick.yaml.
 const catalogSkill = "https://raw.githubusercontent.com/meloniteai/sidekick-verifiers/main/agent/agents-md/SKILL.md"
 
 // TestRemoteVerifierAddPinsArtefact exercises the remote-install path end
 // to end: it fetches a real artefact from the catalog, classifies it,
-// computes the sha256, and persists a verifier entry in sidekick.yaml that
+// computes the sha256, and persists a verifier entry in .sidekick/sidekick.yaml that
 // pins both URL and hash. We don't run the resulting verifier — the goal
 // is to confirm the registration plumbing, not the agent execution path
 // (T2 covers that).
@@ -38,7 +37,7 @@ func TestRemoteVerifierAddPinsArtefact(t *testing.T) {
 		t.Fatalf("verifier add: %v\noutput:\n%s", err, out)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(repo, "sidekick.yaml"))
+	raw, err := os.ReadFile(ProjectSidekickYAML(repo))
 	if err != nil {
 		t.Fatalf("read sidekick.yaml: %v\nadd output:\n%s", err, out)
 	}

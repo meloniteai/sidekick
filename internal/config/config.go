@@ -107,7 +107,8 @@ var validDirections = map[string]bool{
 }
 
 // Load reads sidekick.yaml from `path`. If `path` is empty, it walks upward from
-// cwd looking for `sidekick.yaml`. Returns (nil, os.ErrNotExist) if not found.
+// cwd looking for `.sidekick/sidekick.yaml` first, then legacy `sidekick.yaml`.
+// Returns (nil, os.ErrNotExist) if not found.
 func Load(path string) (*File, string, error) {
 	return LoadFrom(path, "")
 }
@@ -121,7 +122,7 @@ func Load(path string) (*File, string, error) {
 func LoadFrom(path, startDir string) (*File, string, error) {
 	if path == "" {
 		var err error
-		path, err = findUpwardsFrom("sidekick.yaml", startDir)
+		path, err = findProjectConfigUpwardsFrom(startDir)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
 				return nil, "", err
@@ -192,6 +193,9 @@ func SetVerifierDisabled(path, name string, disabled bool) error {
 // observe a torn write. Shared by config saves and the verifier installer/editor.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
@@ -602,4 +606,48 @@ func findUpwardsFrom(name, startDir string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+func findProjectConfigUpwardsFrom(startDir string) (string, error) {
+	dir, err := os.Getwd()
+	if startDir != "" {
+		dir = startDir
+	} else if err != nil {
+		return "", err
+	}
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	skipPaths := map[string]bool{}
+	if gp, err := GlobalPath(); err == nil {
+		skipPaths[cleanAbs(gp)] = true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		skipPaths[cleanAbs(filepath.Join(home, ".sidekick", "sidekick.yaml"))] = true
+	}
+	for {
+		for _, rel := range []string{filepath.Join(".sidekick", "sidekick.yaml"), "sidekick.yaml"} {
+			p := filepath.Join(dir, rel)
+			if _, err := os.Stat(p); err == nil {
+				if skipPaths[cleanAbs(p)] {
+					continue
+				}
+				return p, nil
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", os.ErrNotExist
+		}
+		dir = parent
+	}
+}
+
+func cleanAbs(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(abs)
 }

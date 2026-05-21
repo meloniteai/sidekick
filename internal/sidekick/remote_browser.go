@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -47,6 +48,7 @@ type RemoteBrowser struct {
 	installing  bool
 	width       int
 	height      int
+	configPath  string
 	projectPath string
 }
 
@@ -65,32 +67,49 @@ type browserListMsg struct {
 type browserInstalledMsg struct {
 	finalName string
 	path      string
+	project   bool
 	err       error
 }
 
 // NewRemoteBrowser returns a browser pointed at the default catalog
-// (meloniteai/sidekick-verifiers @ main). projectPath should be the
-// sidekick.yaml of the currently displayed session — passed straight through
-// to registry.Install when the user picks ScopeProject.
-func NewRemoteBrowser(projectPath string) RemoteBrowser {
+// (meloniteai/sidekick-verifiers @ main). configPath is the sidekick.yaml
+// currently loaded by the displayed session; worktree is the repo root used
+// when a project install has to create a new local sidekick.yaml.
+func NewRemoteBrowser(configPath, worktree string) RemoteBrowser {
+	projectPath := ProjectInstallPath(configPath, worktree)
 	return RemoteBrowser{
 		client:      registry.New("", "", ""),
 		mode:        browserModeList,
-		scope:       ScopeForExistingProject(projectPath),
+		scope:       ScopeForLoadedConfig(configPath),
 		loading:     true,
+		configPath:  configPath,
 		projectPath: projectPath,
 	}
 }
 
-// ScopeForExistingProject picks a sensible default install scope: if
-// the displayed session has a project sidekick.yaml, default to project;
-// otherwise default to global so first-time users with no sidekick.yaml
-// don't accidentally write into cwd.
-func ScopeForExistingProject(path string) registry.Scope {
-	if path == "" {
+// ScopeForLoadedConfig picks a sensible default install scope: if the displayed
+// session is backed by a project sidekick.yaml, default to project; otherwise
+// default to global so first-time users with no project config don't
+// accidentally write into cwd.
+func ScopeForLoadedConfig(path string) registry.Scope {
+	if path == "" || isGlobalConfig(path) {
 		return registry.ScopeGlobal
 	}
 	return registry.ScopeProject
+}
+
+// ProjectInstallPath returns the sidekick.yaml that a project-scoped install
+// should write. A global loaded config is only a fallback source, not the
+// project target; project installs must create .sidekick/sidekick.yaml in the
+// worktree.
+func ProjectInstallPath(configPath, worktree string) string {
+	if configPath != "" && !isGlobalConfig(configPath) {
+		return configPath
+	}
+	if worktree == "" {
+		return ""
+	}
+	return filepath.Join(worktree, ".sidekick", "sidekick.yaml")
 }
 
 // Init kicks off the catalog fetch on a worker goroutine. Returns a
@@ -128,6 +147,9 @@ func (b RemoteBrowser) Update(msg tea.Msg) (RemoteBrowser, tea.Cmd, bool) {
 				scope = "global"
 			}
 			b.installMsg = fmt.Sprintf("installed %s into %s sidekick.yaml (%s)", msg.finalName, scope, msg.path)
+			if msg.project && isGlobalConfig(b.configPath) {
+				b.installMsg += " — switched this session from global config to project config"
+			}
 		}
 		return b, nil, false
 	case tea.KeyMsg:
@@ -171,9 +193,13 @@ func (b RemoteBrowser) handleKey(msg tea.KeyMsg) (RemoteBrowser, tea.Cmd, bool) 
 			return b, nil, false
 		case "p":
 			b.scope = registry.ScopeProject
+			if isGlobalConfig(b.configPath) {
+				b.installMsg = fmt.Sprintf("project install will create %s and switch this session from global config", b.projectPath)
+			}
 			return b, nil, false
 		case "g":
 			b.scope = registry.ScopeGlobal
+			b.installMsg = ""
 			return b, nil, false
 		case "d":
 			b.direction = cycleDirection(b.direction)
@@ -193,7 +219,12 @@ func (b RemoteBrowser) handleKey(msg tea.KeyMsg) (RemoteBrowser, tea.Cmd, bool) 
 			}
 			cmd := func() tea.Msg {
 				res, err := registry.Install(opts)
-				return browserInstalledMsg{finalName: res.FinalName, path: res.Path, err: err}
+				return browserInstalledMsg{
+					finalName: res.FinalName,
+					path:      res.Path,
+					project:   opts.Scope == registry.ScopeProject,
+					err:       err,
+				}
 			}
 			return b, cmd, false
 		}

@@ -364,8 +364,7 @@ func asReader(in interface{ Read([]byte) (int, error) }) *os.File {
 
 // loadOrInit returns (parsed file, on-disk path, true) if sidekick.yaml exists,
 // or (empty file, default path, false) if not. The default path when none
-// is supplied is ./sidekick.yaml in the current working directory — the same
-// place `sidekick start` looks for it via findUpwards.
+// is supplied is ./.sidekick/sidekick.yaml in the current working directory.
 func loadOrInit(configPath string) (*config.File, string, bool, error) {
 	f, path, err := config.Load(configPath)
 	if err == nil {
@@ -374,7 +373,7 @@ func loadOrInit(configPath string) (*config.File, string, bool, error) {
 	if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errFileMissing) {
 		return nil, "", false, err
 	}
-	// No sidekick.yaml found anywhere upward. Create one in cwd.
+	// No sidekick.yaml found anywhere upward. Create one under cwd/.sidekick.
 	cwd, wderr := os.Getwd()
 	if wderr != nil {
 		return nil, "", false, wderr
@@ -383,7 +382,7 @@ func loadOrInit(configPath string) (*config.File, string, bool, error) {
 		// User supplied a path that doesn't exist yet; honour it.
 		return &config.File{GoalSource: "prompt"}, configPath, false, nil
 	}
-	return &config.File{GoalSource: "prompt"}, filepath.Join(cwd, "sidekick.yaml"), false, nil
+	return &config.File{GoalSource: "prompt"}, filepath.Join(cwd, ".sidekick", "sidekick.yaml"), false, nil
 }
 
 // errFileMissing is a sentinel for the "no sidekick.yaml found" case used by

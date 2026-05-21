@@ -12,8 +12,8 @@ import (
 )
 
 // Scope picks which sidekick.yaml the installer writes into. ScopeProject
-// uses the currently-loaded project file (or ./sidekick.yaml in cwd if none
-// exists yet); ScopeGlobal uses config.GlobalPath().
+// uses the currently-loaded project file (or ./.sidekick/sidekick.yaml in cwd
+// if none exists yet); ScopeGlobal uses config.GlobalPath().
 type Scope int
 
 const (
@@ -139,7 +139,7 @@ func resolveTargetPath(opts InstallOptions) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(cwd, "sidekick.yaml"), nil
+		return filepath.Join(cwd, ".sidekick", "sidekick.yaml"), nil
 	default:
 		return "", fmt.Errorf("unknown scope %d", opts.Scope)
 	}
@@ -195,10 +195,10 @@ func hasPermissions(p ManifestPermSet) bool {
 	return p.Network || p.Filesystem != "" || len(p.Env) > 0 || len(p.AllowedTools) > 0
 }
 
-// materialiseIntoProject downloads the artefact into projectDir/.sidekick/ and
+// materialiseIntoProject downloads the artefact beside the project config and
 // rewrites spec to reference that local path with no source block, turning the
 // install into an editable, project-owned copy.
-func materialiseIntoProject(projectDir string, spec *config.VerifierSpec, opts InstallOptions) error {
+func materialiseIntoProject(configDir string, spec *config.VerifierSpec, opts InstallOptions) error {
 	fetchFn := opts.Fetch
 	if fetchFn == nil {
 		fetchFn = verifiedDownload
@@ -209,8 +209,8 @@ func materialiseIntoProject(projectDir string, spec *config.VerifierSpec, opts I
 	}
 
 	kind := strings.ToLower(opts.Manifest.Type)
-	rel, mode := projectArtefactPath(kind, artefactSlug(spec.Name, opts.Manifest.Slug))
-	abs := filepath.Join(projectDir, rel)
+	rel, mode := projectArtefactPath(configDir, kind, artefactSlug(spec.Name, opts.Manifest.Slug))
+	abs := filepath.Join(configDir, rel)
 	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", filepath.Dir(abs), err)
 	}
@@ -232,14 +232,20 @@ func materialiseIntoProject(projectDir string, spec *config.VerifierSpec, opts I
 	return nil
 }
 
-// projectArtefactPath returns the .sidekick-relative destination and mode for a
-// materialised artefact. Scripts get +x because the runner exec(2)s them.
-func projectArtefactPath(kind, slug string) (string, os.FileMode) {
+// projectArtefactPath returns the config-relative destination and mode for a
+// materialised artefact. New project configs live inside .sidekick and use
+// ./skills; legacy root sidekick.yaml files keep using ./.sidekick/skills.
+// Scripts get +x because the runner exec(2)s them.
+func projectArtefactPath(configDir, kind, slug string) (string, os.FileMode) {
+	prefix := ".sidekick"
+	if filepath.Base(configDir) == ".sidekick" {
+		prefix = "."
+	}
 	switch kind {
 	case "agent", "llm":
-		return filepath.Join(".sidekick", "skills", slug, "SKILL.md"), 0o644
+		return filepath.Join(prefix, "skills", slug, "SKILL.md"), 0o644
 	default:
-		return filepath.Join(".sidekick", "verifiers", slug+".sh"), 0o755
+		return filepath.Join(prefix, "verifiers", slug+".sh"), 0o755
 	}
 }
 

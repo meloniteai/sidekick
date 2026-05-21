@@ -1,6 +1,7 @@
 package sidekick
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -567,9 +568,13 @@ func TestRenderGridArrowDistanceZero(t *testing.T) {
 // doesn't collapse before the daemon has seen any traffic.
 func TestRenderHeaderFields(t *testing.T) {
 	at := time.Date(2026, 5, 9, 12, 34, 56, 0, time.UTC)
+	cfg := "/repo/.sidekick/sidekick.yaml"
 	m := Model{
 		width:  120,
 		height: 40,
+		configPathFunc: func() string {
+			return cfg
+		},
 		snapshot: ipc.StatusReply{
 			Goal:         "ship the header",
 			Version:      "dev",
@@ -594,6 +599,7 @@ func TestRenderHeaderFields(t *testing.T) {
 		"last mcp: ", "12:34:55",
 		"verifiers: ", "2/3",
 		"goal: ", "ship the header",
+		"using ", "project", " config from ", cfg,
 		"ctrl+p palette", "ctrl+w sessions", "n new", "e edit", "esc stop", "q quit",
 	} {
 		if !strings.Contains(out, want) {
@@ -615,6 +621,40 @@ func TestRenderHeaderFields(t *testing.T) {
 	}
 	if !strings.Contains(empty, "verifiers: 0") {
 		t.Errorf("empty header should report 0 verifiers; got:\n%s", empty)
+	}
+	if !strings.Contains(empty, "using no config") {
+		t.Errorf("empty header should report missing config; got:\n%s", empty)
+	}
+}
+
+func TestRenderHeaderShowsGlobalConfigAndTracksPathChanges(t *testing.T) {
+	global := filepath.Join(string(filepath.Separator), "global", "sidekick.yaml")
+	project := filepath.Join(string(filepath.Separator), "repo", ".sidekick", "sidekick.yaml")
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", global)
+
+	active := global
+	m := Model{
+		width:  120,
+		height: 40,
+		configPathFunc: func() string {
+			return active
+		},
+		snapshot: ipc.StatusReply{Goal: "show config scope"},
+	}
+
+	out := m.renderHeader(140)
+	for _, want := range []string{"using ", "global", " config from ", global} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("global config header missing %q in:\n%s", want, out)
+		}
+	}
+
+	active = project
+	out = m.renderHeader(140)
+	for _, want := range []string{"using ", "project", " config from ", project} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("project config header missing %q after path switch in:\n%s", want, out)
+		}
 	}
 }
 
