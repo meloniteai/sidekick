@@ -2,6 +2,8 @@ package sidekick
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,6 +90,130 @@ llm:
 	}
 	if string(raw) != "# New\nupdated rubric\n" {
 		t.Fatalf("skill not saved: %q", raw)
+	}
+}
+
+// TestEditWizardGlobalConfigIsReadOnly verifies that when the editor opens the
+// global sidekick.yaml, every write is blocked: metadata edits don't persist,
+// the skill phase is read-only, and the user is told why.
+func TestEditWizardGlobalConfigIsReadOnly(t *testing.T) {
+	cfg, skill := writeEditorFixture(t)
+	// Make the fixture path *be* the global config so isGlobalConfig matches.
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", cfg)
+
+	w := NewEditWizard(cfg)
+	if !w.readOnly {
+		t.Fatal("editor on global config should be read-only")
+	}
+
+	// enter → metadata (view), ctrl+s must NOT save and should advance to skill.
+	next, _, done := w.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	w = next
+	if done || w.phase != editMetadata {
+		t.Fatalf("enter should open metadata view, phase=%v done=%v", w.phase, done)
+	}
+	w.text = newTextBuffer(`name: Architect
+type: agent
+direction: SE
+timeout: 1s
+llm:
+    agent: codex
+    skill: ./skills/architect/SKILL.md`)
+	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if done || w.phase != editSkill {
+		t.Fatalf("ctrl+s on read-only metadata should advance to skill without saving, phase=%v done=%v", w.phase, done)
+	}
+	if !strings.Contains(w.message, "read-only") {
+		t.Fatalf("expected read-only message, got %q", w.message)
+	}
+
+	f, _, err := config.Load(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Verifiers[0].Direction != "N" || f.Verifiers[0].Timeout != "90s" {
+		t.Fatalf("read-only metadata must not persist: %+v", f.Verifiers[0])
+	}
+
+	// Skill phase: editable=false, ctrl+s refuses and leaves the file alone.
+	if w.skillEditable {
+		t.Fatal("skill in global config should not be editable")
+	}
+	w.text = newTextBuffer("# Hijacked")
+	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if done {
+		t.Fatal("ctrl+s on read-only skill should not finish")
+	}
+	raw, err := os.ReadFile(skill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "# Old\n" {
+		t.Fatalf("read-only skill must not be written, got %q", raw)
+	}
+}
+
+// TestEditWizardRemoteSkillIsReadOnly covers a project-level verifier still
+// pinned to the shared cache (no local skill path). The editor should resolve
+// the cached SKILL.md for viewing — fixing the old "no llm skill" bug — but
+// refuse to write it.
+func TestEditWizardRemoteSkillIsReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	cacheDir := t.TempDir()
+	t.Setenv("SIDEKICK_CACHE_DIR", cacheDir)
+	// Point the global config elsewhere so this project cfg is NOT read-only.
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", filepath.Join(dir, "global-sidekick.yaml"))
+
+	body := []byte("# Remote rubric\nscore it\n")
+	sum := sha256.Sum256(body)
+	sha := hex.EncodeToString(sum[:])
+	if err := os.WriteFile(filepath.Join(cacheDir, sha+".md"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := filepath.Join(dir, "sidekick.yaml")
+	if err := os.WriteFile(cfg, []byte(`verifiers:
+  - name: Remote
+    type: agent
+    direction: N
+    timeout: 90s
+    llm:
+      agent: claude
+    source:
+      url: https://example.com/SKILL.md
+      sha256: `+sha+`
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := NewEditWizard(cfg)
+	if w.readOnly {
+		t.Fatal("project config should not be globally read-only")
+	}
+	// enter → metadata, ctrl+n → skill (skip avoids a metadata Resolve).
+	next, _, _ := w.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	w = next
+	next, _, done := w.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	w = next
+	if done || w.phase != editSkill {
+		t.Fatalf("ctrl+n should advance to skill, phase=%v done=%v", w.phase, done)
+	}
+	if w.skillFile == "" || !strings.HasPrefix(w.skillFile, cacheDir) {
+		t.Fatalf("remote skill should resolve to the cache, got %q", w.skillFile)
+	}
+	if w.skillEditable {
+		t.Fatal("remote (cache-pinned) skill must not be editable")
+	}
+	if !strings.Contains(w.text.String(), "Remote rubric") {
+		t.Fatalf("cached skill content should be loaded for viewing, got %q", w.text.String())
+	}
+	// ctrl+s refuses with the remote note.
+	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if done || !strings.Contains(w.message, "remote") {
+		t.Fatalf("ctrl+s on remote skill should refuse with a remote note, done=%v msg=%q", done, w.message)
 	}
 }
 

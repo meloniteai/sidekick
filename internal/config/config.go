@@ -167,7 +167,7 @@ func Save(path string, f *File) error {
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
-	if err := writeFileAtomic(path, raw, 0o600); err != nil {
+	if err := WriteFileAtomic(path, raw, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
@@ -188,7 +188,9 @@ func SetVerifierDisabled(path, name string, disabled bool) error {
 	return fmt.Errorf("verifier %q not found in %s", name, path)
 }
 
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+// WriteFileAtomic writes data to path via a temp file + rename so readers never
+// observe a torn write. Shared by config saves and the verifier installer/editor.
+func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {

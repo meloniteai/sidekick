@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/meloniteai/sidekick/internal/config"
+	"github.com/meloniteai/sidekick/internal/fetch"
 )
 
 // Scope picks which sidekick.yaml the installer writes into. ScopeProject
@@ -29,6 +30,14 @@ type InstallOptions struct {
 	Manifest    Manifest
 	ProjectPath string
 	Direction   string
+
+	// Fetch retrieves and sha256-verifies the artefact bytes for a
+	// ScopeProject install, which materialises the skill/script into the
+	// project's .sidekick/ dir so it can be edited in-session (ScopeGlobal
+	// installs never call this — they stay pinned to the shared cache).
+	// Defaults to verifiedDownload when nil; tests inject a stub to avoid
+	// real network I/O.
+	Fetch func(rawURL, sha256 string) ([]byte, error)
 }
 
 // InstallResult describes the outcome of an Install. FinalName differs
@@ -39,14 +48,12 @@ type InstallResult struct {
 	FinalName string
 }
 
-// Install appends a source-pinned VerifierSpec for the manifest to the
-// sidekick.yaml selected by opts.Scope. The sha256 in Manifest.SHA256 is the
-// only integrity check; subsequent `sidekick start` invocations re-verify
-// fetched bytes against it (see fetch.Resolve).
-//
-// On name collision the new entry is renamed with a numeric suffix
-// rather than overwriting — installing the same verifier twice is a
-// no-op-ish bump, not a destructive operation.
+// Install adds a VerifierSpec for the manifest to the sidekick.yaml chosen by
+// opts.Scope. ScopeGlobal writes a source-pinned spec and leaves the artefact
+// in the shared cache (immutable, shared across repos). ScopeProject downloads
+// the artefact into the project's .sidekick/ dir and points the spec at that
+// local path with no source block, so it can be edited in place. Name
+// collisions get a numeric suffix rather than overwriting.
 func Install(opts InstallOptions) (InstallResult, error) {
 	if opts.Manifest.SHA256 == "" {
 		return InstallResult{}, errors.New("manifest is missing sha256")
@@ -102,6 +109,14 @@ func Install(opts InstallOptions) (InstallResult, error) {
 			Filesystem:   opts.Manifest.Permissions.Filesystem,
 			Env:          append([]string(nil), opts.Manifest.Permissions.Env...),
 			AllowedTools: append([]string(nil), opts.Manifest.Permissions.AllowedTools...),
+		}
+	}
+
+	// Project installs fork the artefact into the repo so it can be edited;
+	// global installs stay pinned to the shared cache (see Install doc).
+	if opts.Scope == ScopeProject {
+		if err := materialiseIntoProject(filepath.Dir(path), &spec, opts); err != nil {
+			return InstallResult{}, err
 		}
 	}
 
@@ -178,4 +193,96 @@ func nameExists(f *config.File, name string) bool {
 
 func hasPermissions(p ManifestPermSet) bool {
 	return p.Network || p.Filesystem != "" || len(p.Env) > 0 || len(p.AllowedTools) > 0
+}
+
+// materialiseIntoProject downloads the artefact into projectDir/.sidekick/ and
+// rewrites spec to reference that local path with no source block, turning the
+// install into an editable, project-owned copy.
+func materialiseIntoProject(projectDir string, spec *config.VerifierSpec, opts InstallOptions) error {
+	fetchFn := opts.Fetch
+	if fetchFn == nil {
+		fetchFn = verifiedDownload
+	}
+	body, err := fetchFn(opts.Manifest.RawURL, opts.Manifest.SHA256)
+	if err != nil {
+		return fmt.Errorf("fetch %s: %w", opts.Manifest.RawURL, err)
+	}
+
+	kind := strings.ToLower(opts.Manifest.Type)
+	rel, mode := projectArtefactPath(kind, artefactSlug(spec.Name, opts.Manifest.Slug))
+	abs := filepath.Join(projectDir, rel)
+	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(abs), err)
+	}
+	if err := config.WriteFileAtomic(abs, body, mode); err != nil {
+		return fmt.Errorf("write %s: %w", abs, err)
+	}
+
+	// "./"-prefixed so config.ResolveLocalPath anchors it to the config dir.
+	local := "./" + filepath.ToSlash(rel)
+	switch kind {
+	case "agent", "llm":
+		spec.LLM.Skill = local
+	case "binary":
+		spec.Binary.Command = []string{local}
+	default: // command
+		spec.Command = []string{local}
+	}
+	spec.Source = nil
+	return nil
+}
+
+// projectArtefactPath returns the .sidekick-relative destination and mode for a
+// materialised artefact. Scripts get +x because the runner exec(2)s them.
+func projectArtefactPath(kind, slug string) (string, os.FileMode) {
+	switch kind {
+	case "agent", "llm":
+		return filepath.Join(".sidekick", "skills", slug, "SKILL.md"), 0o644
+	default:
+		return filepath.Join(".sidekick", "verifiers", slug+".sh"), 0o755
+	}
+}
+
+// artefactSlug derives the on-disk slug from the de-duplicated verifier name so
+// renamed installs ("foo"/"foo-2") don't clobber each other's files.
+func artefactSlug(finalName, catalogSlug string) string {
+	if s := slugify(finalName); s != "" {
+		return s
+	}
+	if s := slugify(catalogSlug); s != "" {
+		return s
+	}
+	return "verifier"
+}
+
+func slugify(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	var b strings.Builder
+	dashed := false
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			dashed = false
+			continue
+		}
+		if b.Len() > 0 && !dashed {
+			b.WriteByte('-')
+			dashed = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// verifiedDownload is the default artefact fetcher: an HTTPS GET whose bytes
+// must hash to the manifest pin. It skips the shared cache since the bytes are
+// copied into the project instead.
+func verifiedDownload(rawURL, sha string) ([]byte, error) {
+	body, err := fetch.Download(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if got := fetch.Hash(body); !strings.EqualFold(got, sha) {
+		return nil, fmt.Errorf("sha256 mismatch: got %s, expected %s", got, sha)
+	}
+	return body, nil
 }

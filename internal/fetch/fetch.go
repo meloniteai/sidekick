@@ -93,6 +93,25 @@ func Resolve(p Pin) (string, error) {
 	return cached, nil
 }
 
+// CachedPath returns the local path p would resolve to and whether that file
+// already exists in the cache. Unlike Resolve it never downloads: callers that
+// only want to display an already-fetched artefact (e.g. the TUI editor showing
+// a remote verifier's skill read-only) use this so opening the editor never
+// blocks on network I/O. A false ok means the artefact has not been fetched
+// yet — the caller should fall back to a "not fetched" affordance rather than
+// triggering a download.
+func CachedPath(p Pin) (string, bool) {
+	dir, err := CacheDir()
+	if err != nil {
+		return "", false
+	}
+	path := cachePath(dir, p)
+	if _, err := os.Stat(path); err != nil {
+		return "", false
+	}
+	return path, true
+}
+
 // Hash hex-encodes sha256(body); used by `sidekick verifier add` after fetch.
 func Hash(body []byte) string {
 	return hashHex(body)
