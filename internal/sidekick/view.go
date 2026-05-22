@@ -94,6 +94,7 @@ var (
 	styleErrorBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
 	styleUnknownBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor).Bold(true)
 	styleStaleBadge   = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(brandBgColor)
+	styleNoSession    = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(brandBgColor)
 	stylePendingBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
 	styleRemoteBadge  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(brandBgColor)
 	styleCostBadge    = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
