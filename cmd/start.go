@@ -160,6 +160,7 @@ func bindStart(cmd *cobra.Command) {
 	var headless bool
 	var configPath string
 	var startGoal string
+	var telemetryMode string
 	cmd.Args = cobra.NoArgs
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		sock, err := ipc.SocketPath()
@@ -203,13 +204,29 @@ func bindStart(cmd *cobra.Command) {
 		}
 		fmt.Fprintf(os.Stderr, "[sidekick] verifiers: %s\n", source)
 
+		backendURL := resolveBackendURL(loadedConfigPath, worktree)
+		useBackend := backendURL != "" // auto: backend when one is configured
+		switch strings.ToLower(strings.TrimSpace(telemetryMode)) {
+		case "", telemetryModeAuto:
+		case telemetryModeLocal:
+			useBackend = false
+		case telemetryModeBackend:
+			useBackend = true
+		default:
+			return fmt.Errorf("unknown --telemetry-mode %q (want auto, local, or backend)", telemetryMode)
+		}
+
 		verifiers := available
 		if !headless && len(available) > 0 {
-			selected, selectedConfigPath, err := runLanding(available, version, sock, landingChoices)
+			selected, selectedConfigPath, selectedBackendURL, selectedBackend, err := runLanding(available, version, sock, landingChoices, backendURL, useBackend)
 			if err != nil {
 				return err
 			}
 			verifiers = selected
+			useBackend = selectedBackend
+			// The landing may have switched config scope to one with a different
+			// backend.url, so adopt the sink it resolved for the chosen scope.
+			backendURL = selectedBackendURL
 			if selectedConfigPath != "" {
 				loadedConfigPath = selectedConfigPath
 				if quiet, ok := quietByPath[selectedConfigPath]; ok {
@@ -229,7 +246,11 @@ func bindStart(cmd *cobra.Command) {
 		}
 		fmt.Fprintf(os.Stderr, "[sidekick] enabled: %s\n", verifierNames(enabledVerifiers(verifiers)))
 
-		emitter := openTelemetry(worktree)
+		sinkMode := telemetryModeLocal
+		if useBackend {
+			sinkMode = telemetryModeBackend
+		}
+		emitter := openTelemetry(worktree, sinkMode, backendURL)
 		if emitter != nil {
 			defer emitter.Close()
 		}
@@ -393,6 +414,7 @@ func bindStart(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&headless, "headless", false, "run only the daemon (no TUI); useful for tests")
 	cmd.Flags().StringVar(&configPath, "config", "", "path to sidekick.yaml (default: nearest sidekick.yaml above cwd)")
 	cmd.Flags().StringVar(&startGoal, "goal", "", "pin the session goal up-front; the agent's sidekick_set_goal calls become no-ops while this is set")
+	cmd.Flags().StringVar(&telemetryMode, "telemetry-mode", telemetryModeAuto, "telemetry sink: auto (backend when configured, else local), local, or backend")
 }
 
 // acquireDaemonSocket calls daemon.Listen and, if the socket is held by
@@ -444,28 +466,29 @@ func acquireDaemonSocket(sock string, registry *daemon.Registry, handler daemon.
 // verifiers selected" message they used to get from the huh picker. The
 // landing screen itself lives in internal/sidekick so the visual styling stays
 // adjacent to the command palette it mirrors.
-func runLanding(available []verifier.Verifier, version, socketPath string, choices []sidekicktui.LandingConfigChoice) ([]verifier.Verifier, string, error) {
+func runLanding(available []verifier.Verifier, version, socketPath string, choices []sidekicktui.LandingConfigChoice, defaultBackendURL string, backendDefault bool) ([]verifier.Verifier, string, string, bool, error) {
 	cwd, _ := os.Getwd()
 	model := sidekicktui.NewLanding(available, version, socketPath, cwd)
 	if len(choices) > 1 {
 		model = model.WithConfigChoices(choices)
 	}
+	model = model.WithTelemetry(defaultBackendURL, backendDefault)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	final, err := p.Run()
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", false, err
 	}
 	landing, ok := final.(sidekicktui.Landing)
 	if !ok {
-		return nil, "", fmt.Errorf("landing screen returned unexpected model %T", final)
+		return nil, "", "", false, fmt.Errorf("landing screen returned unexpected model %T", final)
 	}
 	if landing.Aborted() || !landing.Confirmed() {
-		return nil, "", fmt.Errorf("aborted: no verifiers selected")
+		return nil, "", "", false, fmt.Errorf("aborted: no verifiers selected")
 	}
 	if landing.EnabledCount() < sidekicktui.MinSelected {
-		return nil, "", fmt.Errorf("landing returned %d enabled verifiers, need at least %d", landing.EnabledCount(), sidekicktui.MinSelected)
+		return nil, "", "", false, fmt.Errorf("landing returned %d enabled verifiers, need at least %d", landing.EnabledCount(), sidekicktui.MinSelected)
 	}
-	return landing.Verifiers(), landing.ConfigPath(), nil
+	return landing.Verifiers(), landing.ConfigPath(), landing.BackendURL(), landing.TelemetryBackend(), nil
 }
 
 func configChoicesForLanding(configPath, worktree string) ([]sidekicktui.LandingConfigChoice, error) {
@@ -492,9 +515,10 @@ func configChoicesForLanding(configPath, worktree string) ([]sidekicktui.Landing
 			return nil, err
 		}
 		choices = append(choices, sidekicktui.LandingConfigChoice{
-			Label:     item.label,
-			Path:      item.path,
-			Verifiers: vs,
+			Label:      item.label,
+			Path:       item.path,
+			Verifiers:  vs,
+			BackendURL: resolveBackendURL(item.path, worktree),
 		})
 	}
 	return choices, nil
@@ -552,14 +576,31 @@ func verifierNames(vs []verifier.Verifier) string {
 	return strings.Join(names, ", ")
 }
 
-// openTelemetry opens the per-repo telemetry store, or returns a nil Emitter
-// (which makes every telemetry call a no-op) when collection is disabled or the
-// store can't be opened. Telemetry must never block the daemon from starting,
-// so an open failure is logged and swallowed. Returns the interface type so the
-// disabled case is a genuine nil interface, not a typed nil.
-func openTelemetry(worktree string) telemetry.Emitter {
+// Telemetry sink modes selectable via --telemetry-mode, the splash screen, and
+// the backend.url config default. "auto" resolves to backend when a URL is
+// configured, else local.
+const (
+	telemetryModeAuto    = "auto"
+	telemetryModeLocal   = "local"
+	telemetryModeBackend = "backend"
+)
+
+// openTelemetry opens the telemetry sink for the resolved mode, or returns a nil
+// Emitter (which makes every telemetry call a no-op) when collection is disabled
+// or the sink can't be opened. Telemetry must never block the daemon from
+// starting, so a failure is logged and swallowed; a backend that can't be
+// reached falls back to the local store rather than losing the session. Returns
+// the interface type so the disabled case is a genuine nil interface, not a
+// typed nil.
+func openTelemetry(worktree, mode, backendURL string) telemetry.Emitter {
 	if !telemetryEnabled() {
 		return nil
+	}
+	if mode == telemetryModeBackend {
+		if e := openRemoteTelemetry(worktree, backendURL); e != nil {
+			return e
+		}
+		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry unavailable; falling back to local store\n")
 	}
 	path, err := ipc.TelemetryDBPath(worktree)
 	if err != nil {
@@ -571,8 +612,40 @@ func openTelemetry(worktree string) telemetry.Emitter {
 		fmt.Fprintf(os.Stderr, "[sidekick] telemetry disabled: %v\n", err)
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "[sidekick] telemetry: %s\n", path)
+	fmt.Fprintf(os.Stderr, "[sidekick] telemetry sink: LOCAL %s\n", path)
 	return store
+}
+
+// openRemoteTelemetry resolves the repo's backend project and returns an emitter
+// bound to it, or nil (logged) when no URL is configured or the backend can't be
+// reached so the caller can fall back to local. Returns the concrete type so the
+// caller's nil check is unambiguous.
+func openRemoteTelemetry(worktree, backendURL string) *telemetry.RemoteEmitter {
+	if strings.TrimSpace(backendURL) == "" {
+		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry: no url configured\n")
+		return nil
+	}
+	e, err := telemetry.OpenRemote(backendURL, ipc.RepoFingerprint(worktree), filepath.Base(worktree), worktree)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry: %v\n", err)
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "[sidekick] telemetry sink: BACKEND %s (healthcheck ok, project %s)\n", backendURL, e.ProjectID())
+	return e
+}
+
+// resolveBackendURL picks the remote telemetry URL from the environment
+// (SIDEKICK_BACKEND_URL, for headless deployments) or the loaded sidekick.yaml's
+// backend.url. Empty means no backend is configured.
+func resolveBackendURL(configPath, startDir string) string {
+	if v := strings.TrimSpace(os.Getenv("SIDEKICK_BACKEND_URL")); v != "" {
+		return v
+	}
+	f, _, err := config.LoadFrom(configPath, startDir)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(f.Backend.URL)
 }
 
 // telemetryEnabled reports whether collection is on. Default is on (the build

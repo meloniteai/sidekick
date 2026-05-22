@@ -1,0 +1,373 @@
+package telemetry
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+)
+
+// RemoteEmitter is an [Emitter] that posts each event to the Sidekick HTTP API
+// (the "backend" sink) instead of the local SQLite [Store], one POST per call.
+//
+// Safe for concurrent use. Per the package contract a producer never fails on
+// telemetry: a failed POST is logged, not returned. The edit write is async (a
+// background worker keeps the daemon's file-write hook off the network); the
+// rest are synchronous, so the session row lands before the children whose
+// foreign keys the API enforces.
+type RemoteEmitter struct {
+	client    *http.Client
+	base      string // "<api>/projects/<projectID>"
+	projectID string
+
+	edits   chan EditRecord
+	closing chan struct{}
+	once    sync.Once
+	wg      sync.WaitGroup
+
+	logf func(format string, args ...any)
+}
+
+// editQueueCap bounds the in-flight edit buffer. Sized generously: edits are
+// small and the worker drains them fast against a local backend. If a slow or
+// unreachable backend ever fills it, RecordEdit drops with a log rather than
+// blocking the daemon's write path.
+const editQueueCap = 256
+
+// OpenRemote resolves (or creates) the project keyed by repoFingerprint on the
+// backend at apiBaseURL (e.g. "http://localhost:8000/api"), then returns an
+// emitter bound to it. name and rootPath seed a freshly created project; they
+// are ignored when a project with the same fingerprint already exists. An
+// unreachable backend surfaces as an error so the caller can fall back to local.
+func OpenRemote(apiBaseURL, repoFingerprint, name, rootPath string) (*RemoteEmitter, error) {
+	base := strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
+	if base == "" {
+		return nil, fmt.Errorf("telemetry: empty backend url")
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	if err := pingHealth(client, base); err != nil {
+		return nil, fmt.Errorf("telemetry: backend healthcheck %s: %w", base+"/health", err)
+	}
+	projectID, err := resolveProject(client, base, repoFingerprint, name, rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("telemetry: resolve project: %w", err)
+	}
+	e := &RemoteEmitter{
+		client:    client,
+		base:      fmt.Sprintf("%s/projects/%s", base, projectID),
+		projectID: projectID,
+		edits:     make(chan EditRecord, editQueueCap),
+		closing:   make(chan struct{}),
+		logf: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "[sidekick] "+format+"\n", args...)
+		},
+	}
+	e.wg.Add(1)
+	go e.editWorker()
+	return e, nil
+}
+
+// ProjectID returns the resolved backend project id this emitter writes to.
+func (e *RemoteEmitter) ProjectID() string { return e.projectID }
+
+// pingHealth checks the backend is a reachable, live sidekick-api before we
+// commit to it, so a wrong/down URL fails fast at start and the caller falls
+// back to local instead of silently dropping every event into the void.
+func pingHealth(client *http.Client, base string) error {
+	return doJSON(client, http.MethodGet, base+"/health", nil, nil)
+}
+
+// resolveProject finds the project whose repo_fingerprint matches, else creates
+// one. The API has no fingerprint lookup, so we list and match client-side; a
+// second daemon racing the create loses the unique constraint, so we re-list on
+// a failed create before giving up.
+func resolveProject(client *http.Client, base, fingerprint, name, rootPath string) (string, error) {
+	if id, err := findProject(client, base, fingerprint); err != nil {
+		return "", err
+	} else if id != "" {
+		return id, nil
+	}
+	body := map[string]any{"name": name, "repo_fingerprint": fingerprint, "root_path": rootPath}
+	var created struct {
+		ProjectID string `json:"project_id"`
+	}
+	if err := doJSON(client, http.MethodPost, base+"/projects", body, &created); err != nil {
+		if id, lerr := findProject(client, base, fingerprint); lerr == nil && id != "" {
+			return id, nil
+		}
+		return "", err
+	}
+	return created.ProjectID, nil
+}
+
+func findProject(client *http.Client, base, fingerprint string) (string, error) {
+	if fingerprint == "" {
+		return "", nil
+	}
+	var projects []struct {
+		ProjectID       string `json:"project_id"`
+		RepoFingerprint string `json:"repo_fingerprint"`
+	}
+	if err := doJSON(client, http.MethodGet, base+"/projects", nil, &projects); err != nil {
+		return "", err
+	}
+	for _, p := range projects {
+		if p.RepoFingerprint == fingerprint {
+			return p.ProjectID, nil
+		}
+	}
+	return "", nil
+}
+
+func (e *RemoteEmitter) RecordSession(r SessionRecord) error {
+	return e.post("/sessions", sessionBody{
+		SessionID: r.SessionID,
+		GoalText:  r.GoalText,
+		GoalClass: r.GoalClass,
+		BaseRef:   r.BaseRef,
+		Worktree:  r.Worktree,
+		AgentKind: r.AgentKind,
+		StartedAt: r.StartedAt.UTC(),
+	}, nil)
+}
+
+// RecordEdit hands the row to the background worker and returns immediately so
+// the daemon's write hook never blocks on the network. A full queue drops the
+// edit (logged) rather than stalling the producer.
+func (e *RemoteEmitter) RecordEdit(r EditRecord) error {
+	select {
+	case <-e.closing:
+		return nil
+	default:
+	}
+	select {
+	case e.edits <- r:
+	default:
+		e.logf("telemetry: edit queue full, dropping %s", r.FilePath)
+	}
+	return nil
+}
+
+func (e *RemoteEmitter) RecordBatch(r BatchRecord) error {
+	var fileSet string
+	if len(r.FileSet) > 0 {
+		if b, err := json.Marshal(r.FileSet); err == nil {
+			fileSet = string(b)
+		}
+	}
+	return e.post("/batches", batchBody{
+		BatchID:   r.BatchID,
+		SessionID: r.SessionID,
+		TS:        r.TS.UTC(),
+		FileSet:   fileSet,
+		FileCount: r.FileCount,
+		BaseRef:   r.BaseRef,
+	}, nil)
+}
+
+// RecordVerifierRun posts the run and returns the server-assigned id so the
+// caller can parent the run's findings, mirroring the local store's
+// LastInsertId. A failed post returns id 0 so the caller skips its findings.
+func (e *RemoteEmitter) RecordVerifierRun(r VerifierRunRecord) (int64, error) {
+	body := verifierRunBody{
+		BatchID:         r.BatchID,
+		SessionID:       r.SessionID,
+		VerifierName:    r.VerifierName,
+		VerifierVersion: r.VerifierVersion,
+		Distance:        r.Distance,
+		Reason:          r.Reason,
+		Status:          r.Status,
+		DurationMS:      r.DurationMS,
+		InputTokens:     r.InputTokens,
+		OutputTokens:    r.OutputTokens,
+		CacheReads:      r.CacheReads,
+		CacheWrites:     r.CacheWrites,
+		CostUSD:         r.CostUSD,
+		TS:              r.TS.UTC(),
+	}
+	var resp struct {
+		ID int64 `json:"id"`
+	}
+	if err := e.post("/verifier-runs", body, &resp); err != nil {
+		return 0, err
+	}
+	return resp.ID, nil
+}
+
+func (e *RemoteEmitter) RecordFindings(runID int64, findings []FindingRecord) error {
+	if runID == 0 || len(findings) == 0 {
+		return nil
+	}
+	body := make([]findingBody, 0, len(findings))
+	for _, f := range findings {
+		body = append(body, findingBody{
+			SessionID:    f.SessionID,
+			BatchID:      f.BatchID,
+			VerifierName: f.VerifierName,
+			FilePath:     f.FilePath,
+			Symbol:       f.Symbol,
+			Line:         f.Line,
+			Distance:     f.Distance,
+			Reason:       f.Reason,
+			TS:           f.TS.UTC(),
+		})
+	}
+	return e.post(fmt.Sprintf("/verifier-runs/%d/findings", runID), body, nil)
+}
+
+func (e *RemoteEmitter) RecordHeartbeat(r HeartbeatRecord) error {
+	return e.post("/sessions/"+r.SessionID+"/heartbeats", heartbeatBody{
+		TS:              r.TS.UTC(),
+		OverallDistance: r.OverallDistance,
+		BatchCount:      r.BatchCount,
+		EditCount:       r.EditCount,
+	}, nil)
+}
+
+// Close stops the edit worker after it drains whatever is buffered, so a final
+// burst of edits still reaches the backend on a clean shutdown.
+func (e *RemoteEmitter) Close() error {
+	e.once.Do(func() { close(e.closing) })
+	e.wg.Wait()
+	return nil
+}
+
+// editWorker is the single consumer of the edit queue. It posts each edit in
+// arrival order; on close it drains the buffer before exiting. The edits
+// channel is never closed (producers may still race a Close), so sends never
+// panic.
+func (e *RemoteEmitter) editWorker() {
+	defer e.wg.Done()
+	post := func(r EditRecord) {
+		if err := e.post("/sessions/"+r.SessionID+"/edits", editBody{
+			FilePath: r.FilePath,
+			Seq:      r.Seq,
+			TS:       r.TS.UTC(),
+		}, nil); err != nil {
+			e.logf("telemetry: record edit (remote): %v", err)
+		}
+	}
+	for {
+		select {
+		case r := <-e.edits:
+			post(r)
+		case <-e.closing:
+			for {
+				select {
+				case r := <-e.edits:
+					post(r)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+// post sends body as JSON to base+path. A nil out skips response decoding; a
+// non-2xx status is an error carrying a snippet of the body for diagnosis.
+func (e *RemoteEmitter) post(path string, body, out any) error {
+	return doJSON(e.client, http.MethodPost, e.base+path, body, out)
+}
+
+func doJSON(client *http.Client, method, url string, body, out any) error {
+	var reader io.Reader
+	if body != nil {
+		buf, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(buf)
+	}
+	req, err := http.NewRequest(method, url, reader)
+	if err != nil {
+		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("%s %s: %s: %s", method, url, resp.Status, strings.TrimSpace(string(snippet)))
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}
+
+// Request bodies mirror the API's *Create schemas: the server-assigned id and
+// any parent id carried in the URL path are omitted. omitempty on a field means
+// the local store writes it as SQL NULL when empty, so the backend stays
+// byte-compatible with a `sidekick export` of the same session.
+
+type sessionBody struct {
+	SessionID string    `json:"session_id"`
+	GoalText  string    `json:"goal_text"`
+	GoalClass string    `json:"goal_class,omitempty"`
+	BaseRef   string    `json:"base_ref,omitempty"`
+	Worktree  string    `json:"worktree,omitempty"`
+	AgentKind string    `json:"agent_kind,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+}
+
+type editBody struct {
+	FilePath string    `json:"file_path"`
+	Seq      int       `json:"seq"`
+	TS       time.Time `json:"ts"`
+}
+
+type batchBody struct {
+	BatchID   string    `json:"batch_id"`
+	SessionID string    `json:"session_id"`
+	TS        time.Time `json:"ts"`
+	FileSet   string    `json:"file_set,omitempty"`
+	FileCount int       `json:"file_count"`
+	BaseRef   string    `json:"base_ref,omitempty"`
+}
+
+type verifierRunBody struct {
+	BatchID         string    `json:"batch_id,omitempty"`
+	SessionID       string    `json:"session_id"`
+	VerifierName    string    `json:"verifier_name"`
+	VerifierVersion string    `json:"verifier_version,omitempty"`
+	Distance        float64   `json:"distance"`
+	Reason          string    `json:"reason"`
+	Status          string    `json:"status,omitempty"`
+	DurationMS      int64     `json:"duration_ms"`
+	InputTokens     int       `json:"input_tokens"`
+	OutputTokens    int       `json:"output_tokens"`
+	CacheReads      int       `json:"cache_reads"`
+	CacheWrites     int       `json:"cache_writes"`
+	CostUSD         float64   `json:"cost_usd"`
+	TS              time.Time `json:"ts"`
+}
+
+type findingBody struct {
+	SessionID    string    `json:"session_id"`
+	BatchID      string    `json:"batch_id,omitempty"`
+	VerifierName string    `json:"verifier_name"`
+	FilePath     string    `json:"file_path,omitempty"`
+	Symbol       string    `json:"symbol,omitempty"`
+	Line         int       `json:"line,omitempty"`
+	Distance     float64   `json:"distance"`
+	Reason       string    `json:"reason,omitempty"`
+	TS           time.Time `json:"ts"`
+}
+
+type heartbeatBody struct {
+	TS              time.Time `json:"ts"`
+	OverallDistance float64   `json:"overall_distance"`
+	BatchCount      int       `json:"batch_count"`
+	EditCount       int       `json:"edit_count"`
+}

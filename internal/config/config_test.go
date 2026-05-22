@@ -679,3 +679,37 @@ func TestResolveSessionIdleTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadBackendURL(t *testing.T) {
+	p := writeTemp(t, `
+backend:
+  url: http://localhost:8000/api
+verifiers:
+  - name: Architect
+    direction: N
+    command: ["echo", "hi"]
+`)
+	f, _, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Backend.URL != "http://localhost:8000/api" {
+		t.Fatalf("Backend.URL = %q, want the configured api url", f.Backend.URL)
+	}
+}
+
+func TestLoadBackendURLAbsentByDefault(t *testing.T) {
+	p := writeTemp(t, `
+verifiers:
+  - name: Architect
+    direction: N
+    command: ["echo", "hi"]
+`)
+	f, _, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Backend.URL != "" {
+		t.Fatalf("Backend.URL = %q, want empty when no backend block", f.Backend.URL)
+	}
+}

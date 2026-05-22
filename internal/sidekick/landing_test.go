@@ -226,3 +226,93 @@ func TestLandingConfigPhaseUsesArrowsNotTab(t *testing.T) {
 		t.Fatalf("config phase missing local key labels:\n%s", arrowed.View())
 	}
 }
+
+// TestLandingTelemetryToggle: with a backend URL configured, "t" flips the sink
+// between local and backend, the sink line + key hint render, and the choice is
+// surfaced to the caller. Without a URL the line and toggle stay hidden.
+func TestLandingTelemetryToggle(t *testing.T) {
+	l := NewLanding(landingFixture(), "0.1", "/sock", "/cwd").
+		WithTelemetry("http://localhost:8000/api", true)
+	l.width, l.height = 120, 40
+
+	out := l.View()
+	for _, want := range []string{"Sink", "Backend", "http://localhost:8000/api", "t sink"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("landing view missing %q in:\n%s", want, out)
+		}
+	}
+	if !l.TelemetryBackend() {
+		t.Fatalf("default sink should be backend when seeded true")
+	}
+
+	next, _ := l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	toggled := next.(Landing)
+	if toggled.TelemetryBackend() {
+		t.Fatalf("t should flip the sink to local")
+	}
+	if !strings.Contains(toggled.View(), "Local") {
+		t.Fatalf("local sink should render after toggle:\n%s", toggled.View())
+	}
+}
+
+// TestLandingSwitchingScopeUpdatesSink: the bug where the sink was decided
+// before the splash let the user switch config scope. Project has no backend,
+// global does; switching to global must flip the sink to Backend and surface
+// the global URL to the caller.
+func TestLandingSwitchingScopeUpdatesSink(t *testing.T) {
+	project := []verifier.Verifier{{Name: "Project", Direction: "N"}}
+	global := []verifier.Verifier{{Name: "Global", Direction: "E"}}
+	l := NewLanding(project, "0.1", "/sock", "/cwd").
+		WithConfigChoices([]LandingConfigChoice{
+			{Label: "project", Path: "/repo/.sidekick/sidekick.yaml", Verifiers: project},
+			{Label: "global", Path: "/home/u/.sidekick/sidekick.yaml", Verifiers: global, BackendURL: "http://localhost:8000/api"},
+		}).
+		WithTelemetry("", false) // initial scope (project) has no backend
+	l.width, l.height = 120, 40
+
+	if l.TelemetryBackend() || l.BackendURL() != "" {
+		t.Fatalf("project scope should start local; backend=%v url=%q", l.TelemetryBackend(), l.BackendURL())
+	}
+	if !strings.Contains(l.View(), "Local") {
+		t.Fatalf("project scope should render Local sink:\n%s", l.View())
+	}
+
+	// Switch to global (which has a backend) via the config phase.
+	next, _ := l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	switched := next.(Landing)
+	if !switched.TelemetryBackend() || switched.BackendURL() != "http://localhost:8000/api" {
+		t.Fatalf("global scope should flip sink to backend; backend=%v url=%q", switched.TelemetryBackend(), switched.BackendURL())
+	}
+	if !strings.Contains(switched.View(), "Backend") || !strings.Contains(switched.View(), "http://localhost:8000/api") {
+		t.Fatalf("global scope should render Backend sink:\n%s", switched.View())
+	}
+
+	// Switching back to project returns to local.
+	back, _ := switched.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if back.(Landing).TelemetryBackend() {
+		t.Fatalf("switching back to project should return to local")
+	}
+}
+
+func TestLandingTelemetryShowsLocalWithoutURL(t *testing.T) {
+	l := NewLanding(landingFixture(), "0.1", "/sock", "/cwd").WithTelemetry("", true)
+	l.width, l.height = 120, 40
+
+	if l.TelemetryBackend() {
+		t.Fatalf("no URL means backend sink is unavailable")
+	}
+	out := l.View()
+	// The sink is always indicated; with no backend it reads Local and the
+	// toggle hint stays hidden.
+	if !strings.Contains(out, "Sink") || !strings.Contains(out, "Local") {
+		t.Fatalf("sink line should show Local without a backend URL:\n%s", out)
+	}
+	if strings.Contains(out, "t sink") {
+		t.Fatalf("toggle hint should be hidden without a backend URL:\n%s", out)
+	}
+	// "t" must be inert when no backend is configured.
+	next, _ := l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if next.(Landing).TelemetryBackend() {
+		t.Fatalf("t should be a no-op without a backend URL")
+	}
+}

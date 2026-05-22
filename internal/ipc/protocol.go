@@ -81,6 +81,14 @@ func TelemetryDBPath(cwd string) (string, error) {
 	return filepath.Join(home, ".sidekick", "telemetry", fp+".db"), nil
 }
 
+// RepoFingerprint returns the stable short hash identifying the git repo
+// resolved from cwd, the same value the per-repo socket and telemetry DB paths
+// are keyed on. Used to resolve a repo to its backend project so every worktree
+// of a repo maps to one project. Returns "" when cwd is not in a git repo.
+func RepoFingerprint(cwd string) string {
+	return repoFingerprintFor(cwd)
+}
+
 // repoFingerprintFor returns a stable short hash identifying the git repo
 // resolved from `cwd` (when non-empty) or the current process cwd. Returns
 // "" when not in a repo.

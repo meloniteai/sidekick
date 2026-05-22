@@ -84,9 +84,15 @@ type Landing struct {
 	version       string
 	socketPath    string
 	cwd           string
-	err           string
-	aborted       bool
-	confirmed     bool
+	// backendURL is the configured remote telemetry sink, "" when none is
+	// configured (then the sink line and toggle are hidden — local is the only
+	// option). backendSink is the live choice: true posts telemetry to the
+	// backend, false keeps the local SQLite store.
+	backendURL  string
+	backendSink bool
+	err         string
+	aborted     bool
+	confirmed   bool
 }
 
 // LandingConfigChoice is one sidekick.yaml the startup screen can run for this
@@ -96,6 +102,10 @@ type LandingConfigChoice struct {
 	Label     string
 	Path      string
 	Verifiers []verifier.Verifier
+	// BackendURL is the telemetry sink resolved for this config scope (env or
+	// the scope's backend.url), so switching scope on the splash updates the
+	// sink to match the chosen config. Empty means local-only for this scope.
+	BackendURL string
 }
 
 // NewLanding builds a Landing seeded from each verifier's Disabled flag, so
@@ -127,6 +137,25 @@ func (l Landing) WithConfigChoices(choices []LandingConfigChoice) Landing {
 	}
 	return l
 }
+
+// WithTelemetry shows the telemetry-sink chooser on the splash screen. When
+// backendURL is non-empty the user can press "t" to flip between the local
+// SQLite store and the backend; backend reflects the resolved default. An empty
+// backendURL hides the line entirely (local is the only option).
+func (l Landing) WithTelemetry(backendURL string, backend bool) Landing {
+	l.backendURL = strings.TrimSpace(backendURL)
+	l.backendSink = backend && l.backendURL != ""
+	return l
+}
+
+// TelemetryBackend reports whether the user left the sink set to the backend.
+// Always false when no backend URL was configured.
+func (l Landing) TelemetryBackend() bool { return l.backendSink }
+
+// BackendURL returns the telemetry sink URL for the selected config scope, which
+// may differ from the initial scope if the user switched on the splash. Empty
+// when the selected scope has no backend configured.
+func (l Landing) BackendURL() string { return l.backendURL }
 
 // Init satisfies tea.Model.
 func (l Landing) Init() tea.Cmd { return nil }
@@ -197,6 +226,11 @@ func (l Landing) updateVerifierKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			l.enabled[i] = true
 		}
 		l.err = ""
+	case "t":
+		if l.backendURL != "" {
+			l.backendSink = !l.backendSink
+			l.err = ""
+		}
 	case "enter":
 		if l.selectedCount() < MinSelected {
 			l.err = fmt.Sprintf("select at least %d verifier (currently %d)", MinSelected, l.selectedCount())
@@ -274,6 +308,10 @@ func (l *Landing) switchConfig(idx int) {
 	if l.cursor >= len(l.verifiers) {
 		l.cursor = max(len(l.verifiers)-1, 0)
 	}
+	// Re-derive the telemetry sink for the newly selected scope: default to its
+	// backend.url when present, else local. The user can still toggle with "t".
+	l.backendURL = l.configChoices[idx].BackendURL
+	l.backendSink = l.backendURL != ""
 	l.err = ""
 }
 
@@ -307,6 +345,15 @@ func (l Landing) View() string {
 		b.WriteString("\n\n")
 	}
 
+	b.WriteString(styleLandingLabel.Render("Sink    "))
+	if l.backendSink {
+		b.WriteString(styleLandingValue.Render("Backend"))
+		b.WriteString(styleLandingDirection.Render("  " + prettyPath(l.backendURL)))
+	} else {
+		b.WriteString(styleLandingValue.Render("Local"))
+	}
+	b.WriteString("\n\n")
+
 	if l.phase == landingPhaseConfig && len(l.configChoices) > 1 {
 		b.WriteString(renderLandingSectionTitle("Config", landingConfigHelp(l.configChoices), innerW))
 		b.WriteString("\n\n")
@@ -328,7 +375,7 @@ func (l Landing) View() string {
 		b.WriteString(styleLandingSeparator.Render(strings.Repeat("─", innerW)))
 		b.WriteString("\n\n")
 
-		b.WriteString(renderLandingSectionTitle("Verifiers", landingVerifierHelp(len(l.configChoices) > 1), innerW))
+		b.WriteString(renderLandingSectionTitle("Verifiers", landingVerifierHelp(len(l.configChoices) > 1, l.backendURL != ""), innerW))
 		b.WriteString("\n\n")
 
 		nameWidth := 0
@@ -456,8 +503,11 @@ func landingConfigHelp(choices []LandingConfigChoice) string {
 	return help
 }
 
-func landingVerifierHelp(hasBack bool) string {
+func landingVerifierHelp(hasBack, hasSink bool) string {
 	help := "↑/↓ choose · space check-in · a all · enter start · esc abort"
+	if hasSink {
+		help = "t sink · " + help
+	}
 	if hasBack {
 		help = "b back · " + help
 	}

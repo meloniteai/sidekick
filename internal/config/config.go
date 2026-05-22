@@ -30,6 +30,16 @@ type File struct {
 	// idle GC.
 	SessionIdleTimeout string         `yaml:"session_idle_timeout,omitempty"`
 	Verifiers          []VerifierSpec `yaml:"verifiers"`
+	// Backend points telemetry at the remote Sidekick API instead of the local
+	// SQLite store. When url is set, Sidekick defaults to the backend sink and
+	// falls back to local only if it can't be reached; an empty url keeps the
+	// local-only default. The splash screen and `--telemetry-mode` flag override.
+	Backend BackendSpec `yaml:"backend,omitempty"`
+}
+
+// BackendSpec is the YAML shape of the optional remote telemetry sink.
+type BackendSpec struct {
+	URL string `yaml:"url,omitempty"`
 }
 
 // Discovery reports the project and global sidekick.yaml files visible from a
