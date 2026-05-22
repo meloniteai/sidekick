@@ -61,9 +61,14 @@ type sessionRuntime struct {
 }
 
 type sessionRuntimeManager struct {
-	mu         sync.Mutex
-	ctx        context.Context
-	version    string
+	mu      sync.Mutex
+	ctx     context.Context
+	version string
+	// configPath is the config resolved (and possibly scope-selected) at
+	// startup, pinned for the daemon's lifetime. NewSession passes it verbatim
+	// to LoadFrom so a goal that anchors a *new* worktree loads this same file
+	// instead of re-discovering one — that re-discovery is what let a session
+	// silently flip global↔project scope mid-flight.
 	configPath string
 	emitter    telemetry.Emitter
 	runtimes   map[*daemon.State]sessionRuntime
@@ -272,7 +277,11 @@ func bindStart(cmd *cobra.Command) {
 		fmt.Fprintf(os.Stderr, "[sidekick] quiet period: %s\n", runner.QuietPeriod())
 		fmt.Fprintf(os.Stderr, "[sidekick] session idle timeout: %s\n", sessionIdleTimeout)
 
-		runtimes := newSessionRuntimeManager(ctx, version, configPath)
+		// Seed the manager with the path the startup session actually resolved
+		// (after any landing scope choice), not the raw --config flag. Otherwise
+		// later worktree-anchored sessions re-discover config from their own dir
+		// and can flip global↔project scope mid-session.
+		runtimes := newSessionRuntimeManager(ctx, version, loadedConfigPath)
 		runtimes.emitter = emitter
 		runtimes.Register(state, runner, loadedConfigPath)
 		defer runtimes.StopAll()

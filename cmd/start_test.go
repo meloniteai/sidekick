@@ -202,6 +202,68 @@ func TestBindStartContract(t *testing.T) {
 	}
 }
 
+// TestNewSessionPinsStartupConfigScope guards the scope-stability invariant: a
+// goal that anchors a *new* worktree must keep the config the session started
+// on. When the manager is seeded with a path (the startup-resolved scope),
+// NewSession loads that exact file and ignores the worktree's own
+// .sidekick/sidekick.yaml. The empty-seed subtest documents the per-worktree
+// discovery that the pin deliberately overrides — discovery is what used to let
+// a session flip global↔project scope mid-flight.
+func TestNewSessionPinsStartupConfigScope(t *testing.T) {
+	globalPath := filepath.Join(t.TempDir(), "sidekick.yaml")
+	writeScopeConfig(t, globalPath, "GlobalOnly")
+
+	// A worktree that ships its own project config; the pinned session must
+	// never adopt it.
+	worktree := t.TempDir()
+	projectPath := filepath.Join(worktree, ".sidekick", "sidekick.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeScopeConfig(t, projectPath, "ProjectOnly")
+
+	t.Run("pinned scope wins over the worktree config", func(t *testing.T) {
+		m := newSessionRuntimeManager(context.Background(), "test", globalPath)
+		defer m.StopAll()
+		state, err := m.NewSession(daemon.SessionAnchor{Worktree: worktree})
+		if err != nil {
+			t.Fatalf("NewSession: %v", err)
+		}
+		if got := m.ConfigPath(state); got != globalPath {
+			t.Fatalf("config path = %q, want pinned %q", got, globalPath)
+		}
+		if _, ok := state.Verifier("GlobalOnly"); !ok {
+			t.Fatal("session dropped the pinned global verifier")
+		}
+		if _, ok := state.Verifier("ProjectOnly"); ok {
+			t.Fatal("session adopted the worktree's project verifier; scope changed mid-flight")
+		}
+	})
+
+	t.Run("empty seed discovers the worktree config", func(t *testing.T) {
+		m := newSessionRuntimeManager(context.Background(), "test", "")
+		defer m.StopAll()
+		state, err := m.NewSession(daemon.SessionAnchor{Worktree: worktree})
+		if err != nil {
+			t.Fatalf("NewSession: %v", err)
+		}
+		if _, ok := state.Verifier("ProjectOnly"); !ok {
+			t.Fatal("empty seed should fall back to the worktree's project config")
+		}
+	})
+}
+
+// writeScopeConfig writes a minimal one-verifier sidekick.yaml whose verifier
+// name identifies which config a session loaded.
+func writeScopeConfig(t *testing.T, path, verifierName string) {
+	t.Helper()
+	yaml := "goal_source: prompt\nverifiers:\n  - name: " + verifierName +
+		"\n    type: command\n    direction: N\n    command: [\"sh\", \"-c\", \"echo {}\"]\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
 func waitForStartTest(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
