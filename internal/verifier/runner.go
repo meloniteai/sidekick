@@ -52,6 +52,7 @@ type Runner struct {
 
 	mu           sync.Mutex
 	quietPeriod  time.Duration
+	findingsCap  int
 	timer        *time.Timer
 	changedFiles map[string]struct{}
 	lastBatchAt  time.Time
@@ -82,6 +83,7 @@ func NewRunner(parent context.Context, state *daemon.State, verifiers []Verifier
 		verifiers:     verifiers,
 		state:         state,
 		quietPeriod:   DefaultQuietPeriod,
+		findingsCap:   DefaultFindingsCap,
 		changedFiles:  map[string]struct{}{},
 		singleCancels: map[string]context.CancelFunc{},
 		ctx:           ctx,
@@ -173,6 +175,21 @@ func (r *Runner) QuietPeriod() time.Duration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.quietPeriod
+}
+
+// SetFindingsCap overrides the maximum findings stored per run. A non-positive
+// value disables the cap. See prepareFindings for the overflow behaviour.
+func (r *Runner) SetFindingsCap(n int) {
+	r.mu.Lock()
+	r.findingsCap = n
+	r.mu.Unlock()
+}
+
+// findingsCapValue reads the configured cap under lock.
+func (r *Runner) findingsCapValue() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.findingsCap
 }
 
 // Stop cancels any in-flight runs and tears down the runner permanently.
@@ -411,6 +428,7 @@ func (r *Runner) executeVerifier(ctx context.Context, v Verifier, session Sessio
 	cur.Running = false
 	cur.ComputedAt = time.Now()
 	stopped := false
+	var findings []Finding
 	switch {
 	case err != nil && ctx.Err() != nil:
 		// User-initiated stop: keep the previously displayed distance
@@ -437,6 +455,7 @@ func (r *Runner) executeVerifier(ctx context.Context, v Verifier, session Sessio
 		if cur.Status == "" {
 			cur.Status = ipc.StatusOK
 		}
+		findings = prepareFindings(res.Findings, session.SessionWorktree, r.findingsCapValue())
 		r.state.LogEvent(daemon.EventInfo, "verifier %s %s d=%.2f", v.Name, cur.Status, cur.Distance)
 	}
 	if res.Usage != nil {
@@ -460,7 +479,7 @@ func (r *Runner) executeVerifier(ctx context.Context, v Verifier, session Sessio
 	// A stopped run produced no measurement (the user killed it), so it is not
 	// recorded — only genuine evaluations become telemetry.
 	if !stopped {
-		r.recordVerifierRun(batchID, v, cur, elapsed, res.Usage)
+		r.recordVerifierRun(batchID, v, cur, elapsed, res.Usage, findings)
 	}
 }
 
@@ -490,9 +509,12 @@ func (r *Runner) recordBatch(files []string) string {
 	return id
 }
 
-// recordVerifierRun emits one verifier_run row. cur carries the folded result
-// (distance/reason/status); usage is nil for command/binary verifiers.
-func (r *Runner) recordVerifierRun(batchID string, v Verifier, cur ipc.VerifierStatus, durationMS int64, usage *UsageInfo) {
+// recordVerifierRun emits one verifier_run row and its attributed findings. cur
+// carries the folded scalar (distance/reason/status); usage is nil for
+// command/binary verifiers; findings is empty for a passing verifier or when the
+// run could not be attributed. The run row is written first so its id can parent
+// the findings.
+func (r *Runner) recordVerifierRun(batchID string, v Verifier, cur ipc.VerifierStatus, durationMS int64, usage *UsageInfo, findings []Finding) {
 	emitter := r.state.Emitter()
 	sid := r.state.TelemetrySessionID()
 	if emitter == nil || sid == "" {
@@ -516,8 +538,31 @@ func (r *Runner) recordVerifierRun(batchID string, v Verifier, cur ipc.VerifierS
 		rec.CacheWrites = usage.CacheWrites
 		rec.CostUSD = usage.CostUSD
 	}
-	if err := emitter.RecordVerifierRun(rec); err != nil {
+	runID, err := emitter.RecordVerifierRun(rec)
+	if err != nil {
 		r.state.LogEvent(daemon.EventError, "telemetry: record verifier_run: %v", err)
+		return
+	}
+	if len(findings) == 0 {
+		return
+	}
+	now := time.Now()
+	frecs := make([]telemetry.FindingRecord, 0, len(findings))
+	for _, f := range findings {
+		frecs = append(frecs, telemetry.FindingRecord{
+			SessionID:    sid,
+			BatchID:      batchID,
+			VerifierName: v.Name,
+			FilePath:     f.Path,
+			Symbol:       f.Symbol,
+			Line:         f.Line,
+			Distance:     f.Distance,
+			Reason:       f.Reason,
+			TS:           now,
+		})
+	}
+	if err := emitter.RecordFindings(runID, frecs); err != nil {
+		r.state.LogEvent(daemon.EventError, "telemetry: record findings: %v", err)
 	}
 }
 

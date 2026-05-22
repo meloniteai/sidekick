@@ -153,7 +153,10 @@ Rubric body.
 		"git -C $SESSION_WORKTREE diff $SESSION_BASE_REF --stat",
 		"git -C $SESSION_WORKTREE diff $SESSION_BASE_REF",
 		"git -C $SESSION_WORKTREE status --porcelain",
-		`{"distance": <number 0.0..1.0>, "reason": "<one short sentence>"}`,
+		// The output contract is the findings array, owned by code (not the skill).
+		`"findings"`,
+		`"distance": <number 0.0..1.0>`,
+		`emit a single finding with "path": null`,
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
@@ -304,7 +307,7 @@ func TestParserBraceAware(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			obj := findLastDistanceObject(strings.ReplaceAll(tc.in, `\n`, "\n"))
+			obj := findLastResultObject(strings.ReplaceAll(tc.in, `\n`, "\n"))
 			if obj == "" {
 				t.Fatalf("scanner returned empty for %q", tc.in)
 			}
@@ -368,4 +371,266 @@ func contains(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestFinalizeResultRollup(t *testing.T) {
+	// Findings present: scalar is the max finding's distance + reason.
+	r := finalizeResult(Result{Findings: []Finding{
+		{Path: "a.go", Distance: 0.25, Reason: "minor"},
+		{Path: "b.go", Distance: 0.75, Reason: "blocking"},
+	}})
+	if r.Distance != 0.75 || r.Reason != "blocking" {
+		t.Fatalf("rollup got distance=%v reason=%q, want 0.75/blocking", r.Distance, r.Reason)
+	}
+	if len(r.Findings) != 2 {
+		t.Fatalf("findings preserved = %d, want 2", len(r.Findings))
+	}
+
+	// Per-finding distance is clamped before roll-up.
+	r = finalizeResult(Result{Findings: []Finding{{Path: "a.go", Distance: 9, Reason: "x"}}})
+	if r.Distance != 1 || r.Findings[0].Distance != 1 {
+		t.Fatalf("clamp got scalar=%v finding=%v, want 1/1", r.Distance, r.Findings[0].Distance)
+	}
+
+	// Legacy scalar with friction is wrapped as one tree-global finding.
+	r = finalizeResult(Result{Distance: 0.5, Reason: "legacy"})
+	if len(r.Findings) != 1 || r.Findings[0].Path != "" || r.Findings[0].Distance != 0.5 {
+		t.Fatalf("legacy wrap got %+v, want one global finding at 0.5", r.Findings)
+	}
+
+	// A passing scalar (distance 0) yields no findings.
+	r = finalizeResult(Result{Distance: 0, Reason: "passed"})
+	if len(r.Findings) != 0 || r.Distance != 0 {
+		t.Fatalf("pass got %d findings / distance %v, want 0/0", len(r.Findings), r.Distance)
+	}
+}
+
+func TestParseCommandResultFindings(t *testing.T) {
+	// Structured findings drive the scalar via roll-up.
+	r, err := parseCommandResult("cmd", `{"findings":[{"path":"x.go","distance":0.5,"reason":"bad"},{"path":"y.go","distance":0.25,"reason":"meh"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Distance != 0.5 || r.Reason != "bad" || len(r.Findings) != 2 {
+		t.Fatalf("findings parse got distance=%v reason=%q n=%d", r.Distance, r.Reason, len(r.Findings))
+	}
+	if r.Findings[0].Path != "x.go" {
+		t.Fatalf("path not preserved: %+v", r.Findings[0])
+	}
+
+	// Robust path: findings object followed by trailing log lines still parses.
+	r, err = parseCommandResult("cmd", "[info] starting\n{\"findings\":[{\"path\":\"z.go\",\"distance\":0.75,\"reason\":\"blk\"}]}\n[info] done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Distance != 0.75 || len(r.Findings) != 1 {
+		t.Fatalf("trailing-log findings parse got distance=%v n=%d", r.Distance, len(r.Findings))
+	}
+
+	// Legacy distance object still parses and wraps as one tree-global finding.
+	r, err = parseCommandResult("cmd", `{"distance":0.3,"reason":"legacy"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Distance != 0.3 || len(r.Findings) != 1 || r.Findings[0].Path != "" {
+		t.Fatalf("legacy command parse got %+v", r)
+	}
+
+	// Empty findings array means pass: distance 0, no findings.
+	r, err = parseCommandResult("cmd", `{"findings":[]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Distance != 0 || len(r.Findings) != 0 || r.Status != ipc.StatusOK {
+		t.Fatalf("empty findings got distance=%v n=%d status=%q", r.Distance, len(r.Findings), r.Status)
+	}
+}
+
+func TestParseAgentResultFindings(t *testing.T) {
+	// Codex-style: prose then a final findings line.
+	r, err := parseAgentResult("X", "codex", "thinking\n{\"findings\":[{\"path\":\"p.go\",\"distance\":0.75,\"reason\":\"r\"}]}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Distance != 0.75 || len(r.Findings) != 1 || r.Findings[0].Path != "p.go" {
+		t.Fatalf("agent findings parse got %+v", r)
+	}
+
+	// A tree-global finding uses a null path, which normalizes to "".
+	r, err = parseAgentResult("X", "codex", `{"findings":[{"path":null,"distance":1,"reason":"suite fails"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Distance != 1 || len(r.Findings) != 1 || r.Findings[0].Path != "" {
+		t.Fatalf("global finding parse got %+v", r)
+	}
+}
+
+func TestNormalizeFindingPath(t *testing.T) {
+	wt := "/repo/wt"
+	cases := []struct{ in, want string }{
+		{"internal/a.go", "internal/a.go"},
+		{"./internal/a.go", "internal/a.go"},
+		{"/repo/wt/internal/a.go", "internal/a.go"}, // absolute under worktree -> relative
+		{"/etc/passwd", ""},                         // escapes the worktree -> tree-global
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := normalizeFindingPath(wt, tc.in); got != tc.want {
+			t.Errorf("normalizeFindingPath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestPrepareFindingsCap(t *testing.T) {
+	findings := []Finding{
+		{Path: "a.go", Distance: 0.1, Reason: "a"},
+		{Path: "b.go", Distance: 0.9, Reason: "b"},
+		{Path: "c.go", Distance: 0.5, Reason: "c"},
+		{Path: "d.go", Distance: 0.3, Reason: "d"},
+	}
+	out := prepareFindings(findings, "", 2)
+	if len(out) != 3 { // 2 kept + 1 "+K more" marker
+		t.Fatalf("capped length = %d, want 3", len(out))
+	}
+	// Highest-distance findings are kept so the max roll-up is unaffected.
+	if out[0].Distance != 0.9 || out[1].Distance != 0.5 {
+		t.Fatalf("cap kept wrong findings: %+v", out[:2])
+	}
+	marker := out[2]
+	if marker.Path != "" || !strings.Contains(marker.Reason, "+2 more") {
+		t.Fatalf("overflow marker = %+v, want global '+2 more'", marker)
+	}
+
+	// A non-positive cap disables capping.
+	if got := prepareFindings(findings, "", 0); len(got) != 4 {
+		t.Fatalf("uncapped length = %d, want 4", len(got))
+	}
+}
+
+func TestParseSARIF(t *testing.T) {
+	const doc = `{
+	  "version": "2.1.0",
+	  "runs": [
+	    {
+	      "tool": {"driver": {"name": "golangci-lint"}},
+	      "results": [
+	        {"ruleId": "errcheck", "level": "error",
+	         "message": {"text": "error return value not checked"},
+	         "locations": [{"physicalLocation": {
+	           "artifactLocation": {"uri": "internal/foo/bar.go"},
+	           "region": {"startLine": 42}}}]},
+	        {"ruleId": "gosimple", "level": "warning",
+	         "message": {"text": "should use a simple channel send"},
+	         "locations": [{"physicalLocation": {
+	           "artifactLocation": {"uri": "internal/baz.go"},
+	           "region": {"startLine": 7}}}]}
+	      ]
+	    }
+	  ]
+	}`
+	findings := parseSARIF(doc)
+	if len(findings) != 2 {
+		t.Fatalf("findings = %d, want 2", len(findings))
+	}
+	if findings[0].Path != "internal/foo/bar.go" || findings[0].Line != 42 || findings[0].Distance != 1.0 {
+		t.Fatalf("error finding wrong: %+v", findings[0])
+	}
+	if findings[1].Path != "internal/baz.go" || findings[1].Distance != 0.5 {
+		t.Fatalf("warning finding wrong: %+v", findings[1])
+	}
+	if got := parseSARIF("not json"); got != nil {
+		t.Fatalf("unparseable SARIF should yield nil, got %+v", got)
+	}
+}
+
+func TestExtractRegexFindings(t *testing.T) {
+	pattern := `^(?P<file>[^:]+):(?P<line>\d+):\s*(?P<reason>.*)$`
+	text := "internal/a.go:12: unused variable\ninternal/b.go:7: shadowed err\nnot a match line"
+	findings := extractRegexFindings(pattern, text)
+	if len(findings) != 2 {
+		t.Fatalf("findings = %d, want 2", len(findings))
+	}
+	if findings[0].Path != "internal/a.go" || findings[0].Line != 12 || findings[0].Reason != "unused variable" {
+		t.Fatalf("finding[0] wrong: %+v", findings[0])
+	}
+	if findings[0].Distance != 1.0 {
+		t.Fatalf("regex finding distance = %v, want 1.0", findings[0].Distance)
+	}
+	if got := extractRegexFindings(`(?P<bad`, text); got != nil {
+		t.Fatalf("bad regex should yield nil, got %+v", got)
+	}
+}
+
+func TestVerifyBinarySARIF(t *testing.T) {
+	sarif := `{"runs":[{"results":[` +
+		`{"level":"warning","message":{"text":"w"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.go"},"region":{"startLine":3}}}]},` +
+		`{"level":"error","message":{"text":"e"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"b.go"},"region":{"startLine":9}}}]}` +
+		`]}]}`
+	// Exit non-zero to prove findings, not exit code, drive the score.
+	v := Verifier{Name: "lint", Type: TypeBinary, Binary: BinaryConfig{
+		Command: []string{"sh", "-c", "printf '%s' '" + sarif + "'; exit 1"},
+		Format:  "sarif",
+	}}
+	r, err := v.Verify(context.Background(), Session{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 2 {
+		t.Fatalf("findings = %d, want 2", len(r.Findings))
+	}
+	if r.Distance != 1.0 {
+		t.Fatalf("rolled-up distance = %v, want 1.0 (max = error)", r.Distance)
+	}
+
+	// Empty results + exit 0 = pass.
+	pass := Verifier{Name: "lint", Type: TypeBinary, Binary: BinaryConfig{
+		Command:    []string{"sh", "-c", `printf '%s' '{"runs":[{"results":[]}]}'; exit 0`},
+		Format:     "sarif",
+		PassReason: "clean",
+	}}
+	r, err = pass.Verify(context.Background(), Session{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Distance != 0 || len(r.Findings) != 0 || r.Reason != "clean" {
+		t.Fatalf("sarif pass got %+v", r)
+	}
+}
+
+func TestVerifyBinarySARIFOutputFile(t *testing.T) {
+	dir := t.TempDir()
+	sarif := `{"runs":[{"results":[{"level":"note","message":{"text":"n"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"x.go"},"region":{"startLine":1}}}]}]}]}`
+	if err := os.WriteFile(filepath.Join(dir, "report.sarif"), []byte(sarif), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v := Verifier{Name: "lint", Type: TypeBinary, Binary: BinaryConfig{
+		Command:    []string{"sh", "-c", "exit 1"},
+		Format:     "sarif",
+		OutputFile: "report.sarif", // relative to the session worktree
+	}}
+	r, err := v.Verify(context.Background(), Session{SessionWorktree: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 1 || r.Findings[0].Path != "x.go" || r.Distance != 0.25 {
+		t.Fatalf("output-file SARIF got %+v", r)
+	}
+}
+
+func TestVerifyBinaryFailRegex(t *testing.T) {
+	v := Verifier{Name: "lint", Type: TypeBinary, Binary: BinaryConfig{
+		Command:   []string{"sh", "-c", `printf 'internal/a.go:12: unused variable\ninternal/b.go:7: shadowed err\nnoise\n'; exit 1`},
+		FailRegex: `^(?P<file>[^:]+):(?P<line>\d+):\s*(?P<reason>.*)$`,
+	}}
+	r, err := v.Verify(context.Background(), Session{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 2 {
+		t.Fatalf("regex findings = %d, want 2", len(r.Findings))
+	}
+	if r.Distance != 1.0 || r.Findings[0].Path != "internal/a.go" {
+		t.Fatalf("regex verify got %+v", r)
+	}
 }

@@ -14,6 +14,7 @@ type fakeEmitter struct {
 	sessions   []telemetry.SessionRecord
 	edits      []telemetry.EditRecord
 	heartbeats []telemetry.HeartbeatRecord
+	runID      int64
 }
 
 func (f *fakeEmitter) RecordSession(r telemetry.SessionRecord) error {
@@ -29,7 +30,13 @@ func (f *fakeEmitter) RecordEdit(r telemetry.EditRecord) error {
 	return nil
 }
 func (f *fakeEmitter) RecordBatch(telemetry.BatchRecord) error { return nil }
-func (f *fakeEmitter) RecordVerifierRun(telemetry.VerifierRunRecord) error {
+func (f *fakeEmitter) RecordVerifierRun(telemetry.VerifierRunRecord) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runID++
+	return f.runID, nil
+}
+func (f *fakeEmitter) RecordFindings(int64, []telemetry.FindingRecord) error {
 	return nil
 }
 func (f *fakeEmitter) RecordHeartbeat(r telemetry.HeartbeatRecord) error {

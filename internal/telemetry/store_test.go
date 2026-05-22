@@ -41,12 +41,19 @@ func TestStoreRecordsEveryEntity(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RecordBatch: %v", err)
 	}
-	if err := s.RecordVerifierRun(VerifierRunRecord{
+	runID, err := s.RecordVerifierRun(VerifierRunRecord{
 		BatchID: bid, SessionID: sid, VerifierName: "Architect", VerifierVersion: "deadbeef",
 		Distance: 0.25, Reason: "looks good", Status: "ok", DurationMS: 1200,
 		InputTokens: 10, OutputTokens: 20, CostUSD: 0.01, TS: now,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("RecordVerifierRun: %v", err)
+	}
+	if err := s.RecordFindings(runID, []FindingRecord{
+		{SessionID: sid, BatchID: bid, VerifierName: "Architect", FilePath: "main.go",
+			Distance: 0.25, Reason: "looks good", TS: now},
+	}); err != nil {
+		t.Fatalf("RecordFindings: %v", err)
 	}
 	if err := s.RecordHeartbeat(HeartbeatRecord{
 		SessionID: sid, TS: now, OverallDistance: 0.3, BatchCount: 1, EditCount: 1,
@@ -116,7 +123,7 @@ func TestBatchlessVerifierRun(t *testing.T) {
 	s := newTestStore(t)
 	sid := NewID()
 	// Single ("r"-key) runs carry no batch — empty BatchID must persist as NULL.
-	if err := s.RecordVerifierRun(VerifierRunRecord{
+	if _, err := s.RecordVerifierRun(VerifierRunRecord{
 		SessionID: sid, VerifierName: "Test", Distance: 0.5, Status: "ok", TS: time.Now(),
 	}); err != nil {
 		t.Fatalf("RecordVerifierRun: %v", err)
@@ -163,7 +170,7 @@ func TestConcurrentVerifierRuns(t *testing.T) {
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
-			if err := s.RecordVerifierRun(VerifierRunRecord{
+			if _, err := s.RecordVerifierRun(VerifierRunRecord{
 				BatchID: bid, SessionID: sid, VerifierName: "V", Distance: 0.5, Status: "ok", TS: time.Now(),
 			}); err != nil {
 				t.Errorf("concurrent RecordVerifierRun: %v", err)
@@ -178,6 +185,80 @@ func TestConcurrentVerifierRuns(t *testing.T) {
 	}
 	if got != n {
 		t.Fatalf("concurrent runs persisted = %d, want %d", got, n)
+	}
+}
+
+func TestRecordFindings(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	sid := NewID()
+	bid := NewID()
+
+	runID, err := s.RecordVerifierRun(VerifierRunRecord{
+		BatchID: bid, SessionID: sid, VerifierName: "architect", Distance: 0.75,
+		Reason: "blocking", Status: "ok", TS: now,
+	})
+	if err != nil {
+		t.Fatalf("RecordVerifierRun: %v", err)
+	}
+	if runID == 0 {
+		t.Fatal("RecordVerifierRun returned id 0; findings can't reference it")
+	}
+
+	// One file-attributed finding and one tree-global finding (empty path).
+	if err := s.RecordFindings(runID, []FindingRecord{
+		{SessionID: sid, BatchID: bid, VerifierName: "architect", FilePath: "internal/a.go",
+			Symbol: "Foo", Line: 12, Distance: 0.75, Reason: "blocking", TS: now},
+		{SessionID: sid, BatchID: bid, VerifierName: "architect", FilePath: "",
+			Distance: 0.5, Reason: "suite is shaky", TS: now},
+	}); err != nil {
+		t.Fatalf("RecordFindings: %v", err)
+	}
+
+	// Both rows reference the run; the global finding stores file_path/line as NULL.
+	var fileFinding struct {
+		runID    int64
+		filePath *string
+		symbol   *string
+		line     *int
+		distance float64
+	}
+	if err := s.DB().QueryRow(
+		`SELECT verifier_run_id, file_path, symbol, line, distance FROM finding WHERE file_path = 'internal/a.go'`,
+	).Scan(&fileFinding.runID, &fileFinding.filePath, &fileFinding.symbol, &fileFinding.line, &fileFinding.distance); err != nil {
+		t.Fatalf("scan file finding: %v", err)
+	}
+	if fileFinding.runID != runID {
+		t.Fatalf("finding.verifier_run_id = %d, want %d", fileFinding.runID, runID)
+	}
+	if fileFinding.filePath == nil || *fileFinding.filePath != "internal/a.go" || fileFinding.line == nil || *fileFinding.line != 12 {
+		t.Fatalf("file finding columns wrong: %+v", fileFinding)
+	}
+
+	var globalPath *string
+	var globalLine *int
+	if err := s.DB().QueryRow(
+		`SELECT file_path, line FROM finding WHERE distance = 0.5`,
+	).Scan(&globalPath, &globalLine); err != nil {
+		t.Fatalf("scan global finding: %v", err)
+	}
+	if globalPath != nil {
+		t.Fatalf("tree-global finding file_path = %q, want NULL", *globalPath)
+	}
+	if globalLine != nil {
+		t.Fatalf("zero line = %d, want NULL", *globalLine)
+	}
+
+	// Empty findings is a no-op, not an error.
+	if err := s.RecordFindings(runID, nil); err != nil {
+		t.Fatalf("RecordFindings(nil): %v", err)
+	}
+	var count int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM finding`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("finding rows = %d, want 2", count)
 	}
 }
 

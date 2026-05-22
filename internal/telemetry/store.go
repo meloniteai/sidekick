@@ -10,7 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// schema is the full DDL applied idempotently on Open. Five entities plus the
+// schema is the full DDL applied idempotently on Open. Six entities plus the
 // indexes the by-hand analysis queries lean on (session, file, batch joins).
 const schema = `
 CREATE TABLE IF NOT EXISTS session (
@@ -67,11 +67,28 @@ CREATE TABLE IF NOT EXISTS session_heartbeat (
 	edit_count       INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS finding (
+	id              INTEGER PRIMARY KEY AUTOINCREMENT,
+	verifier_run_id INTEGER NOT NULL,
+	session_id      TEXT NOT NULL,
+	batch_id        TEXT,
+	verifier_name   TEXT NOT NULL,
+	file_path       TEXT,
+	symbol          TEXT,
+	line            INTEGER,
+	distance        REAL NOT NULL,
+	reason          TEXT,
+	ts              TIMESTAMP NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_edit_session  ON edit(session_id);
 CREATE INDEX IF NOT EXISTS idx_batch_session ON batch(session_id);
 CREATE INDEX IF NOT EXISTS idx_vrun_batch    ON verifier_run(batch_id);
 CREATE INDEX IF NOT EXISTS idx_vrun_session  ON verifier_run(session_id);
 CREATE INDEX IF NOT EXISTS idx_hb_session    ON session_heartbeat(session_id);
+CREATE INDEX IF NOT EXISTS idx_finding_run     ON finding(verifier_run_id);
+CREATE INDEX IF NOT EXISTS idx_finding_session ON finding(session_id);
+CREATE INDEX IF NOT EXISTS idx_finding_file    ON finding(file_path);
 `
 
 // Store is a SQLite-backed Emitter. The daemon is the single writer, so we
@@ -159,8 +176,8 @@ func (s *Store) RecordBatch(r BatchRecord) error {
 	return err
 }
 
-func (s *Store) RecordVerifierRun(r VerifierRunRecord) error {
-	_, err := s.db.Exec(
+func (s *Store) RecordVerifierRun(r VerifierRunRecord) (int64, error) {
+	res, err := s.db.Exec(
 		`INSERT INTO verifier_run
 		 (batch_id, session_id, verifier_name, verifier_version, distance, reason,
 		  status, duration_ms, input_tokens, output_tokens, cache_reads, cache_writes, cost_usd, ts)
@@ -169,7 +186,44 @@ func (s *Store) RecordVerifierRun(r VerifierRunRecord) error {
 		r.Distance, r.Reason, nullStr(r.Status), r.DurationMS,
 		r.InputTokens, r.OutputTokens, r.CacheReads, r.CacheWrites, r.CostUSD, r.TS.UTC(),
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// RecordFindings writes a run's findings in a single transaction so they land
+// atomically. file_path/symbol/line are nullable: an empty path is a tree-global
+// finding (NULL), and a zero line means "no line".
+func (s *Store) RecordFindings(runID int64, findings []FindingRecord) error {
+	if len(findings) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO finding
+		 (verifier_run_id, session_id, batch_id, verifier_name, file_path, symbol, line, distance, reason, ts)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for _, f := range findings {
+		if _, err := stmt.Exec(
+			runID, f.SessionID, nullStr(f.BatchID), f.VerifierName,
+			nullStr(f.FilePath), nullStr(f.Symbol), nullInt(f.Line),
+			f.Distance, nullStr(f.Reason), f.TS.UTC(),
+		); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) RecordHeartbeat(r HeartbeatRecord) error {
@@ -188,4 +242,13 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
+}
+
+// nullInt maps 0 to a SQL NULL for optional integer columns (e.g. a finding's
+// line), so "no line" reads as NULL rather than line 0.
+func nullInt(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
 }

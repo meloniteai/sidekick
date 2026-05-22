@@ -24,7 +24,10 @@ type Emitter interface {
 	RecordSession(SessionRecord) error
 	RecordEdit(EditRecord) error
 	RecordBatch(BatchRecord) error
-	RecordVerifierRun(VerifierRunRecord) error
+	// RecordVerifierRun returns the new run's row id so its findings can
+	// reference it (the finding table is a child of verifier_run).
+	RecordVerifierRun(VerifierRunRecord) (int64, error)
+	RecordFindings(runID int64, findings []FindingRecord) error
 	RecordHeartbeat(HeartbeatRecord) error
 	Close() error
 }
@@ -83,6 +86,21 @@ type VerifierRunRecord struct {
 	CacheWrites     int
 	CostUSD         float64
 	TS              time.Time
+}
+
+// FindingRecord is one attributed unit of distance, a child of a verifier_run.
+// FilePath is "" for a tree-global finding (stored as NULL so "global friction"
+// stays distinguishable from "no friction"); Symbol and Line are optional.
+type FindingRecord struct {
+	SessionID    string
+	BatchID      string
+	VerifierName string
+	FilePath     string // "" -> stored as NULL
+	Symbol       string
+	Line         int
+	Distance     float64
+	Reason       string
+	TS           time.Time
 }
 
 // HeartbeatRecord is a periodic liveness sample per live session. The end of a

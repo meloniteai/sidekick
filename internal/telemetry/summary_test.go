@@ -29,7 +29,7 @@ func TestLoadSummaryRollsUpAnEpisode(t *testing.T) {
 	clarity := []float64{0.8, 0.5, 0.2}
 	tests := []float64{0.6, 0.3}
 	for i, d := range clarity {
-		if err := s.RecordVerifierRun(VerifierRunRecord{
+		if _, err := s.RecordVerifierRun(VerifierRunRecord{
 			BatchID: bid, SessionID: sid, VerifierName: "clarity", Distance: d, Status: "ok",
 			InputTokens: 100, OutputTokens: 50, CostUSD: 0.01, TS: base.Add(time.Duration(i) * time.Minute),
 		}); err != nil {
@@ -37,7 +37,7 @@ func TestLoadSummaryRollsUpAnEpisode(t *testing.T) {
 		}
 	}
 	for i, d := range tests {
-		if err := s.RecordVerifierRun(VerifierRunRecord{
+		if _, err := s.RecordVerifierRun(VerifierRunRecord{
 			BatchID: bid, SessionID: sid, VerifierName: "tests", Distance: d, Status: "ok",
 			InputTokens: 10, OutputTokens: 5, CostUSD: 0.002, TS: base.Add(time.Duration(i) * time.Minute),
 		}); err != nil {

@@ -18,6 +18,7 @@ var Tables = []string{
 	"edit",
 	"batch",
 	"verifier_run",
+	"finding",
 }
 
 // DumpJSON writes every table as one JSON object keyed by table name, each

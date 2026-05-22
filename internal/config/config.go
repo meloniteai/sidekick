@@ -101,11 +101,16 @@ type CustomAgentSpec struct {
 	StdinFmt string   `yaml:"stdin,omitempty"` // "prompt" (default) | "none"
 }
 
-// BinaryVerifierSpec configures a native exit-code verifier.
+// BinaryVerifierSpec configures a native exit-code verifier. Format/OutputFile
+// opt into SARIF parsing; FailRegex opts into per-line extraction. All optional;
+// absent fields keep the exit-code-only floor.
 type BinaryVerifierSpec struct {
 	Command    []string `yaml:"command"`
 	PassReason string   `yaml:"pass_reason,omitempty"`
 	FailReason string   `yaml:"fail_reason,omitempty"`
+	Format     string   `yaml:"format,omitempty"`
+	OutputFile string   `yaml:"output_file,omitempty"`
+	FailRegex  string   `yaml:"fail_regex,omitempty"`
 }
 
 // validDirections accepts the 8 compass directions used by the layout.
@@ -500,6 +505,9 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 					Command:    cmd,
 					PassReason: vs.Binary.PassReason,
 					FailReason: vs.Binary.FailReason,
+					Format:     vs.Binary.Format,
+					OutputFile: vs.Binary.OutputFile,
+					FailRegex:  vs.Binary.FailRegex,
 				}
 			} else {
 				rawCmd := cmd[0]
@@ -511,6 +519,9 @@ func (f *File) Resolve(configDir string) ([]verifier.Verifier, error) {
 					Command:    resolved,
 					PassReason: vs.Binary.PassReason,
 					FailReason: vs.Binary.FailReason,
+					Format:     vs.Binary.Format,
+					OutputFile: vs.Binary.OutputFile,
+					FailRegex:  vs.Binary.FailRegex,
 				}
 			}
 		default:

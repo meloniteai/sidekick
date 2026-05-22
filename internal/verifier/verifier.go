@@ -17,6 +17,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -41,7 +44,24 @@ type Session struct {
 	VerifierName    string   `json:"verifier_name"`
 }
 
+// Finding is one attributed unit of distance from goal. Path is nullable: a
+// verifier whose judgment is genuinely tree-wide (e.g. "the suite does not
+// pass") emits a single finding with Path == "".
+type Finding struct {
+	Path     string  `json:"path,omitempty"`   // repo-relative; "" == tree-global
+	Symbol   string  `json:"symbol,omitempty"` // function/type/identifier, optional
+	Line     int     `json:"line,omitempty"`   // 1-based, optional
+	Distance float64 `json:"distance"`         // 0.0..1.0 for this unit
+	Reason   string  `json:"reason"`           // one short sentence
+}
+
 // Result is what a verifier subprocess prints on stdout.
+//
+// Findings carry per-file (and optionally per-symbol) attribution. Distance and
+// Reason remain the rolled-up scalar the compass consumes; when Findings is
+// non-empty they are DERIVED from it (Distance = max finding distance), so the
+// two grains cannot drift. An empty Findings set with a passing status means the
+// goal is met for this lens.
 //
 // Status is optional in the on-the-wire JSON; the runner promotes a missing
 // value to ipc.StatusOK on success. Verifiers that genuinely cannot score
@@ -49,6 +69,7 @@ type Session struct {
 // rather than fabricating a distance — the runner then preserves the
 // previous distance instead of pretending the score moved.
 type Result struct {
+	Findings []Finding  `json:"findings,omitempty"`
 	Distance float64    `json:"distance"`
 	Reason   string     `json:"reason"`
 	Status   string     `json:"status,omitempty"`
@@ -131,11 +152,17 @@ type CustomAgent struct {
 	StdinFmt string
 }
 
-// BinaryConfig configures a native pass/fail verifier.
+// BinaryConfig configures a native pass/fail verifier. By default it is
+// exit-code-only (the Tier-1 floor). Format/OutputFile opt into SARIF parsing
+// (Tier 2); FailRegex opts into per-line extraction (Tier 3). Resolution
+// precedence is Format > FailRegex > floor.
 type BinaryConfig struct {
 	Command    []string
 	PassReason string
 	FailReason string
+	Format     string // "" (exit-code only) | "sarif"
+	OutputFile string // optional path (relative to the worktree) to read structured output from
+	FailRegex  string // named-group regex (file/line/reason/symbol) extracting findings from text
 }
 
 // DefaultTimeout applies when Verifier.Timeout is zero.
@@ -233,25 +260,167 @@ func (v Verifier) verifyBinary(ctx context.Context, s Session) (Result, error) {
 	}
 	defer cancel()
 
-	stdout, stderr, err := runSubprocess(subCtx, v.Binary.Command, stdinJSON, verifierEnv(s), s.SessionWorktree)
-	if err == nil {
-		reason := v.Binary.PassReason
-		if reason == "" {
-			reason = "passed"
-		}
-		return Result{Distance: 0, Reason: reason, Status: ipc.StatusOK}, nil
+	stdout, stderr, runErr := runSubprocess(subCtx, v.Binary.Command, stdinJSON, verifierEnv(s), s.SessionWorktree)
+
+	// Tiers 2-3: when structured extraction is configured, the findings are the
+	// signal independent of exit code (linters often exit non-zero merely
+	// because they reported findings).
+	if findings, active := v.extractBinaryFindings(s.SessionWorktree, stdout, stderr); active && len(findings) > 0 {
+		return finalizeResult(Result{Findings: findings, Status: ipc.StatusOK}), nil
 	}
-	reason := v.Binary.FailReason
-	if reason == "" {
-		reason = lastNonEmptyLine(stderr)
-		if reason == "" {
-			reason = lastNonEmptyLine(stdout)
+
+	if runErr == nil {
+		return finalizeResult(Result{Distance: 0, Reason: v.binaryPassReason(), Status: ipc.StatusOK}), nil
+	}
+	// Tier-1 floor: an exit-code-only binary (or a non-zero run with nothing
+	// extractable) can't attribute friction to a file, so a failure becomes one
+	// tree-global finding (finalizeResult wraps it).
+	return finalizeResult(Result{Distance: 1, Reason: v.binaryFailReason(stdout, stderr, runErr), Status: ipc.StatusOK}), nil
+}
+
+func (v Verifier) binaryPassReason() string {
+	if v.Binary.PassReason != "" {
+		return v.Binary.PassReason
+	}
+	return "passed"
+}
+
+func (v Verifier) binaryFailReason(stdout, stderr string, runErr error) string {
+	if v.Binary.FailReason != "" {
+		return v.Binary.FailReason
+	}
+	if r := lastNonEmptyLine(stderr); r != "" {
+		return r
+	}
+	if r := lastNonEmptyLine(stdout); r != "" {
+		return r
+	}
+	return runErr.Error()
+}
+
+// extractBinaryFindings runs the configured Tier-2/3 extractor. The bool reports
+// whether any extractor was active (so the caller can distinguish "no findings"
+// from "no extractor configured"). Precedence is Format > FailRegex.
+func (v Verifier) extractBinaryFindings(worktree, stdout, stderr string) ([]Finding, bool) {
+	switch {
+	case strings.EqualFold(v.Binary.Format, "sarif"):
+		data := stdout
+		if v.Binary.OutputFile != "" {
+			path := v.Binary.OutputFile
+			if !filepath.IsAbs(path) && worktree != "" {
+				path = filepath.Join(worktree, path)
+			}
+			b, err := os.ReadFile(filepath.Clean(path))
+			if err != nil {
+				return nil, true
+			}
+			data = string(b)
 		}
-		if reason == "" {
-			reason = err.Error()
+		return parseSARIF(data), true
+	case v.Binary.FailRegex != "":
+		return extractRegexFindings(v.Binary.FailRegex, stdout+"\n"+stderr), true
+	default:
+		return nil, false
+	}
+}
+
+// sarifLog is the minimal subset of the SARIF 2.1.0 schema we read: each run's
+// results with their level, message, and first physical location.
+type sarifLog struct {
+	Runs []struct {
+		Results []struct {
+			Level   string `json:"level"`
+			Message struct {
+				Text string `json:"text"`
+			} `json:"message"`
+			Locations []struct {
+				PhysicalLocation struct {
+					ArtifactLocation struct {
+						URI string `json:"uri"`
+					} `json:"artifactLocation"`
+					Region struct {
+						StartLine int `json:"startLine"`
+					} `json:"region"`
+				} `json:"physicalLocation"`
+			} `json:"locations"`
+		} `json:"results"`
+	} `json:"runs"`
+}
+
+// parseSARIF maps each SARIF result to a finding. Returns nil on unparseable
+// input so the caller falls back to the exit-code floor.
+func parseSARIF(data string) []Finding {
+	var log sarifLog
+	if err := json.Unmarshal([]byte(strings.TrimSpace(data)), &log); err != nil {
+		return nil
+	}
+	var out []Finding
+	for _, run := range log.Runs {
+		for _, res := range run.Results {
+			f := Finding{Reason: res.Message.Text, Distance: sarifLevelDistance(res.Level)}
+			if len(res.Locations) > 0 {
+				loc := res.Locations[0].PhysicalLocation
+				f.Path = loc.ArtifactLocation.URI
+				f.Line = loc.Region.StartLine
+			}
+			out = append(out, f)
 		}
 	}
-	return Result{Distance: 1, Reason: reason, Status: ipc.StatusOK}, nil
+	return out
+}
+
+// sarifLevelDistance is the fixed severity mapping (per the spec decision):
+// error 1.0, warning 0.5, note 0.25; anything else defaults to warning.
+func sarifLevelDistance(level string) float64 {
+	switch strings.ToLower(level) {
+	case "error":
+		return 1.0
+	case "note", "none":
+		return 0.25
+	case "warning":
+		return 0.5
+	default:
+		return 0.5
+	}
+}
+
+// extractRegexFindings runs a named-group regex over each line, emitting one
+// finding per match. Recognised groups: file, line, reason (or message), symbol.
+// Each finding takes the binary fail distance (1.0). Returns nil on a bad regex.
+func extractRegexFindings(pattern, text string) []Finding {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+	names := re.SubexpNames()
+	var out []Finding
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, "\r")
+		m := re.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		f := Finding{Distance: 1.0}
+		for i, name := range names {
+			if i == 0 || name == "" || i >= len(m) {
+				continue
+			}
+			switch name {
+			case "file":
+				f.Path = m[i]
+			case "line":
+				if n, err := strconv.Atoi(m[i]); err == nil {
+					f.Line = n
+				}
+			case "reason", "message":
+				f.Reason = m[i]
+			case "symbol":
+				f.Symbol = m[i]
+			}
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 func (v Verifier) prepare(ctx context.Context, s Session) ([]byte, context.Context, context.CancelFunc, error) {
@@ -318,15 +487,16 @@ func parseCommandResult(name, stdout string) (Result, error) {
 	if line := lastNonEmptyLine(stdout); line != "" {
 		var r Result
 		if err := json.Unmarshal([]byte(line), &r); err == nil {
-			return promoteOK(clampResult(r)), nil
+			return promoteOK(finalizeResult(r)), nil
 		}
 	}
-	// Robust path: scan for any top-level JSON object containing a "distance"
-	// field. Tolerates trailing log lines and JSON output mixed with prose.
-	if obj := findLastDistanceObject(stdout); obj != "" {
+	// Robust path: scan for any top-level JSON object that looks like a result
+	// (a "findings" or "distance" key). Tolerates trailing log lines and JSON
+	// output mixed with prose.
+	if obj := findLastResultObject(stdout); obj != "" {
 		var r Result
 		if err := json.Unmarshal([]byte(obj), &r); err == nil {
-			return promoteOK(clampResult(r)), nil
+			return promoteOK(finalizeResult(r)), nil
 		}
 	}
 	if strings.TrimSpace(stdout) == "" {
@@ -370,9 +540,9 @@ func parseAgentResult(name, agent, stdout string) (Result, error) {
 			}
 		}
 	}
-	obj := findLastDistanceObject(result)
+	obj := findLastResultObject(result)
 	if obj == "" {
-		obj = findLastDistanceObject(stdout)
+		obj = findLastResultObject(stdout)
 	}
 	if obj == "" {
 		return Result{
@@ -390,7 +560,7 @@ func parseAgentResult(name, agent, stdout string) (Result, error) {
 		}, nil
 	}
 	r.Usage = usage
-	return promoteOK(clampResult(r)), nil
+	return promoteOK(finalizeResult(r)), nil
 }
 
 // promoteOK fills in a missing Status field. Verifiers may explicitly set
@@ -403,14 +573,97 @@ func promoteOK(r Result) Result {
 	return r
 }
 
-func clampResult(r Result) Result {
-	if r.Distance < 0 {
-		r.Distance = 0
+// clamp01 constrains d to the [0, 1] distance scale.
+func clamp01(d float64) float64 {
+	if d < 0 {
+		return 0
 	}
-	if r.Distance > 1 {
-		r.Distance = 1
+	if d > 1 {
+		return 1
+	}
+	return d
+}
+
+// rollUpFindings reduces findings to their worst (max) distance — the roll-up
+// the compass scalar is derived from. Caller guarantees a non-empty slice.
+func rollUpFindings(findings []Finding) (float64, string) {
+	maxIdx := 0
+	for i := range findings {
+		if findings[i].Distance > findings[maxIdx].Distance {
+			maxIdx = i
+		}
+	}
+	return findings[maxIdx].Distance, findings[maxIdx].Reason
+}
+
+// finalizeResult reconciles a parsed result's two grains: findings drive the
+// scalar via roll-up, while a legacy scalar with friction (distance > 0) is
+// wrapped as one tree-global finding so back-compat output still produces a row.
+func finalizeResult(r Result) Result {
+	for i := range r.Findings {
+		r.Findings[i].Distance = clamp01(r.Findings[i].Distance)
+	}
+	if len(r.Findings) > 0 {
+		r.Distance, r.Reason = rollUpFindings(r.Findings)
+		return r
+	}
+	r.Distance = clamp01(r.Distance)
+	if r.Distance > 0 {
+		r.Findings = []Finding{{Distance: r.Distance, Reason: r.Reason}}
 	}
 	return r
+}
+
+// DefaultFindingsCap bounds findings stored per run so a noisy linter can't dump
+// thousands of rows; the lowest-distance overflow folds into one "+K more" marker.
+const DefaultFindingsCap = 50
+
+// normalizeFindingPath returns a clean repo-relative key for p against worktree.
+// A path that escapes the worktree (or can't be resolved) returns "" so it is
+// stored as a tree-global finding rather than under a bad key.
+func normalizeFindingPath(worktree, p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	if filepath.IsAbs(p) {
+		if worktree == "" {
+			return ""
+		}
+		rel, err := filepath.Rel(worktree, p)
+		if err != nil {
+			return ""
+		}
+		p = rel
+	}
+	p = filepath.Clean(p)
+	if p == "." || p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return filepath.ToSlash(p)
+}
+
+// prepareFindings normalizes finding paths and applies the cap, keeping the
+// highest-distance findings and folding the remainder into one "+K more" marker.
+func prepareFindings(findings []Finding, worktree string, cap int) []Finding {
+	if len(findings) == 0 {
+		return nil
+	}
+	out := make([]Finding, len(findings))
+	for i, f := range findings {
+		f.Path = normalizeFindingPath(worktree, f.Path)
+		out[i] = f
+	}
+	if cap > 0 && len(out) > cap {
+		sort.SliceStable(out, func(i, j int) bool { return out[i].Distance > out[j].Distance })
+		remainder := out[cap:]
+		marker := Finding{
+			Distance: remainder[0].Distance,
+			Reason:   fmt.Sprintf("+%d more findings beyond the cap of %d", len(remainder), cap),
+		}
+		out = append(out[:cap:cap], marker)
+	}
+	return out
 }
 
 func lastNonEmptyLine(s string) string {
@@ -423,17 +676,19 @@ func lastNonEmptyLine(s string) string {
 	return ""
 }
 
-// findLastDistanceObject scans s left-to-right for top-level JSON object
-// literals and returns the last one that contains a "distance" key. The
-// scanner is brace-aware and string-aware, so braces inside JSON strings
-// (e.g. inside reason text) do not break extraction. Returns "" if none.
+// findLastResultObject scans s left-to-right for top-level JSON object literals
+// and returns the last one that looks like a verifier result — it contains a
+// "findings" or "distance" key. The scanner is brace-aware and string-aware, so
+// braces inside JSON strings (e.g. inside reason text) do not break extraction.
+// Returns "" if none.
 //
 // This replaces the prior regex `\{[^{}]*"distance"[^{}]*\}` which silently
 // dropped any object containing nested braces or quoted text containing
 // braces — a class of false negatives that bucketed valid output as
 // "could-not-parse" and forced agents into a fabricated 0.5 score.
-func findLastDistanceObject(s string) string {
+func findLastResultObject(s string) string {
 	const distanceKey = `"distance"`
+	const findingsKey = `"findings"`
 	var best string
 	depth := 0
 	start := -1
@@ -469,9 +724,9 @@ func findLastDistanceObject(s string) string {
 			depth--
 			if depth == 0 && start >= 0 {
 				candidate := s[start : i+1]
-				// Cheap pre-check: look for the literal key. Won't false-match
+				// Cheap pre-check: look for either literal key. Won't false-match
 				// inside strings because we tracked them above.
-				if strings.Contains(candidate, distanceKey) {
+				if strings.Contains(candidate, findingsKey) || strings.Contains(candidate, distanceKey) {
 					best = candidate
 				}
 				start = -1
@@ -547,7 +802,15 @@ without -C will evaluate the wrong tree and produce a misleading score.
 After your evaluation, output exactly one final line of JSON, with no
 other text on that line:
 
-{"distance": <number 0.0..1.0>, "reason": "<one short sentence>"}
+{"findings": [{"path": "<repo-relative path under $SESSION_WORKTREE, or null if tree-wide>", "distance": <number 0.0..1.0>, "reason": "<one short sentence>"}]}
+
+- Emit one finding per file you can attribute a problem to. Paths MUST be
+  relative to $SESSION_WORKTREE.
+- If a judgment is genuinely tree-wide (e.g. the test suite does not pass),
+  emit a single finding with "path": null.
+- An empty findings array — {"findings": []} — means the goal is met for
+  your lens.
+- Reuse the score anchors below for each finding's distance.
 
 ### Score anchors (use these — don't invent your own scale)
 
@@ -578,8 +841,8 @@ flag the row as not-yet-evaluable, instead of fabricating a score.
 
 ### Reason field
 
-The reason is the single most load-bearing observation — what should
-change the agent's next decision — not a summary of what changed.
+Each finding's reason is the single most load-bearing observation — what
+should change the agent's next decision — not a summary of what changed.
 
 - No commentary after the JSON line.
 `, body, name, goal, base, worktree, files), nil
