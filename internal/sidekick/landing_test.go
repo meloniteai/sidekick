@@ -33,7 +33,7 @@ func TestLandingRenderShape(t *testing.T) {
 		"Verifiers", // section title
 		"Architect", "Test", "Security",
 		"N", "E", "S",
-		"↑/↓ choose", "space toggle", "enter start", "esc abort",
+		"↑/↓ choose", "space check-in", "enter start", "esc abort",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("landing view missing %q in:\n%s", want, out)

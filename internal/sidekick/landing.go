@@ -457,7 +457,7 @@ func landingConfigHelp(choices []LandingConfigChoice) string {
 }
 
 func landingVerifierHelp(hasBack bool) string {
-	help := "↑/↓ choose · space toggle · a all · enter start · esc abort"
+	help := "↑/↓ choose · space check-in · a all · enter start · esc abort"
 	if hasBack {
 		help = "b back · " + help
 	}
