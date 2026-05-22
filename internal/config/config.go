@@ -218,6 +218,25 @@ func SetVerifierDisabled(path, name string, disabled bool) error {
 	return fmt.Errorf("verifier %q not found in %s", name, path)
 }
 
+// RemoveVerifier deletes a verifier entry from sidekick.yaml by name. Matching
+// is case-insensitive to mirror the CLI remove command.
+func RemoveVerifier(path, name string) (VerifierSpec, string, error) {
+	f, path, err := Load(path)
+	if err != nil {
+		return VerifierSpec{}, "", err
+	}
+	for i, v := range f.Verifiers {
+		if strings.EqualFold(v.Name, name) {
+			f.Verifiers = append(f.Verifiers[:i], f.Verifiers[i+1:]...)
+			if err := Save(path, f); err != nil {
+				return VerifierSpec{}, path, err
+			}
+			return v, path, nil
+		}
+	}
+	return VerifierSpec{}, path, fmt.Errorf("verifier %q not found in %s", name, path)
+}
+
 // WriteFileAtomic writes data to path via a temp file + rename so readers never
 // observe a torn write. Shared by config saves and the verifier installer/editor.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {

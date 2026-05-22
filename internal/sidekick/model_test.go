@@ -171,6 +171,63 @@ func TestModelFooterBrowserActionsUseSelectedVerifier(t *testing.T) {
 	}
 }
 
+func TestModelStatusDeleteRequiresConfirmation(t *testing.T) {
+	state := daemon.NewState()
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Architect", Direction: "N", Distance: 0.4})
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Test", Direction: "E", Distance: 0.5})
+	deleted := ""
+	m := New(state).WithDeleteVerifier(func(name string) (string, error) {
+		deleted = name
+		state.ReplaceVerifiers([]ipc.VerifierStatus{{Name: "Test", Direction: "E", Distance: 1.0}})
+		return "removed " + name, nil
+	})
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	m = next.(Model)
+	if m.status == nil || !m.status.confirmDelete {
+		t.Fatalf("d should arm delete confirmation, status=%#v", m.status)
+	}
+	if m.status.deleteYes {
+		t.Fatal("delete confirmation should start on No")
+	}
+	if deleted != "" {
+		t.Fatalf("delete callback should not run before confirmation, got %q", deleted)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if m.status == nil || m.status.confirmDelete {
+		t.Fatalf("enter on selected No should cancel delete confirmation, status=%#v", m.status)
+	}
+	if deleted != "" {
+		t.Fatalf("delete callback should not run on selected No, got %q", deleted)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	m = next.(Model)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(Model)
+	if m.status == nil || !m.status.deleteYes {
+		t.Fatalf("right should select Yes, status=%#v", m.status)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(Model)
+	if deleted != "Architect" {
+		t.Fatalf("delete callback got %q, want Architect", deleted)
+	}
+	if m.status != nil {
+		t.Fatal("status wizard should close after confirmed delete")
+	}
+	if len(m.snapshot.Verifiers) != 1 || m.snapshot.Verifiers[0].Name != "Test" {
+		t.Fatalf("snapshot after delete = %+v", m.snapshot.Verifiers)
+	}
+	if m.footerNotice != "removed Architect" {
+		t.Fatalf("footer notice = %q, want removed Architect", m.footerNotice)
+	}
+}
+
 func TestRefreshOrbsSnapsThenSpringsToNewTarget(t *testing.T) {
 	state := daemon.NewState()
 	state.UpsertVerifier(ipc.VerifierStatus{Name: "Tests", Direction: "E", Distance: 0.2})

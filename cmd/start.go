@@ -331,6 +331,22 @@ func bindStart(cmd *cobra.Command) {
 			}
 			return fmt.Sprintf("copied %s to %s", res.FinalName, res.Path), nil
 		}
+		deleteVerifier := func(name string) (string, error) {
+			session := daemonRegistry.DisplayedSession()
+			path := runtimes.ConfigPath(session)
+			if path == "" {
+				return "", fmt.Errorf("no active sidekick.yaml")
+			}
+			removed, savedPath, err := config.RemoveVerifier(path, name)
+			if err != nil {
+				return "", err
+			}
+			if err := reloadConfig(); err != nil {
+				return "", err
+			}
+			session.LogEvent(daemon.EventInfo, "removed verifier %s from %s", removed.Name, savedPath)
+			return fmt.Sprintf("removed %s", removed.Name), nil
+		}
 		p := tea.NewProgram(
 			sidekicktui.NewRegistry(daemonRegistry).
 				WithManualTrigger(manualTrigger).
@@ -361,6 +377,7 @@ func bindStart(cmd *cobra.Command) {
 				WithConfigPathFunc(func() string { return runtimes.ConfigPath(daemonRegistry.DisplayedSession()) }).
 				WithConfigInstalled(adoptConfig).
 				WithCopyVerifier(copyVerifier).
+				WithDeleteVerifier(deleteVerifier).
 				WithConfigSaved(reloadConfig),
 			tea.WithAltScreen(),
 		)
