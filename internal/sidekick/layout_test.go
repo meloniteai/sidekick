@@ -52,16 +52,12 @@ func TestProjectUnknownDirection(t *testing.T) {
 	}
 }
 
-func TestOrbStyleUsesBoldWhite(t *testing.T) {
-	cases := []float64{0.0, 0.25, 0.26, 0.50, 0.51, 0.75, 0.76, 1.0}
-	for _, d := range cases {
-		style := orbStyle(d)
-		got := string(style.GetForeground().(lipgloss.Color))
-		if got != "231" {
-			t.Errorf("orbStyle(%.2f): got %q, want %q", d, got, "231")
-		}
-		if !style.GetBold() {
-			t.Errorf("orbStyle(%.2f): bold = false, want true", d)
-		}
+func TestCompassNeedleStyleUsesBoldGreen(t *testing.T) {
+	got := string(styleCompassNeedle.GetForeground().(lipgloss.Color))
+	if got != "10" {
+		t.Errorf("needle foreground = %q, want bright green 10", got)
+	}
+	if !styleCompassNeedle.GetBold() {
+		t.Error("needle should be bold")
 	}
 }

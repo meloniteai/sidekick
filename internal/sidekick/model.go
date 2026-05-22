@@ -3,11 +3,9 @@ package sidekick
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/harmonica"
 
 	"github.com/meloniteai/sidekick/internal/daemon"
 	"github.com/meloniteai/sidekick/internal/gitstats"
@@ -34,28 +32,24 @@ const gitRefreshTicks = 30
 
 type tickMsg time.Time
 
-// orbSpring tracks a verifier orb's smoothed position in normalized
-// compass-plane coordinates. We spring on (x, y) ∈ [-1, 1]² rather than on
-// raw grid cells so the spring state is independent of window resizes, and
-// only project to integer cells at render time. Snap-without-spring on the
-// first observation of a verifier so reconnecting to a running daemon
-// doesn't paint a glide-from-center on the first frame.
-type orbSpring struct {
-	x, y   float64
-	vx, vy float64
-	armed  bool
-}
-
 // arrowAnim tracks a per-verifier compass-plane animation. Each time a
 // verifier's ComputedAt advances (i.e. a new computation cycle lands because
-// of a code change), we restart the animation so the user can see which
-// verifier just got refreshed.
+// of a code change), we restart the animation window that can drive the
+// central compass needle toward that verifier's configured direction.
 type arrowAnim struct {
 	lastComputed time.Time
 	startTick    int     // tick at which the animation began; 0 if never animated
 	armed        bool    // true once we've observed the verifier at least once (suppresses startup flash)
 	lastDistance float64 // distance at the time of the last observation
 	inward       bool    // true if distance decreased (moving toward the goal)
+}
+
+// needleState tracks the green center triangle. direction and target are
+// indexes into needleDirectionOrder.
+type needleState struct {
+	direction   int
+	target      int
+	initialized bool
 }
 
 // Model is the Bubble Tea model. It pulls snapshots directly from the daemon
@@ -95,10 +89,9 @@ type Model struct {
 	// without scheduling an animation, so the TUI doesn't flash on startup
 	// for verifiers that already have a ComputedAt from a previous batch.
 	anims map[string]arrowAnim
-	// orbs holds the spring-smoothed position of each verifier orb in
-	// normalized compass coordinates. Updated every tick by orbSpringCfg.
-	orbs         map[string]orbSpring
-	orbSpringCfg harmonica.Spring
+	// needle is the central compass indicator. Verifier activity updates its
+	// target; each tick advances it one octant clockwise or counter-clockwise.
+	needle needleState
 	// workspace caches the last gitstats fetch and the tick at which we
 	// performed it. gitstats.Fetch shells out to git and we don't want to
 	// do that on every render frame.
@@ -114,11 +107,6 @@ func New(state *daemon.State) Model {
 		snapshot: state.Snapshot(),
 		events:   state.Events(),
 		anims:    map[string]arrowAnim{},
-		orbs:     map[string]orbSpring{},
-		// Critically damped so the orb settles onto its target without
-		// bouncing past it — overshoot would briefly paint a misleading
-		// "further from goal than it actually is" distance reading.
-		orbSpringCfg: harmonica.NewSpring(tickInterval.Seconds(), 7.0, 1.0),
 	}
 }
 
@@ -250,7 +238,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.footerNoticeUntil = 0
 		}
 		m.refreshAnims()
-		m.refreshOrbs()
+		m.refreshNeedle()
 		m.refreshWorkspace()
 		m.refreshGitPanel()
 		m.refreshTelemetryPanel(false)
@@ -772,69 +760,6 @@ func (m *Model) refreshAnims() {
 	}
 }
 
-// refreshOrbs advances the per-verifier position springs toward each orb's
-// projected target in normalized compass coordinates. Direction+distance are
-// converted to (x, y) ∈ [-1, 1]²; the spring then eases the rendered position
-// toward that target over a handful of ticks.
-//
-// On first observation we snap to the target without springing — that way a
-// fresh TUI attached to an already-running daemon doesn't paint a glide-in
-// from the center for every verifier.
-//
-// Disabled verifiers are skipped entirely (renderGrid won't draw them); we do
-// not reset their spring state, so re-enabling them resumes from where they
-// left off rather than jumping back to center.
-func (m *Model) refreshOrbs() {
-	if m.orbs == nil {
-		m.orbs = make(map[string]orbSpring, len(m.snapshot.Verifiers))
-	}
-	for _, v := range m.snapshot.Verifiers {
-		if v.Disabled {
-			continue
-		}
-		tx, ty, ok := orbTargetXY(v.Direction, v.Distance)
-		if !ok {
-			continue
-		}
-		o, seen := m.orbs[v.Name]
-		if !seen || !o.armed {
-			m.orbs[v.Name] = orbSpring{x: tx, y: ty, armed: true}
-			continue
-		}
-		o.x, o.vx = m.orbSpringCfg.Update(o.x, o.vx, tx)
-		o.y, o.vy = m.orbSpringCfg.Update(o.y, o.vy, ty)
-		m.orbs[v.Name] = o
-	}
-}
-
-// orbTargetXY converts a (direction, distance) pair to the normalized
-// compass-plane target used by the orb springs. Returns ok=false for an
-// unknown direction string. The y axis is screen-down to match grid coords.
-func orbTargetXY(direction string, distance float64) (x, y float64, ok bool) {
-	θ, ok := directionAngle[direction]
-	if !ok {
-		return 0, 0, false
-	}
-	if distance < 0 {
-		distance = 0
-	}
-	if distance > 1 {
-		distance = 1
-	}
-	return math.Cos(θ) * distance, -math.Sin(θ) * distance, true
-}
-
-// orbPosition returns the smoothed (col, row) for a verifier on a grid of the
-// given size. Falls back to the canonical project() call when no spring state
-// exists yet so callers (e.g. tests) that never tick still render sensibly.
-func (m Model) orbPosition(name, direction string, distance float64, w, h int) (col, row int, ok bool) {
-	o, seen := m.orbs[name]
-	if !seen || !o.armed {
-		return project(direction, distance, w, h)
-	}
-	return projectXY(o.x, o.y, w, h)
-}
-
 // calibPeriod is the total ping-pong cycle length (out + back) for the
 // calibrating animation. At 133ms per tick this gives ~1.33s per cycle.
 const calibPeriod = arrowAnimFrames * 2
@@ -873,4 +798,94 @@ func (m Model) animInfo(name string, running bool) (frame int, active bool, inwa
 func (m Model) animFrame(name string, running bool) (int, bool) {
 	frame, active, _, _ := m.animInfo(name, running)
 	return frame, active
+}
+
+var needleDirectionOrder = []string{"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
+
+const needlePickPeriod = 8
+
+type needleCandidate struct {
+	name      string
+	direction string
+	computed  time.Time
+}
+
+// refreshNeedle points the center triangle toward one active verifier and then
+// moves one octant per tick. If several verifiers are active, the chosen source
+// is intentionally pseudo-random so repeated all-verifier batches don't always
+// privilege the first configured verifier.
+func (m *Model) refreshNeedle() {
+	target, ok := m.needleTarget()
+	if !m.needle.initialized {
+		m.needle.initialized = true
+		m.needle.direction = 0
+		m.needle.target = 0
+	}
+	if ok {
+		m.needle.target = target
+	}
+	if m.needle.direction == m.needle.target {
+		return
+	}
+	n := len(needleDirectionOrder)
+	clockwise := (m.needle.target - m.needle.direction + n) % n
+	counter := (m.needle.direction - m.needle.target + n) % n
+	if clockwise <= counter {
+		m.needle.direction = (m.needle.direction + 1) % n
+		return
+	}
+	m.needle.direction = (m.needle.direction + n - 1) % n
+}
+
+func (m Model) needleTarget() (int, bool) {
+	var running []needleCandidate
+	var recent []needleCandidate
+	for _, v := range m.snapshot.Verifiers {
+		if v.Disabled {
+			continue
+		}
+		if _, ok := needleDirectionIndex(v.Direction); !ok {
+			continue
+		}
+		c := needleCandidate{name: v.Name, direction: v.Direction, computed: v.ComputedAt}
+		if v.Running {
+			running = append(running, c)
+			continue
+		}
+		if _, active, _, _ := m.animInfo(v.Name, false); active {
+			recent = append(recent, c)
+		}
+	}
+	candidates := recent
+	if len(running) > 0 {
+		candidates = running
+	}
+	if len(candidates) == 0 {
+		return 0, false
+	}
+	picked := candidates[pseudoRandomNeedlePick(candidates, m.tick)]
+	return needleDirectionIndex(picked.direction)
+}
+
+func needleDirectionIndex(direction string) (int, bool) {
+	for i, d := range needleDirectionOrder {
+		if direction == d {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func pseudoRandomNeedlePick(candidates []needleCandidate, tick int) int {
+	if len(candidates) == 1 {
+		return 0
+	}
+	seed := uint64(tick/needlePickPeriod + len(candidates)*17)
+	for _, c := range candidates {
+		for _, r := range c.name {
+			seed = seed*33 + uint64(r)
+		}
+		seed += uint64(c.computed.UnixNano())
+	}
+	return int(seed % uint64(len(candidates)))
 }
