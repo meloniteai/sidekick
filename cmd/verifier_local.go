@@ -478,8 +478,9 @@ func warnLocalCommand(out io.Writer, configDir, raw string) {
 }
 
 func looksLikeLocalScriptPath(p string) bool {
+	clean := filepath.Clean(p)
 	switch {
-	case strings.HasPrefix(p, "./"), strings.HasPrefix(p, "../"), strings.HasPrefix(p, "~/"), strings.HasPrefix(p, "/"):
+	case strings.HasPrefix(p, "./"), strings.HasPrefix(p, "../"), strings.HasPrefix(p, "~/"), strings.HasPrefix(p, "/"), clean == ".sidekick", strings.HasPrefix(clean, ".sidekick"+string(os.PathSeparator)):
 		return true
 	}
 	return false

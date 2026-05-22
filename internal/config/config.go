@@ -594,7 +594,7 @@ func checkLocalScript(verifierName, raw, resolved string) error {
 
 func looksLikeLocalScript(p string) bool {
 	switch {
-	case strings.HasPrefix(p, "./"), strings.HasPrefix(p, "../"), strings.HasPrefix(p, "~/"), strings.HasPrefix(p, "/"):
+	case strings.HasPrefix(p, "./"), strings.HasPrefix(p, "../"), strings.HasPrefix(p, "~/"), strings.HasPrefix(p, "/"), isSidekickRelativePath(p):
 		return true
 	}
 	return false
@@ -608,13 +608,25 @@ func resolveCommand(configDir string, in []string) []string {
 	return cmd
 }
 
-// ResolveLocalPath resolves the local path forms accepted by sidekick.yaml against
-// configDir. Non-local command names are returned unchanged.
+// ResolveLocalPath resolves the local path forms accepted by sidekick.yaml
+// against configDir. Non-local command names are returned unchanged.
+//
+// For project-scoped configs at <repo>/.sidekick/sidekick.yaml, .sidekick/...
+// is accepted as repo-root-relative syntax and resolves to the same file a user
+// sees from their shell. This keeps project YAML readable without making it
+// host-specific.
 func ResolveLocalPath(configDir, p string) string {
 	if strings.HasPrefix(p, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
 			p = filepath.Join(home, p[2:])
 		}
+	}
+	if isSidekickRelativePath(p) {
+		base := configDir
+		if filepath.Base(filepath.Clean(configDir)) == ".sidekick" {
+			base = filepath.Dir(configDir)
+		}
+		return filepath.Join(base, p)
 	}
 	if strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") {
 		return filepath.Join(configDir, p)
@@ -624,6 +636,11 @@ func ResolveLocalPath(configDir, p string) string {
 
 func resolveLocalPath(configDir, p string) string {
 	return ResolveLocalPath(configDir, p)
+}
+
+func isSidekickRelativePath(p string) bool {
+	clean := filepath.Clean(p)
+	return clean == ".sidekick" || strings.HasPrefix(clean, ".sidekick"+string(os.PathSeparator))
 }
 
 // findUpwards searches for `name` starting at cwd and walking up to the

@@ -547,6 +547,40 @@ func TestSkillFileExistenceChecked(t *testing.T) {
 	}
 }
 
+func TestResolveProjectSidekickRelativeSkill(t *testing.T) {
+	repo := t.TempDir()
+	sidekickDir := filepath.Join(repo, ".sidekick")
+	if err := os.MkdirAll(filepath.Join(sidekickDir, "skills", "architect"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skill := filepath.Join(sidekickDir, "skills", "architect", "SKILL.md")
+	if err := os.WriteFile(skill, []byte("# Architect\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(sidekickDir, "sidekick.yaml")
+	if err := os.WriteFile(p, []byte(`verifiers:
+  - name: Architect
+    type: agent
+    direction: N
+    llm:
+      skill: .sidekick/skills/architect/SKILL.md
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	f, _, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs, err := f.Resolve(filepath.Dir(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := filepath.Clean(vs[0].Agent.Skill); got != skill {
+		t.Fatalf("resolved skill = %q, want %q", got, skill)
+	}
+}
+
 // TestCustomAgentRequiresCommand asserts the new agent: custom path
 // validates llm.custom.command at config load.
 func TestCustomAgentRequiresCommand(t *testing.T) {

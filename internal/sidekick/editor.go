@@ -530,7 +530,7 @@ func (w *EditWizard) startMetadata() {
 	w.errMsg = ""
 	w.message = ""
 	w.selectForm = nil
-	raw, err := yaml.Marshal(w.file.Verifiers[w.selected])
+	raw, err := yaml.Marshal(w.metadataSpecForDisplay(w.file.Verifiers[w.selected]))
 	if err != nil {
 		w.errMsg = err.Error()
 		w.text = newTextBuffer("")
@@ -611,7 +611,7 @@ func (w *EditWizard) startCreateConfig() {
 	w.message = ""
 	w.createTypeForm = nil
 	w.draft.Type = w.createKind
-	w.text = newTextBuffer(defaultCreateConfig(w.createKind, w.draft.Name))
+	w.text = newTextBuffer(w.defaultCreateConfig())
 }
 
 func (w *EditWizard) startCreateSkill() {
@@ -813,6 +813,16 @@ func (w EditWizard) selectedSkill() (path string, editable bool, note string) {
 	return "", false, ""
 }
 
+func (w EditWizard) metadataSpecForDisplay(vs config.VerifierSpec) config.VerifierSpec {
+	if strings.TrimSpace(vs.LLM.Skill) == "" {
+		return vs
+	}
+	if display, ok := w.projectDisplayPath(config.ResolveLocalPath(w.configDir, vs.LLM.Skill)); ok {
+		vs.LLM.Skill = display
+	}
+	return vs
+}
+
 func (w EditWizard) selectedRemotePinned() bool {
 	if w.selected < 0 || w.selected >= len(w.file.Verifiers) {
 		return false
@@ -849,6 +859,40 @@ func (w EditWizard) draftSkillPathForWrite() (string, error) {
 		return "", fmt.Errorf("skill file writes must stay inside %s; ctrl+n saves config only", base)
 	}
 	return absPath, nil
+}
+
+func (w EditWizard) defaultCreateConfig() string {
+	return defaultCreateConfig(w.createKind, w.draft.Name, w.defaultProjectPath)
+}
+
+func (w EditWizard) defaultProjectPath(rel string) string {
+	if !w.usesProjectSidekickDir() {
+		return "./" + filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(filepath.Join(".sidekick", rel))
+}
+
+func (w EditWizard) projectDisplayPath(absPath string) (string, bool) {
+	if !w.usesProjectSidekickDir() || absPath == "" {
+		return "", false
+	}
+	base, err := filepath.Abs(w.configDir)
+	if err != nil {
+		return "", false
+	}
+	abs, err := filepath.Abs(absPath)
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(base, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", false
+	}
+	return filepath.ToSlash(filepath.Join(".sidekick", rel)), true
+}
+
+func (w EditWizard) usesProjectSidekickDir() bool {
+	return !w.globalConfig && filepath.Base(filepath.Clean(w.configDir)) == ".sidekick"
 }
 
 // View renders the wizard as a centered popup that mirrors the palette and
@@ -1056,11 +1100,16 @@ func isCreateDirection(dir string) bool {
 	}
 }
 
-func defaultCreateConfig(kind, name string) string {
+func defaultCreateConfig(kind, name string, localPath func(string) string) string {
+	if localPath == nil {
+		localPath = func(rel string) string {
+			return "./" + filepath.ToSlash(rel)
+		}
+	}
 	slug := slugifyVerifierName(name)
 	switch kind {
 	case createTypeCommand:
-		return "command:\n  - ./verifiers/" + slug + ".sh\n"
+		return "command:\n  - " + localPath(filepath.Join("verifiers", slug+".sh")) + "\n"
 	case createTypeBinary:
 		return `binary:
   command:
@@ -1071,7 +1120,7 @@ func defaultCreateConfig(kind, name string) string {
   fail_reason: checks failed
 `
 	default:
-		return "llm:\n  agent: claude\n  model: \"\"\n  thinking: \"\"\n  skill: ./skills/" + slug + "/SKILL.md\n"
+		return "llm:\n  agent: claude\n  model: \"\"\n  thinking: \"\"\n  skill: " + localPath(filepath.Join("skills", slug, "SKILL.md")) + "\n"
 	}
 }
 

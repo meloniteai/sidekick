@@ -44,6 +44,32 @@ func writeEditorFixture(t *testing.T) (string, string) {
 	return cfg, skill
 }
 
+func writeProjectEditorFixture(t *testing.T) (string, string) {
+	t.Helper()
+	repo := t.TempDir()
+	sidekickDir := filepath.Join(repo, ".sidekick")
+	skill := filepath.Join(sidekickDir, "skills", "architect", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skill, []byte("# Old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(sidekickDir, "sidekick.yaml")
+	if err := os.WriteFile(cfg, []byte(`verifiers:
+  - name: Architect
+    type: agent
+    direction: N
+    timeout: 90s
+    llm:
+      agent: claude
+      skill: ./skills/architect/SKILL.md
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return cfg, skill
+}
+
 func TestEditWizardSavesMetadataAndSkill(t *testing.T) {
 	cfg, skill := writeEditorFixture(t)
 	w := NewEditWizard(cfg)
@@ -90,6 +116,40 @@ llm:
 	}
 	if string(raw) != "# New\nupdated rubric\n" {
 		t.Fatalf("skill not saved: %q", raw)
+	}
+}
+
+func TestEditWizardShowsProjectSkillPathFromRepoRoot(t *testing.T) {
+	cfg, skill := writeProjectEditorFixture(t)
+	w := NewEditWizard(cfg)
+
+	next, _, done := w.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	w = next
+	if done || w.phase != editMetadata {
+		t.Fatalf("enter should open metadata step, phase=%v done=%v", w.phase, done)
+	}
+	if strings.Contains(w.text.String(), "skill: ./skills/architect/SKILL.md") {
+		t.Fatalf("metadata should not show config-dir-relative skill path:\n%s", w.text.String())
+	}
+	if !strings.Contains(w.text.String(), "skill: .sidekick/skills/architect/SKILL.md") {
+		t.Fatalf("metadata should show repo-root-relative .sidekick skill path:\n%s", w.text.String())
+	}
+
+	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if done || w.phase != editSkill || w.errMsg != "" {
+		t.Fatalf("ctrl+s should save metadata and continue, phase=%v done=%v err=%q", w.phase, done, w.errMsg)
+	}
+	if filepath.Clean(w.skillFile) != skill {
+		t.Fatalf("skill file = %q, want %q", w.skillFile, skill)
+	}
+
+	f, _, err := config.Load(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Verifiers[0].LLM.Skill; got != ".sidekick/skills/architect/SKILL.md" {
+		t.Fatalf("saved skill = %q, want .sidekick/skills/architect/SKILL.md", got)
 	}
 }
 
@@ -376,6 +436,28 @@ disabled: false`)
 	}
 	if string(raw) != "# Quality\nscore the session\n" {
 		t.Fatalf("skill content = %q", raw)
+	}
+}
+
+func TestCreateWizardDefaultsProjectSkillPathFromRepoRoot(t *testing.T) {
+	cfg, _ := writeProjectEditorFixture(t)
+	w := NewCreateWizard(cfg)
+	w.text = newTextBuffer(`name: Quality
+direction: E
+timeout: 2m
+disabled: false`)
+	next, _, done := w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if done || w.phase != editCreateType {
+		t.Fatalf("basics should continue to type, phase=%v done=%v err=%q", w.phase, done, w.errMsg)
+	}
+	next, _, done = w.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	w = next
+	if done || w.phase != editCreateConfig {
+		t.Fatalf("type should continue to config, phase=%v done=%v err=%q", w.phase, done, w.errMsg)
+	}
+	if !strings.Contains(w.text.String(), "skill: .sidekick/skills/quality/SKILL.md") {
+		t.Fatalf("project default skill path should be .sidekick-relative:\n%s", w.text.String())
 	}
 }
 
