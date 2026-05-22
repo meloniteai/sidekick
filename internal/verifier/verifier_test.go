@@ -157,6 +157,9 @@ Rubric body.
 		`"findings"`,
 		`"distance": <number 0.0..1.0>`,
 		`emit a single finding with "path": null`,
+		// A top-level reason must always be requested so a clean pass still
+		// surfaces feedback on the compass.
+		`Always set the top-level "reason"`,
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
@@ -402,6 +405,20 @@ func TestFinalizeResultRollup(t *testing.T) {
 	r = finalizeResult(Result{Distance: 0, Reason: "passed"})
 	if len(r.Findings) != 0 || r.Distance != 0 {
 		t.Fatalf("pass got %d findings / distance %v, want 0/0", len(r.Findings), r.Distance)
+	}
+
+	// An empty findings set with a top-level reason keeps that reason — a clean
+	// pass still surfaces feedback on the compass.
+	r = finalizeResult(Result{Reason: "comments are concise"})
+	if r.Distance != 0 || len(r.Findings) != 0 || r.Reason != "comments are concise" {
+		t.Fatalf("pass-with-reason got %+v", r)
+	}
+
+	// A clean pass with no reason at all gets a non-blank default so the compass
+	// never shows an empty cell.
+	r = finalizeResult(Result{})
+	if r.Reason == "" {
+		t.Fatalf("empty result should receive a default reason, got blank")
 	}
 }
 

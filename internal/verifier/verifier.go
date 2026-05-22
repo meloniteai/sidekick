@@ -610,6 +610,10 @@ func finalizeResult(r Result) Result {
 	r.Distance = clamp01(r.Distance)
 	if r.Distance > 0 {
 		r.Findings = []Finding{{Distance: r.Distance, Reason: r.Reason}}
+	} else if r.Reason == "" {
+		// A clean pass with no findings still needs a human-readable reason so
+		// the compass shows why, not a blank cell.
+		r.Reason = "no issues found for this lens"
 	}
 	return r
 }
@@ -802,14 +806,16 @@ without -C will evaluate the wrong tree and produce a misleading score.
 After your evaluation, output exactly one final line of JSON, with no
 other text on that line:
 
-{"findings": [{"path": "<repo-relative path under $SESSION_WORKTREE, or null if tree-wide>", "distance": <number 0.0..1.0>, "reason": "<one short sentence>"}]}
+{"reason": "<one short sentence: your overall judgment>", "findings": [{"path": "<repo-relative path under $SESSION_WORKTREE, or null if tree-wide>", "distance": <number 0.0..1.0>, "reason": "<one short sentence>"}]}
 
+- Always set the top-level "reason" to a one-sentence overall judgment — even
+  when there are no findings — so the compass always shows why.
 - Emit one finding per file you can attribute a problem to. Paths MUST be
   relative to $SESSION_WORKTREE.
 - If a judgment is genuinely tree-wide (e.g. the test suite does not pass),
   emit a single finding with "path": null.
-- An empty findings array — {"findings": []} — means the goal is met for
-  your lens.
+- An empty findings array means the goal is met for your lens; still give the
+  top-level reason (e.g. "comments are concise and purposeful").
 - Reuse the score anchors below for each finding's distance.
 
 ### Score anchors (use these — don't invent your own scale)
