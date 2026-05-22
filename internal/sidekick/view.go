@@ -65,7 +65,8 @@ var (
 	styleGoalDot       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Background(brandBgColor)
 	styleAxis          = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
 	styleRunning       = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Background(brandBgColor)
-	styleVerifierLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("211")).Background(brandBgColor).Bold(true)
+	styleVerifierLabel = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor).Bold(true)
+	styleCompassOrb    = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(brandBgColor).Bold(true)
 	styleReason        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
 	styleGoalLbl       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Background(brandBgColor)
 	styleArrowOutHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
@@ -148,22 +149,11 @@ func verifierMarkerGlyph(index int) rune {
 	return verifierMarkerGlyphs[index%len(verifierMarkerGlyphs)]
 }
 
-// orbStyle returns the foreground style for a verifier orb at distance d
-// (0 = on the goal circle, 1 = maximally far). The bucketed gradient lets
-// the user perceive closeness at a glance even without reading the list.
-func orbStyle(d float64) lipgloss.Style {
-	var color lipgloss.Color
-	switch {
-	case d <= 0.25:
-		color = lipgloss.Color("10") // bright green — on/near the goal
-	case d <= 0.50:
-		color = lipgloss.Color("11") // yellow
-	case d <= 0.75:
-		color = lipgloss.Color("208") // orange
-	default:
-		color = lipgloss.Color("9") // bright red — far
-	}
-	return lipgloss.NewStyle().Foreground(color).Background(brandBgColor).Bold(true)
+// orbStyle returns the foreground style for verifier orbs. Distance affects
+// placement only; compass color stays bold white instead of encoding scoring
+// severity.
+func orbStyle(float64) lipgloss.Style {
+	return styleCompassOrb
 }
 
 // View satisfies tea.Model.
@@ -521,11 +511,11 @@ func (m Model) renderGitHeaderRow(contentW int) string {
 	}
 	row := styleHeaderLabel.Render("git: ")
 	if ws.WorktreeName != "" {
-		row += ws.WorktreeName
+		row += styleGitBranch.Render(ws.WorktreeName)
 	}
 	if ws.Branch != "" {
 		if ws.WorktreeName != "" {
-			row += styleHeaderLabel.Render("/")
+			row += styleGitBranch.Render("/")
 		}
 		row += styleGitBranch.Render(ws.Branch)
 	}
@@ -744,7 +734,7 @@ func (m Model) renderGrid(w, h int) string {
 			labelHere := false
 			for _, p := range placements {
 				if !p.marker && p.col == c && p.row == r {
-					sb.WriteString(styleVerifierLabel.Render(string(p.glyph)))
+					sb.WriteString(styleCompassOrb.Render(string(p.glyph)))
 					labelHere = true
 					break
 				}
@@ -1278,7 +1268,7 @@ func renderStatusCell(v ipc.VerifierStatus, width, tick int) string {
 		style = stylePendingBadge
 	default:
 		text = fmt.Sprintf("d=%.2f", v.Distance)
-		style = orbStyle(v.Distance)
+		style = styleVerifierLabel
 	}
 	return styledTableCell(text, width, style)
 }

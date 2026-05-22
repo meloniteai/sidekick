@@ -81,29 +81,10 @@ func sparkleGlyph(tick int) rune {
 	return frames[((tick)%len(frames)+len(frames))%len(frames)]
 }
 
-// orbStyleFlare extends orbStyle with a tick-driven shimmer for orbs that
-// are very close to the goal. The base distance colour still wins overall
-// hue (you can tell green from red); we just oscillate the lightness so the
-// orb visibly throbs as it converges.
+// orbStyleFlare keeps the compass verifier marker bold white. Distance still
+// drives placement, but not marker color.
 func orbStyleFlare(d float64, tick int) lipgloss.Style {
-	switch {
-	case d <= 0.12:
-		// shimmering bright green→white
-		phase := float64(tick%flarePeriod) / flarePeriod
-		t := 0.5 + 0.5*math.Sin(2*math.Pi*phase)
-		base, _ := colorful.Hex("#5fff5f")
-		hot, _ := colorful.Hex("#ffffff")
-		mix := base.BlendLab(hot, t).Clamped()
-		return lipgloss.NewStyle().Foreground(lipgloss.Color(mix.Hex())).Background(brandBgColor).Bold(true)
-	case d <= 0.25:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
-	case d <= 0.50:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Background(brandBgColor).Bold(true)
-	case d <= 0.75:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Background(brandBgColor).Bold(true)
-	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
-	}
+	return orbStyle(d)
 }
 
 // brailleSpinner returns the next frame of a smooth braille spinner.

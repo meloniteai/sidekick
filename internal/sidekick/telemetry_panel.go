@@ -233,10 +233,11 @@ func (m Model) telemetrySummaryRows(sum telemetry.Summary, innerW, maxLines int)
 }
 
 // verifierSparkRow renders one verifier line: name, its distance sparkline
-// (most-recent sparkW runs), and the latest distance coloured by closeness.
+// (most-recent sparkW runs), and the latest distance coloured by telemetry
+// severity: exact zero is white, anything else is red.
 func verifierSparkRow(v telemetry.VerifierSeries, innerW, nameW, sparkW, valueW int) string {
 	name := padCell(styleVerifierLabel.Render(truncate(v.Name, nameW)), nameW)
-	value := orbStyle(v.Last).Render(fmt.Sprintf("%.2f", v.Last))
+	value := telemetryDistanceStyle(v.Last).Render(fmt.Sprintf("%.2f", v.Last))
 
 	var middle string
 	if sparkW > 0 {
@@ -247,9 +248,9 @@ func verifierSparkRow(v telemetry.VerifierSeries, innerW, nameW, sparkW, valueW 
 	return padCell(row, innerW) + ansi.ResetStyle
 }
 
-// distanceSparkline renders the trailing `cells` points as block glyphs, each
-// coloured by its own distance (green near goal → red far). Distances are
-// clamped to [0,1] — the same normalised domain the compass orbs use.
+// distanceSparkline renders the trailing `cells` points as block glyphs. The
+// glyph height still follows distance, while color stays binary for telemetry:
+// exact zero is white, anything else is red.
 func distanceSparkline(points []telemetry.DistancePoint, cells int) string {
 	if cells <= 0 || len(points) == 0 {
 		return ""
@@ -273,9 +274,16 @@ func distanceSparkline(points []telemetry.DistancePoint, cells int) string {
 		if idx >= len(sparkLevels) {
 			idx = len(sparkLevels) - 1
 		}
-		b.WriteString(orbStyle(d).Render(string(sparkLevels[idx])))
+		b.WriteString(telemetryDistanceStyle(d).Render(string(sparkLevels[idx])))
 	}
 	return b.String()
+}
+
+func telemetryDistanceStyle(d float64) lipgloss.Style {
+	if d <= 0 {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(brandBgColor).Bold(true)
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
 }
 
 // verifierNameWidth picks a name column wide enough for the longest verifier
@@ -368,11 +376,12 @@ func startedClock(started time.Time) string {
 }
 
 // overallDistanceText renders the latest heartbeat's overall distance as
-// "Ø 0.25", coloured by closeness, or "Ø —" when no heartbeat has landed yet.
+// "Ø 0.25", with zero white and any nonzero distance red, or "Ø —" when no
+// heartbeat has landed yet.
 func overallDistanceText(d sql.NullFloat64) string {
 	label := styleHeaderLabel.Render("Ø ")
 	if !d.Valid {
 		return label + styleReason.Render("—")
 	}
-	return label + orbStyle(d.Float64).Render(fmt.Sprintf("%.2f", d.Float64))
+	return label + telemetryDistanceStyle(d.Float64).Render(fmt.Sprintf("%.2f", d.Float64))
 }

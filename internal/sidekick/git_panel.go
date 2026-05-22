@@ -1,7 +1,6 @@
 package sidekick
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -51,11 +50,12 @@ func (p GitPanel) renderBody(innerW int) string {
 	b.WriteString("\n\n")
 
 	ws := p.workspace
-	meta := fmt.Sprintf("worktree=%s  branch=%s",
-		defaultString(ws.WorktreeName, "?"),
-		defaultString(ws.Branch, "?"),
-	)
-	b.WriteString(truncate(styleHeaderLabel.Render(meta), innerW))
+	meta := styleHeaderLabel.Render("worktree=") +
+		styleGitBranch.Render(defaultString(ws.WorktreeName, "?")) +
+		"  " +
+		styleHeaderLabel.Render("branch=") +
+		styleGitBranch.Render(defaultString(ws.Branch, "?"))
+	b.WriteString(truncate(meta, innerW))
 	b.WriteString("\n")
 	b.WriteString(truncate(renderDiffSummary(ws.TotalAdded, ws.TotalRemoved, len(ws.Files)), innerW))
 	b.WriteString("\n\n")

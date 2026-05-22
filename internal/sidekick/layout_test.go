@@ -52,17 +52,16 @@ func TestProjectUnknownDirection(t *testing.T) {
 	}
 }
 
-func TestOrbStyleBuckets(t *testing.T) {
-	// Distinct color per bucket so the gradient is visually distinguishable.
+func TestOrbStyleUsesBoldWhite(t *testing.T) {
 	cases := []float64{0.0, 0.25, 0.26, 0.50, 0.51, 0.75, 0.76, 1.0}
-	colors := make([]string, len(cases))
-	for i, d := range cases {
-		colors[i] = string(orbStyle(d).GetForeground().(lipgloss.Color))
-	}
-	want := []string{"10", "10", "11", "11", "208", "208", "9", "9"}
-	for i, got := range colors {
-		if got != want[i] {
-			t.Errorf("orbStyle(%.2f): got %q, want %q", cases[i], got, want[i])
+	for _, d := range cases {
+		style := orbStyle(d)
+		got := string(style.GetForeground().(lipgloss.Color))
+		if got != "231" {
+			t.Errorf("orbStyle(%.2f): got %q, want %q", d, got, "231")
+		}
+		if !style.GetBold() {
+			t.Errorf("orbStyle(%.2f): bold = false, want true", d)
 		}
 	}
 }

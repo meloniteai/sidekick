@@ -713,6 +713,11 @@ func TestRenderHeaderShowsGitSummaryWhenWorkspacePresent(t *testing.T) {
 			t.Errorf("git header missing %q in:\n%s", want, out)
 		}
 	}
+	for _, want := range []string{styleGitBranch.Render("sidekick"), styleGitBranch.Render("/"), styleGitBranch.Render("main")} {
+		if !strings.Contains(out, want) {
+			t.Errorf("git header missing styled git value %q in:\n%s", want, out)
+		}
+	}
 }
 
 // TestRenderHeaderShowsBlockBannerInRightColumn pins the header banner:

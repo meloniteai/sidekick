@@ -42,6 +42,24 @@ func TestDistanceSparklineKeepsMostRecent(t *testing.T) {
 	}
 }
 
+func TestTelemetryDistanceStyleZeroWhiteOtherwiseRed(t *testing.T) {
+	cases := []struct {
+		name string
+		d    float64
+		want string
+	}{
+		{name: "zero", d: 0, want: "231"},
+		{name: "small", d: 0.01, want: "9"},
+		{name: "one", d: 1, want: "9"},
+	}
+	for _, tc := range cases {
+		got := string(telemetryDistanceStyle(tc.d).GetForeground().(lipgloss.Color))
+		if got != tc.want {
+			t.Errorf("%s: foreground = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestRenderTelemetryPanelFlagsUnavailable(t *testing.T) {
 	m := Model{telemetryView: &telemetryPanel{openErr: errors.New("no telemetry database yet")}}
 	plain := ansi.Strip(m.renderTelemetryPanel(44, 12))
