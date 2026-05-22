@@ -393,7 +393,7 @@ func TestStatusWizardShowsFullVerifierStatus(t *testing.T) {
 	w.height = 30
 	out := w.View()
 	for _, want := range []string{
-		"Verifier status", "////", "g copy to global", "enter close · esc close",
+		"Verifier status", "////", "d delete", "g copy to global", "enter close · esc close",
 		"Architect", "direction:", "N", "distance:", "0.42", "computed:", "2026-05-09T12:34:56Z",
 		"agent:", "codex", "model:", "gpt-5.5", "skill:", "./skills/architect/SKILL.md", "reason:", "full reason text",
 	} {
@@ -417,6 +417,25 @@ func TestStatusWizardShowsOppositeCopyActionForGlobalConfig(t *testing.T) {
 	}
 	if strings.Contains(out, "g copy to global") {
 		t.Fatalf("global status wizard should not offer global copy:\n%s", out)
+	}
+}
+
+func TestStatusWizardShowsDeleteConfirmationHelp(t *testing.T) {
+	w := NewStatusWizard(ipc.VerifierStatus{Name: "Architect"})
+	w.confirmDelete = true
+	w.width = 100
+	w.height = 30
+	out := w.View()
+	if !strings.Contains(out, "←/→ choose · enter confirm · y yes · n no") {
+		t.Fatalf("status wizard should show delete confirmation help:\n%s", out)
+	}
+	if !strings.Contains(out, statusConfirmSelectedStyle.Render("No")) {
+		t.Fatalf("status wizard should highlight No by default:\n%s", out)
+	}
+	w.deleteYes = true
+	out = w.View()
+	if !strings.Contains(out, statusConfirmSelectedStyle.Render("Yes")) {
+		t.Fatalf("status wizard should highlight selected Yes:\n%s", out)
 	}
 }
 

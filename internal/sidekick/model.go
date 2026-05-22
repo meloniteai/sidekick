@@ -2,6 +2,7 @@ package sidekick
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"time"
 
@@ -78,6 +79,7 @@ type Model struct {
 	onConfigSaved     func() error
 	onConfigInstalled func(path string) error
 	onCopyVerifier    func(name string, target registry.Scope) (string, error)
+	onDeleteVerifier  func(name string) (string, error)
 	configPath        string
 	editor            *EditWizard
 	status            *StatusWizard
@@ -193,6 +195,13 @@ func (m Model) WithConfigInstalled(fn func(path string) error) Model {
 // selected verifier between project and global config scopes.
 func (m Model) WithCopyVerifier(fn func(name string, target registry.Scope) (string, error)) Model {
 	m.onCopyVerifier = fn
+	return m
+}
+
+// WithDeleteVerifier sets a callback used by the status modal to permanently
+// remove the selected verifier from sidekick.yaml.
+func (m Model) WithDeleteVerifier(fn func(name string) (string, error)) Model {
+	m.onDeleteVerifier = fn
 	return m
 }
 
@@ -312,13 +321,60 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.status != nil {
 		if key, ok := msg.(tea.KeyMsg); ok {
 			switch key.String() {
+			case "d":
+				m.status.confirmDelete = true
+				m.status.deleteYes = false
+				m.status.notice = fmt.Sprintf("Delete %q permanently from sidekick.yaml?", m.status.verifier)
+				m.status.errMsg = ""
+				return m, nil
+			case "left", "h":
+				if m.status.confirmDelete {
+					m.status.deleteYes = false
+					return m, nil
+				}
+			case "right", "l":
+				if m.status.confirmDelete {
+					m.status.deleteYes = true
+					return m, nil
+				}
+			case "tab":
+				if m.status.confirmDelete {
+					m.status.deleteYes = !m.status.deleteYes
+					return m, nil
+				}
+			case "enter":
+				if m.status.confirmDelete {
+					if m.status.deleteYes {
+						m.deleteStatusVerifier()
+					} else {
+						m.cancelStatusDelete()
+					}
+					return m, nil
+				}
+			case "n":
+				if m.status.confirmDelete {
+					m.cancelStatusDelete()
+					return m, nil
+				}
+			case "y":
+				if m.status.confirmDelete {
+					m.status.deleteYes = true
+					m.deleteStatusVerifier()
+					return m, nil
+				}
 			case "p":
+				if m.status.confirmDelete {
+					return m, nil
+				}
 				if m.status.global {
 					m.copyStatusVerifier(registry.ScopeProject)
 					m.snapshot = m.currentSnapshot()
 				}
 				return m, nil
 			case "g":
+				if m.status.confirmDelete {
+					return m, nil
+				}
 				if !m.status.global {
 					m.copyStatusVerifier(registry.ScopeGlobal)
 					m.snapshot = m.currentSnapshot()
@@ -417,6 +473,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) cancelStatusDelete() {
+	if m.status == nil {
+		return
+	}
+	m.status.confirmDelete = false
+	m.status.deleteYes = false
+	m.status.notice = "delete cancelled"
+	m.status.errMsg = ""
+}
+
+func (m *Model) deleteStatusVerifier() {
+	if m.status == nil || m.onDeleteVerifier == nil {
+		return
+	}
+	msg, err := m.onDeleteVerifier(m.status.verifier)
+	if err != nil {
+		m.status.errMsg = err.Error()
+		m.status.notice = ""
+		m.status.confirmDelete = false
+		return
+	}
+	m.status = nil
+	m.snapshot = m.currentSnapshot()
+	m.clampSelectedVerifier()
+	m.footerNotice = msg
+	m.footerNoticeUntil = m.tick + footerNoticeTicks
 }
 
 func (m *Model) copyStatusVerifier(target registry.Scope) {

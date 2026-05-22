@@ -12,22 +12,26 @@ import (
 )
 
 var (
-	statusValueStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(brandBgColor)
-	statusReasonStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
-	statusErrorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
+	statusValueStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(brandBgColor)
+	statusReasonStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
+	statusErrorStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
+	statusConfirmOptionStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("238")).Padding(0, 1)
+	statusConfirmSelectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(lipgloss.Color(brandCoral)).Bold(true).Padding(0, 1)
 )
 
 // StatusWizard renders the selected verifier's full last-known Sidekick status in
 // the same centered modal chrome as the palette, session switcher, and git
 // changes panel.
 type StatusWizard struct {
-	verifier string
-	status   ipc.VerifierStatus
-	global   bool
-	errMsg   string
-	notice   string
-	width    int
-	height   int
+	verifier      string
+	status        ipc.VerifierStatus
+	global        bool
+	confirmDelete bool
+	deleteYes     bool
+	errMsg        string
+	notice        string
+	width         int
+	height        int
 }
 
 func NewStatusWizard(status ipc.VerifierStatus) StatusWizard {
@@ -76,6 +80,10 @@ func (w StatusWizard) renderBody(innerW int) string {
 		b.WriteString("\n")
 		b.WriteString(statusReasonStyle.Render(w.notice))
 	}
+	if w.confirmDelete {
+		b.WriteString("\n")
+		b.WriteString(w.renderDeleteOptions())
+	}
 	if w.errMsg != "" {
 		b.WriteString("\n")
 		b.WriteString(statusErrorStyle.Render(w.errMsg))
@@ -86,10 +94,24 @@ func (w StatusWizard) renderBody(innerW int) string {
 }
 
 func (w StatusWizard) helpText() string {
-	if w.global {
-		return "p copy to project · enter close · esc close"
+	if w.confirmDelete {
+		return "←/→ choose · enter confirm · y yes · n no"
 	}
-	return "g copy to global · enter close · esc close"
+	if w.global {
+		return "d delete · p copy to project · enter close · esc close"
+	}
+	return "d delete · g copy to global · enter close · esc close"
+}
+
+func (w StatusWizard) renderDeleteOptions() string {
+	noStyle := statusConfirmOptionStyle
+	yesStyle := statusConfirmOptionStyle
+	if w.deleteYes {
+		yesStyle = statusConfirmSelectedStyle
+	} else {
+		noStyle = statusConfirmSelectedStyle
+	}
+	return noStyle.Render("No") + " " + yesStyle.Render("Yes")
 }
 
 func renderStatusTitleRow(innerW int) string {

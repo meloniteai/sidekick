@@ -122,9 +122,8 @@ this command only edits sidekick.yaml.`,
 				}
 			}
 
-			f.Verifiers = append(f.Verifiers[:idx], f.Verifiers[idx+1:]...)
-			if err := config.Save(path, f); err != nil {
-				return fmt.Errorf("save %s: %w", path, err)
+			if _, _, err := config.RemoveVerifier(path, vs.Name); err != nil {
+				return fmt.Errorf("remove verifier from %s: %w", path, err)
 			}
 			fmt.Fprintf(out, "Removed %q from %s.\n", vs.Name, path)
 			return nil
