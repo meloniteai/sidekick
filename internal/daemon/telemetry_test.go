@@ -127,3 +127,39 @@ func TestEmitHeartbeatCarriesCounts(t *testing.T) {
 		t.Fatalf("counters not reset on new episode: edits=%d batches=%d", last.EditCount, last.BatchCount)
 	}
 }
+
+func TestEmitHeartbeatSkipsUnchangedSamples(t *testing.T) {
+	f := &fakeEmitter{}
+	s := NewState()
+	s.SetEmitter(f)
+	s.StartTelemetrySession("goal")
+
+	// First sample of an episode always writes; idle ticks with no new
+	// edits/batches/distance must not append duplicate rows.
+	s.EmitHeartbeat()
+	s.EmitHeartbeat()
+	s.EmitHeartbeat()
+	if len(f.heartbeats) != 1 {
+		t.Fatalf("idle heartbeats not gated: got %d rows, want 1", len(f.heartbeats))
+	}
+
+	// A new edit changes the sample, so the next tick writes again; a further
+	// idle tick is gated once more.
+	s.RecordTelemetryEdit("a.go")
+	s.EmitHeartbeat()
+	s.EmitHeartbeat()
+	if len(f.heartbeats) != 2 {
+		t.Fatalf("changed sample not recorded: got %d rows, want 2", len(f.heartbeats))
+	}
+	if got := f.heartbeats[1].EditCount; got != 1 {
+		t.Fatalf("second heartbeat edit count = %d, want 1", got)
+	}
+
+	// A fresh episode always writes its first sample, even though its counts
+	// and distance match a previously written sample.
+	s.StartTelemetrySession("next goal")
+	s.EmitHeartbeat()
+	if len(f.heartbeats) != 3 {
+		t.Fatalf("new episode first heartbeat not recorded: got %d rows, want 3", len(f.heartbeats))
+	}
+}

@@ -75,6 +75,12 @@ type State struct {
 	telemetrySessionID  string
 	telemetryBatchCount int
 	telemetryEditCount  int
+	// hbLast* hold the last heartbeat written so idle ticks don't append an
+	// identical row each interval; a new episode (sid change) always writes.
+	hbLastSessionID  string
+	hbLastDistance   float64
+	hbLastBatchCount int
+	hbLastEditCount  int
 }
 
 // Session is the per-worktree state unit owned by the daemon registry. State
@@ -231,19 +237,40 @@ func (s *State) IncTelemetryBatchCount() {
 // telemetry is disabled or no goal has been set.
 func (s *State) EmitHeartbeat() {
 	s.mu.RLock()
+	disabled := s.emitter == nil || s.telemetrySessionID == ""
+	s.mu.RUnlock()
+	if disabled {
+		return
+	}
+	// Snapshot takes the lock itself, so read distance before re-acquiring.
+	dist := s.Snapshot().OverallDistance
+
+	s.mu.Lock()
 	e := s.emitter
 	sid := s.telemetrySessionID
 	batches := s.telemetryBatchCount
 	edits := s.telemetryEditCount
-	s.mu.RUnlock()
 	if e == nil || sid == "" {
+		s.mu.Unlock()
 		return
 	}
-	snap := s.Snapshot()
+	// Drop duplicate idle samples; the derived end (now − last > grace) still
+	// anchors to the last real change.
+	if sid == s.hbLastSessionID && dist == s.hbLastDistance &&
+		batches == s.hbLastBatchCount && edits == s.hbLastEditCount {
+		s.mu.Unlock()
+		return
+	}
+	s.hbLastSessionID = sid
+	s.hbLastDistance = dist
+	s.hbLastBatchCount = batches
+	s.hbLastEditCount = edits
+	s.mu.Unlock()
+
 	if err := e.RecordHeartbeat(telemetry.HeartbeatRecord{
 		SessionID:       sid,
 		TS:              time.Now(),
-		OverallDistance: snap.OverallDistance,
+		OverallDistance: dist,
 		BatchCount:      batches,
 		EditCount:       edits,
 	}); err != nil {
