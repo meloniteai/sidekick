@@ -64,15 +64,16 @@ var (
 	styleGrid          = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor).Padding(0, 1)
 	styleGoalDot       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Background(brandBgColor)
 	styleAxis          = lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(brandBgColor)
-	styleRunning       = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Background(brandBgColor)
 	styleVerifierLabel = lipgloss.NewStyle().Foreground(lipgloss.Color(brandCoral)).Background(brandBgColor).Bold(true)
-	styleCompassOrb    = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(brandBgColor).Bold(true)
+	styleCompassNeedle = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
+	// styleCompassMarker / styleCompassLabel draw each verifier's marker glyph
+	// (bold white, so it pops off the warm graphite) and its name (a calmer
+	// grey, so the label reads without competing with the markers and wind
+	// letters around it).
+	styleCompassMarker = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(brandBgColor).Bold(true)
+	styleCompassLabel  = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Background(brandBgColor)
 	styleReason        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Background(brandBgColor)
 	styleGoalLbl       = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Background(brandBgColor)
-	styleArrowOutHead  = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(brandBgColor).Bold(true)
-	styleArrowOutTrail = lipgloss.NewStyle().Foreground(lipgloss.Color("88")).Background(brandBgColor)
-	styleArrowInHead   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Background(brandBgColor).Bold(true)
-	styleArrowInTrail  = lipgloss.NewStyle().Foreground(lipgloss.Color("28")).Background(brandBgColor)
 	styleHeaderBox     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(brandCoral)).BorderBackground(brandBgColor).Background(brandBgColor).Padding(0, 1).Foreground(lipgloss.Color("252"))
 	// styleHeaderBrand mirrors styleLandingBanner from the splash: the
 	// in-header ANSI-shadow "Sidekick" wordmark is rendered with the same
@@ -107,39 +108,25 @@ const (
 	footerShortcutHelp = "keys: up/down select | enter status | space toggle | r run one | t all"
 )
 
-// directionArrow points outward along each compass axis (away from goal toward
-// the orb) and is used when distance grew. directionArrowInward points the
-// opposite way for when distance shrank.
-var directionArrow = map[string]rune{
-	"E":  '→',
-	"W":  '←',
-	"N":  '↑',
-	"S":  '↓',
-	"NE": '↗',
-	"NW": '↖',
-	"SE": '↘',
-	"SW": '↙',
+// compassNeedleGlyphs is one arrowhead rotated through the eight compass
+// octants — N, NE, E, SE, S, SW, W, NW — matching needleDirectionOrder. It is
+// deliberately a single rotating shape rather than a mix of solid and corner
+// triangles, so as the needle sweeps it reads as one needle pivoting and never
+// mutates its silhouette between frames.
+var compassNeedleGlyphs = []rune{'↑', '↗', '→', '↘', '↓', '↙', '←', '↖'}
+
+func compassNeedleGlyph(index int) rune {
+	if len(compassNeedleGlyphs) == 0 {
+		return '↑'
+	}
+	index = ((index % len(compassNeedleGlyphs)) + len(compassNeedleGlyphs)) % len(compassNeedleGlyphs)
+	return compassNeedleGlyphs[index]
 }
 
-var directionArrowInward = map[string]rune{
-	"E":  '←',
-	"W":  '→',
-	"N":  '↓',
-	"S":  '↑',
-	"NE": '↙',
-	"NW": '↘',
-	"SE": '↖',
-	"SW": '↗',
-}
-
-// arrowTrailLen is the number of trailing cells drawn behind the head as the
-// arrow climbs the axis. Two cells is enough to read motion at 5fps without
-// crowding short axes.
-const arrowTrailLen = 2
-
-// goalGlyph is the target the orbs converge on at the grid center.
-const goalGlyph = "◎"
-
+// verifierMarkerGlyphs gives each verifier a distinct compass marker so several
+// can be told apart at a glance. Indexed by verifier order, wrapping past the
+// eighth. None of these glyphs overlap the arrowhead needle set, so a marker is
+// never mistaken for the center pointer.
 var verifierMarkerGlyphs = []rune{'▲', '◆', '■', '✚', '△', '◇', '□', '▽'}
 
 func verifierMarkerGlyph(index int) rune {
@@ -147,13 +134,6 @@ func verifierMarkerGlyph(index int) rune {
 		index = 0
 	}
 	return verifierMarkerGlyphs[index%len(verifierMarkerGlyphs)]
-}
-
-// orbStyle returns the foreground style for verifier orbs. Distance affects
-// placement only; compass color stays bold white instead of encoding scoring
-// severity.
-func orbStyle(float64) lipgloss.Style {
-	return styleCompassOrb
 }
 
 // View satisfies tea.Model.
@@ -570,13 +550,14 @@ func (m Model) renderGrid(w, h int) string {
 	}
 	cx, cy := w/2, h/2
 
-	// One compact marker per verifier is projected from Direction + Distance.
-	// The nearby label is offset and clamped inward so perimeter bearings stay
-	// readable even when a verifier is at maximum distance.
+	// One compact marker per enabled verifier, projected from Direction +
+	// Distance, with its lowercase name labelled alongside. These markers are
+	// what make the compass a *map* of where each verifier sits relative to the
+	// goal; the center needle only points at whichever verifier is currently
+	// active. Disabled verifiers are skipped entirely.
 	type placedGlyph struct {
 		col, row int
 		glyph    rune
-		distance float64
 		marker   bool
 	}
 	var placements []placedGlyph
@@ -584,36 +565,29 @@ func (m Model) renderGrid(w, h int) string {
 		if v.Disabled {
 			continue
 		}
-		// Use the smoothed orb position so the marker glides across cells
-		// when distance/direction change. Labels still anchor to the marker's
-		// current cell so they ride along with the orb.
-		col, row, ok := m.orbPosition(v.Name, v.Direction, v.Distance, w, h)
+		col, row, ok := project(v.Direction, v.Distance, w, h)
 		if !ok {
 			continue
 		}
-		name := strings.ToLower(v.Name)
-		if name == "" {
-			name = "?"
-		}
-		placements = append(placements, placedGlyph{col: col, row: row, glyph: verifierMarkerGlyph(i), distance: v.Distance, marker: true})
+		placements = append(placements, placedGlyph{col: col, row: row, glyph: verifierMarkerGlyph(i), marker: true})
 
-		name = truncate(name, labelMaxWidth(w))
+		name := truncate(strings.ToLower(v.Name), labelMaxWidth(w))
 		if name == "" {
 			continue
 		}
 		runes := []rune(name)
 		startCol, labelRow := labelPosition(col, row, v.Direction, len(runes), w, h)
-		for i, ch := range runes {
-			c := startCol + i
+		for j, ch := range runes {
+			c := startCol + j
 			if c < 0 || c >= w || labelRow < 0 || labelRow >= h {
 				continue
 			}
-			placements = append(placements, placedGlyph{col: c, row: labelRow, glyph: ch, distance: v.Distance})
+			placements = append(placements, placedGlyph{col: c, row: labelRow, glyph: ch})
 		}
 	}
 
 	// Wind-direction markers around the perimeter give the compass a frame of
-	// reference even when no orb is sitting on a given axis.
+	// reference without crowding the center needle.
 	windCells := map[[2]int]rune{}
 	addWind := func(text string, col, row int) {
 		for i, ch := range text {
@@ -633,74 +607,22 @@ func (m Model) renderGrid(w, h int) string {
 	addWind("SW", 0, h-1)
 	addWind("SE", w-2, h-1)
 
-	// arrowAt indexes the active animation frame's head + trail by cell. The
-	// head is intensity 0 (bright); each trailing cell increases intensity.
-	// Markers still win the cell — the animation visualizes the path toward
-	// the verifier, not the verifier itself.
-	type arrowCell struct {
-		glyph       rune
-		intensity   int
-		inward      bool
-		calibrating bool
-	}
-	arrows := map[[2]int]arrowCell{}
-	for _, v := range m.snapshot.Verifiers {
-		if v.Disabled {
-			continue
-		}
-		frame, active, inward, calibrating := m.animInfo(v.Name, v.Running)
-		if !active || v.Distance <= 0 {
-			continue
-		}
-		glyphMap := directionArrow
-		if inward {
-			glyphMap = directionArrowInward
-		}
-		glyph, ok := glyphMap[v.Direction]
-		if !ok {
-			continue
-		}
-		// Outward: head starts near center and moves to orb (progress 0→1).
-		// Inward: head starts near orb and moves to center (progress 1→0).
-		for t := 0; t <= arrowTrailLen; t++ {
-			step := frame + 1 - t
-			if step <= 0 {
-				break
-			}
-			var progress float64
-			if inward {
-				progress = 1.0 - float64(step)/float64(arrowAnimFrames)
-			} else {
-				progress = float64(step) / float64(arrowAnimFrames)
-			}
-			col, row, ok := project(v.Direction, v.Distance*progress, w, h)
-			if !ok || (col == cx && row == cy) {
-				continue
-			}
-			key := [2]int{col, row}
-			if existing, exists := arrows[key]; exists && existing.intensity <= t {
-				continue
-			}
-			arrows[key] = arrowCell{glyph: glyph, intensity: t, inward: inward, calibrating: calibrating}
-		}
-	}
-
 	var sb strings.Builder
 	for r := 0; r < h; r++ {
 		for c := 0; c < w; c++ {
-			// Verifier markers are the top layer. A distance-0 marker is meant
-			// to sit exactly on the reticle, signalling convergence.
+			// The center needle always wins its cell — it's the live pointer
+			// toward the active verifier, so a fully-converged (distance 0)
+			// marker merges into it rather than hiding it.
+			if c == cx && r == cy {
+				sb.WriteString(styleCompassNeedle.Render(string(compassNeedleGlyph(m.needle.direction))))
+				continue
+			}
+			// Verifier markers are the top layer over the reticle/wind frame;
+			// their labels sit just below the markers.
 			markerHere := false
 			for _, p := range placements {
 				if p.marker && p.col == c && p.row == r {
-					glyph := p.glyph
-					// Very-near-goal orbs occasionally twinkle into a sparkle
-					// glyph so the user perceives "convergence" without
-					// having to read the distance number.
-					if p.distance <= 0.08 && (m.tick/3)%2 == 0 {
-						glyph = sparkleGlyph(m.tick)
-					}
-					sb.WriteString(orbStyleFlare(p.distance, m.tick).Render(string(glyph)))
+					sb.WriteString(styleCompassMarker.Render(string(p.glyph)))
 					markerHere = true
 					break
 				}
@@ -708,46 +630,15 @@ func (m Model) renderGrid(w, h int) string {
 			if markerHere {
 				continue
 			}
-			if c == cx && r == cy {
-				sb.WriteString(pulseStyle(m.tick).Render(goalGlyphAt(m.tick)))
-				continue
-			}
-			if a, ok := arrows[[2]int{c, r}]; ok {
-				var style lipgloss.Style
-				switch {
-				case a.inward && a.intensity == 0:
-					style = styleArrowInHead
-				case a.inward:
-					style = styleArrowInTrail
-				case a.intensity == 0:
-					style = styleArrowOutHead
-				default:
-					style = styleArrowOutTrail
-				}
-				glyph := a.glyph
-				if a.intensity > 0 {
-					glyph = '•'
-				}
-				sb.WriteString(style.Render(string(glyph)))
-				continue
-			}
 			labelHere := false
 			for _, p := range placements {
 				if !p.marker && p.col == c && p.row == r {
-					sb.WriteString(styleCompassOrb.Render(string(p.glyph)))
+					sb.WriteString(styleCompassLabel.Render(string(p.glyph)))
 					labelHere = true
 					break
 				}
 			}
 			if labelHere {
-				continue
-			}
-			// Halo sits behind labels and arrows but in front of the static
-			// reticle/wind/needle layers. This is the "bigger strobe" — eight
-			// cells around the goal throb in lockstep with the centre pulse so
-			// the convergence cue is visible from peripheral vision.
-			if dc, dr := c-cx, r-cy; absInt(dc) <= 1 && absInt(dr) <= 1 {
-				sb.WriteString(haloCellStyle(m.tick, 1).Render(haloGlyph(dc, dr)))
 				continue
 			}
 			if glyph, ok := reticleGlyph(c, r, cx, cy, w, h); ok {
@@ -768,9 +659,6 @@ func (m Model) renderGrid(w, h int) string {
 }
 
 func reticleGlyph(c, r, cx, cy, w, h int) (rune, bool) {
-	if c == cx && r == cy {
-		return []rune(goalGlyph)[0], true
-	}
 	if w < 9 || h < 5 {
 		return 0, false
 	}
@@ -1244,7 +1132,7 @@ func renderStatusCell(v ipc.VerifierStatus, width, tick int) string {
 	if v.Running {
 		// Pair the legacy bracketed dot (kept so the layout & tests stay
 		// stable) with a braille spinner glyph for a richer "working"
-		// signal; the row's foreground hue glides through magenta/cyan.
+		// signal.
 		text := string(brailleSpinner(tick)) + " run"
 		return styledTableCell(text, width, runningGlow(tick))
 	}

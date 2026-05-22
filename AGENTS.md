@@ -112,8 +112,8 @@ sidekick/
 
 - The TUI renders at **133ms tick interval** — pulls fresh `State.Snapshot()` every tick, no broadcast plumbing needed.
 - The model holds **callback functions** wired by `cmd/start.go` (manual trigger, toggle verifier, stop all, config reload) — the TUI package never imports the runner or daemon directly.
-- **Orb physics**: verifier positions use a critically damped harmonic spring (`charmbracelet/harmonica`) so orbs glide smoothly when distance/direction changes. On first observation, position snaps without spring.
-- **Arrow animations**: when a verifier's `ComputedAt` timestamp advances, an arrow sweeps along the axis for 5 ticks (~665ms). While a verifier subprocess is running, a calibrating ping-pong animation plays.
+- **Compass markers**: each enabled verifier is plotted on the grid as a distinct marker glyph at the cell projected from its `Direction` + `Distance` (`project()` in `layout.go`), with its lowercased name labelled alongside. The markers are the map of where verifiers sit relative to the goal.
+- **Needle animation**: the compass center is a green arrowhead (`↑↗→↘↓↙←↖`, one shape rotated through the eight octants — never a mix of solid + corner triangles, so it pivots without mutating). Running verifiers or fresh `ComputedAt` updates choose one active verifier pseudo-randomly, and the needle advances one octant per tick clockwise or counter-clockwise toward that verifier's configured direction.
 - **Modal screens**: the main grid view, editor wizard, and status wizard are mutually exclusive — `Update` delegates to the active sub-model.
 
 ### State management

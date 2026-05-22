@@ -228,38 +228,33 @@ func TestModelStatusDeleteRequiresConfirmation(t *testing.T) {
 	}
 }
 
-func TestRefreshOrbsSnapsThenSpringsToNewTarget(t *testing.T) {
+func TestRefreshNeedleMovesClockwiseTowardRunningVerifier(t *testing.T) {
 	state := daemon.NewState()
-	state.UpsertVerifier(ipc.VerifierStatus{Name: "Tests", Direction: "E", Distance: 0.2})
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Tests", Direction: "E", Running: true})
 	m := New(state)
 
-	// First tick must snap to the target — reconnecting to a running daemon
-	// shouldn't paint a glide-from-center.
 	next, _ := m.Update(tickMsg{})
 	m = next.(Model)
-	got := m.orbs["Tests"]
-	if !got.armed {
-		t.Fatal("first observation should arm the spring")
+	if m.needle.target != 2 {
+		t.Fatalf("needle target = %d, want E index 2", m.needle.target)
 	}
-	if got.x != 0.2 || got.y != 0 {
-		t.Fatalf("first observation should snap to target; got (%v, %v) want (0.2, 0)", got.x, got.y)
+	if m.needle.direction != 1 {
+		t.Fatalf("needle direction = %d, want one clockwise step to NE index 1", m.needle.direction)
 	}
+}
 
-	// Now push the target outward; the spring should approach it over a few
-	// ticks without overshooting past 1.0.
-	state.UpsertVerifier(ipc.VerifierStatus{Name: "Tests", Direction: "E", Distance: 0.9})
-	prev := got.x
-	for i := 0; i < 6; i++ {
-		next, _ = m.Update(tickMsg{})
-		m = next.(Model)
-		cur := m.orbs["Tests"].x
-		if cur < prev {
-			t.Fatalf("spring should move outward on tick %d: prev=%v cur=%v", i, prev, cur)
-		}
-		prev = cur
+func TestRefreshNeedleMovesCounterClockwiseTowardRunningVerifier(t *testing.T) {
+	state := daemon.NewState()
+	state.UpsertVerifier(ipc.VerifierStatus{Name: "Deploy", Direction: "W", Running: true})
+	m := New(state)
+
+	next, _ := m.Update(tickMsg{})
+	m = next.(Model)
+	if m.needle.target != 6 {
+		t.Fatalf("needle target = %d, want W index 6", m.needle.target)
 	}
-	if prev <= 0.5 {
-		t.Fatalf("spring should have meaningfully approached the new target after 6 ticks; got %v", prev)
+	if m.needle.direction != 7 {
+		t.Fatalf("needle direction = %d, want one counter-clockwise step to NW index 7", m.needle.direction)
 	}
 }
 

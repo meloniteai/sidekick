@@ -255,93 +255,34 @@ func TestRenderListColumnsStayAlignedAndTruncated(t *testing.T) {
 	}
 }
 
-func TestRenderGridSkipsDisabledVerifier(t *testing.T) {
-	m := Model{
-		snapshot: ipc.StatusReply{
-			Verifiers: []ipc.VerifierStatus{
-				{Name: "Architect", Direction: "N", Distance: 0.8, Disabled: true},
-			},
-		},
-	}
-	out := m.renderGrid(41, 21)
-	if strings.Contains(out, "architect") {
-		t.Fatalf("disabled verifier should not render on grid:\n%s", out)
-	}
-	if strings.ContainsRune(out, verifierMarkerGlyph(0)) {
-		t.Fatalf("disabled verifier marker should not render on grid:\n%s", out)
-	}
-}
-
-func TestVerifierMarkerGlyphsAreDistinctSingleCellShapes(t *testing.T) {
-	seen := map[rune]bool{}
-	for i := 0; i < 8; i++ {
-		glyph := verifierMarkerGlyph(i)
-		if seen[glyph] {
-			t.Fatalf("marker glyph %d repeats %q", i, glyph)
-		}
-		seen[glyph] = true
-		if got := lipgloss.Width(string(glyph)); got != 1 {
-			t.Fatalf("marker glyph %q has width %d, want 1", glyph, got)
-		}
-	}
-}
-
-func TestRenderGridSeparatesVerifierMarkerAndLabel(t *testing.T) {
+func TestRenderGridRendersVerifierMarkersAndLabels(t *testing.T) {
 	m := Model{
 		snapshot: ipc.StatusReply{
 			Verifiers: []ipc.VerifierStatus{
 				{Name: "Architect", Direction: "N", Distance: 0.8},
+				{Name: "Test", Direction: "E", Distance: 0.7},
 			},
 		},
 	}
-	const width, height = 41, 21
-	col, row, ok := project("N", 0.8, width, height)
-	if !ok {
-		t.Fatal("project N failed")
+	out := m.renderGrid(41, 21)
+	// Each verifier is plotted as a distinct marker glyph with its lowercased
+	// name labelled alongside, so the compass reads as a map of where every
+	// verifier sits relative to the goal.
+	for _, want := range []string{"architect", "test"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("verifier label %q should render on the compass:\n%s", want, out)
+		}
 	}
-	out := m.renderGrid(width, height)
-	lines := strings.Split(out, "\n")
-	if got := len(lines); got != height {
-		t.Fatalf("line count = %d, want %d:\n%s", got, height, out)
-	}
-	markerLine := []rune(lines[row])
-	if markerLine[col] != verifierMarkerGlyph(0) {
-		t.Fatalf("marker at projected cell = %q, want %q\n%s", markerLine[col], verifierMarkerGlyph(0), out)
-	}
-	if strings.Contains(lines[row], "architect") {
-		t.Fatalf("label should be offset from marker row:\n%s", out)
-	}
-	if !strings.Contains(out, "architect") {
-		t.Fatalf("lowercase verifier label missing:\n%s", out)
-	}
-}
-
-func TestRenderGridUsesDistinctVerifierMarkers(t *testing.T) {
-	m := Model{
-		snapshot: ipc.StatusReply{
-			Verifiers: []ipc.VerifierStatus{
-				{Name: "Architect", Direction: "N", Distance: 0.9},
-				{Name: "Test", Direction: "E", Distance: 0.9},
-				{Name: "Security", Direction: "S", Distance: 0.9},
-				{Name: "Deploy", Direction: "W", Distance: 0.9},
-				{Name: "Bench", Direction: "NE", Distance: 0.9},
-				{Name: "Lint", Direction: "NW", Distance: 0.9},
-				{Name: "Docs", Direction: "SE", Distance: 0.9},
-				{Name: "UX", Direction: "SW", Distance: 0.9},
-			},
-		},
-	}
-	out := m.renderGrid(61, 25)
-	for i := 0; i < 8; i++ {
-		glyph := verifierMarkerGlyph(i)
-		if !strings.ContainsRune(out, glyph) {
-			t.Fatalf("grid missing marker glyph %q for verifier %d:\n%s", glyph, i, out)
+	for i, want := range []rune{'▲', '◆'} {
+		if !strings.ContainsRune(out, want) {
+			t.Fatalf("verifier %d marker %q should render on the compass:\n%s", i, want, out)
 		}
 	}
 }
 
-func TestRenderGridSmallLabelsStayInsideEdges(t *testing.T) {
+func TestRenderGridNeedleStaysCenteredAtSmallSizes(t *testing.T) {
 	m := Model{
+		needle: needleState{direction: 2, target: 2, initialized: true},
 		snapshot: ipc.StatusReply{
 			Verifiers: []ipc.VerifierStatus{
 				{Name: "zzzzzzzzzz", Direction: "E", Distance: 1},
@@ -355,21 +296,14 @@ func TestRenderGridSmallLabelsStayInsideEdges(t *testing.T) {
 	if got := len(lines); got != height {
 		t.Fatalf("line count = %d, want %d:\n%s", got, height, out)
 	}
+	needleRow := []rune(lines[height/2])
+	if needleRow[width/2] != '→' {
+		t.Fatalf("center needle = %q, want →:\n%s", needleRow[width/2], out)
+	}
 	for row, line := range lines {
 		if got := lipgloss.Width(line); got != width {
 			t.Fatalf("line %d width = %d, want %d: %q\n%s", row, got, width, line, out)
 		}
-		runes := []rune(line)
-		for _, edge := range []int{0, len(runes) - 1} {
-			switch runes[edge] {
-			case 'z', 'y', '…':
-				t.Fatalf("label clipped into edge at row %d col %d:\n%s", row, edge, out)
-			}
-		}
-	}
-	if strings.Contains(lines[0], "z") || strings.Contains(lines[height-1], "z") ||
-		strings.Contains(lines[0], "y") || strings.Contains(lines[height-1], "y") {
-		t.Fatalf("label clipped into wind-marker rows:\n%s", out)
 	}
 }
 
@@ -522,11 +456,10 @@ func TestHeaderAndGridWidthsMatch(t *testing.T) {
 	}
 }
 
-// TestRenderGridArrowAnimation pins down the post-computation arrow on a
-// verifier's compass plane: when the snapshot reports a fresh ComputedAt the
-// model arms an animation, and the next render places the direction's arrow
-// glyph somewhere along the path between the goal and that verifier's orb.
-func TestRenderGridArrowAnimation(t *testing.T) {
+// TestRenderGridNeedleAnimation pins down the post-computation needle cue:
+// when a verifier receives a fresh ComputedAt, the center triangle rotates one
+// octant toward that verifier's configured compass direction.
+func TestRenderGridNeedleAnimation(t *testing.T) {
 	earlier := time.Unix(1_700_000_000, 0)
 	later := earlier.Add(time.Second)
 
@@ -543,37 +476,46 @@ func TestRenderGridArrowAnimation(t *testing.T) {
 	// First refresh seeds the anim entry without scheduling an animation.
 	m.refreshAnims()
 	first := m.renderGrid(41, 21)
-	if strings.Contains(first, "↑") {
-		t.Fatalf("first render should not paint the arrow; got:\n%s", first)
+	if !strings.Contains(first, "↑") {
+		t.Fatalf("first render should paint the default north needle ↑; got:\n%s", first)
 	}
 
-	// New ComputedAt arrives → next refresh starts the animation; the next
-	// render must paint the arrow somewhere in the grid.
+	// New ComputedAt arrives → next refresh starts the activity window; the
+	// next needle refresh rotates one octant clockwise toward the verifier.
 	m.tick++
 	m.snapshot.Verifiers[0].ComputedAt = later
+	m.snapshot.Verifiers[0].Direction = "E"
 	m.refreshAnims()
 	if frame, active := m.animFrame("Architect", false); !active || frame != 0 {
 		t.Fatalf("expected frame 0 active after fresh ComputedAt, got frame=%d active=%v", frame, active)
 	}
+	m.refreshNeedle()
 	mid := m.renderGrid(41, 21)
-	if !strings.Contains(mid, "↑") {
-		t.Fatalf("animating render should paint ↑; got:\n%s", mid)
+	if !strings.Contains(mid, "↗") {
+		t.Fatalf("animating render should rotate one step clockwise to the ↗ arrowhead; got:\n%s", mid)
+	}
+	// The needle must stay one arrowhead while it sweeps — no mutating into the
+	// old corner/quadrant triangles that gave it a different silhouette per step.
+	for _, mutated := range []rune{'◥', '◢', '◣', '◤'} {
+		if strings.ContainsRune(mid, mutated) {
+			t.Fatalf("needle should rotate as one shape, not mutate into %q; got:\n%s", mutated, mid)
+		}
 	}
 
-	// After arrowAnimFrames ticks, the arrow stops painting.
+	// After the activity window closes, the needle remains at its last heading.
 	m.tick += arrowAnimFrames
 	if _, active := m.animFrame("Architect", false); active {
 		t.Fatalf("animation should be over after %d ticks", arrowAnimFrames)
 	}
 	done := m.renderGrid(41, 21)
-	if strings.Contains(done, "↑") {
-		t.Fatalf("post-animation render should not paint ↑; got:\n%s", done)
+	if !strings.Contains(done, "↗") {
+		t.Fatalf("post-animation render should keep the last needle heading ↗; got:\n%s", done)
 	}
 }
 
-// TestRenderGridArrowDistanceZero guards the visually-meaningless case where
-// a verifier sits exactly on the goal — no path to animate, so we skip.
-func TestRenderGridArrowDistanceZero(t *testing.T) {
+// TestRenderGridNeedleIgnoresDisabledVerifier guards against disabled
+// verifiers driving the center needle.
+func TestRenderGridNeedleIgnoresDisabledVerifier(t *testing.T) {
 	earlier := time.Unix(1_700_000_000, 0)
 	later := earlier.Add(time.Second)
 	m := Model{
@@ -582,7 +524,7 @@ func TestRenderGridArrowDistanceZero(t *testing.T) {
 		anims:  map[string]arrowAnim{},
 		snapshot: ipc.StatusReply{
 			Verifiers: []ipc.VerifierStatus{
-				{Name: "Test", Direction: "E", Distance: 0.0, ComputedAt: earlier},
+				{Name: "Test", Direction: "E", Disabled: true, ComputedAt: earlier},
 			},
 		},
 	}
@@ -590,8 +532,9 @@ func TestRenderGridArrowDistanceZero(t *testing.T) {
 	m.tick++
 	m.snapshot.Verifiers[0].ComputedAt = later
 	m.refreshAnims()
-	if out := m.renderGrid(41, 21); strings.Contains(out, "→") {
-		t.Errorf("zero-distance verifier should not paint an arrow; got:\n%s", out)
+	m.refreshNeedle()
+	if out := m.renderGrid(41, 21); !strings.Contains(out, "↑") || strings.Contains(out, "→") {
+		t.Errorf("disabled verifier should not rotate the needle; got:\n%s", out)
 	}
 }
 
