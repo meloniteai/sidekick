@@ -179,7 +179,7 @@ func (m Model) telemetryBodyRows(innerW, maxLines int) []string {
 		return warnRows(innerW, maxLines, "telemetry unavailable", tv.openErr.Error(),
 			"(set SIDEKICK_TELEMETRY=on and a goal)")
 	case tv.sessionID == "":
-		return warnRows(innerW, maxLines, "no telemetry session",
+		return warnRowsWithStyle(innerW, maxLines, styleNoSession, "no telemetry session",
 			"set a goal to begin recording this episode")
 	case tv.queryErr != nil:
 		return warnRows(innerW, maxLines, "query failed", tv.queryErr.Error())
@@ -316,7 +316,11 @@ func kvRow(innerW int, label, value string) string {
 // warnRows renders a highlighted heading plus dim explanatory lines, used to
 // flag missing or unavailable telemetry rather than showing a blank panel.
 func warnRows(innerW, maxLines int, heading string, notes ...string) []string {
-	rows := []string{padCell(styleStaleBadge.Render(heading), innerW)}
+	return warnRowsWithStyle(innerW, maxLines, styleStaleBadge, heading, notes...)
+}
+
+func warnRowsWithStyle(innerW, maxLines int, headingStyle lipgloss.Style, heading string, notes ...string) []string {
+	rows := []string{padCell(headingStyle.Render(heading), innerW)}
 	for _, n := range notes {
 		rows = append(rows, wrapReasonRows(n, innerW)...)
 	}

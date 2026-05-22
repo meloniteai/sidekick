@@ -77,6 +77,13 @@ func TestRenderTelemetryPanelFlagsNoSession(t *testing.T) {
 	if !strings.Contains(plain, "no telemetry session") {
 		t.Errorf("panel should flag the absence of a goal episode:\n%s", plain)
 	}
+	rows := m.telemetryBodyRows(44, 12)
+	if len(rows) == 0 || !strings.Contains(rows[0], styleNoSession.Render("no telemetry session")) {
+		t.Errorf("no-session heading should render in the no-session style:\n%q", rows)
+	}
+	if got := string(styleNoSession.GetForeground().(lipgloss.Color)); got != "231" {
+		t.Errorf("no-session foreground = %q, want white (231)", got)
+	}
 }
 
 func TestRenderTelemetryPanelSummary(t *testing.T) {
