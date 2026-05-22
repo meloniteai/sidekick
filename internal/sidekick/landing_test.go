@@ -33,7 +33,7 @@ func TestLandingRenderShape(t *testing.T) {
 		"Verifiers", // section title
 		"Architect", "Test", "Security",
 		"N", "E", "S",
-		"↑/↓ navigate", "space toggle", "enter start", "esc abort",
+		"↑/↓ choose", "space toggle", "enter start", "esc abort",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("landing view missing %q in:\n%s", want, out)
@@ -177,15 +177,52 @@ func TestLandingConfigChoiceSwitchesVerifierSet(t *testing.T) {
 	if !strings.Contains(l.View(), "Config") || !strings.Contains(l.View(), "project") || !strings.Contains(l.View(), "global") {
 		t.Fatalf("config choices not rendered:\n%s", l.View())
 	}
+	if strings.Contains(l.View(), "Verifiers") {
+		t.Fatalf("config phase should not render verifier picker:\n%s", l.View())
+	}
 	next, _ := l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	switched := next.(Landing)
 	if switched.ConfigPath() != "/home/u/.sidekick/sidekick.yaml" {
 		t.Fatalf("ConfigPath = %q, want global", switched.ConfigPath())
 	}
-	finalModel, _ := switched.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	verifierModel, _ := switched.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	verifierPhase := verifierModel.(Landing)
+	if verifierPhase.Confirmed() {
+		t.Fatalf("first enter should advance from config phase, not start")
+	}
+	if !strings.Contains(verifierPhase.View(), "Verifiers") || !strings.Contains(verifierPhase.View(), "b back") {
+		t.Fatalf("verifier phase missing local key labels:\n%s", verifierPhase.View())
+	}
+	finalModel, _ := verifierPhase.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	final := finalModel.(Landing)
+	if !final.Confirmed() {
+		t.Fatalf("second enter should confirm verifier selection")
+	}
 	got := final.Verifiers()
 	if len(got) != 2 || got[0].Name != "GlobalA" || got[1].Name != "GlobalB" {
 		t.Fatalf("verifiers after global switch = %+v", got)
+	}
+}
+
+func TestLandingConfigPhaseUsesArrowsNotTab(t *testing.T) {
+	project := []verifier.Verifier{{Name: "Project", Direction: "N"}}
+	global := []verifier.Verifier{{Name: "Global", Direction: "E"}}
+	l := NewLanding(project, "0.1", "/sock", "/cwd").WithConfigChoices([]LandingConfigChoice{
+		{Label: "project", Path: "/repo/.sidekick/sidekick.yaml", Verifiers: project},
+		{Label: "global", Path: "/home/u/.sidekick/sidekick.yaml", Verifiers: global},
+	})
+
+	next, _ := l.Update(tea.KeyMsg{Type: tea.KeyTab})
+	tabbed := next.(Landing)
+	if tabbed.ConfigPath() != "/repo/.sidekick/sidekick.yaml" {
+		t.Fatalf("tab should not switch config scope; got %q", tabbed.ConfigPath())
+	}
+	next, _ = tabbed.Update(tea.KeyMsg{Type: tea.KeyDown})
+	arrowed := next.(Landing)
+	if arrowed.ConfigPath() != "/home/u/.sidekick/sidekick.yaml" {
+		t.Fatalf("down should switch config scope; got %q", arrowed.ConfigPath())
+	}
+	if !strings.Contains(arrowed.View(), "enter continue") || !strings.Contains(arrowed.View(), "g global") {
+		t.Fatalf("config phase missing local key labels:\n%s", arrowed.View())
 	}
 }

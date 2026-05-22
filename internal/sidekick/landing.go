@@ -58,8 +58,16 @@ var (
 	styleLandingError    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Background(lipgloss.Color(brandBg)).Bold(true)
 )
 
+type landingPhase int
+
+const (
+	landingPhaseVerifiers landingPhase = iota
+	landingPhaseConfig
+)
+
 // Landing is the start-of-session screen: Sidekick wordmark + version pill, the
-// session metadata (working dir, socket path), and a verifier multi-select.
+// session metadata (working dir, socket path), optional config scope choice,
+// and a verifier multi-select.
 // Confirming with enter quits the tea program with Confirmed()==true and
 // Selection() populated; esc/ctrl+c quits with Aborted()==true.
 //
@@ -71,6 +79,7 @@ type Landing struct {
 	cursor        int
 	configChoices []LandingConfigChoice
 	configCursor  int
+	phase         landingPhase
 	width, height int
 	version       string
 	socketPath    string
@@ -113,6 +122,9 @@ func (l Landing) WithConfigChoices(choices []LandingConfigChoice) Landing {
 		l.verifiers = append([]verifier.Verifier(nil), l.configChoices[0].Verifiers...)
 		l.enabled = landingEnabled(l.verifiers)
 	}
+	if len(l.configChoices) > 1 {
+		l.phase = landingPhaseConfig
+	}
 	return l
 }
 
@@ -130,38 +142,68 @@ func (l Landing) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "ctrl+c":
 			l.aborted = true
 			return l, tea.Quit
-		case "up", "k":
-			if l.cursor > 0 {
-				l.cursor--
-			}
-		case "down", "j":
-			if l.cursor < len(l.verifiers)-1 {
-				l.cursor++
-			}
-		case "tab":
-			l.switchConfig((l.configCursor + 1) % max(len(l.configChoices), 1))
-		case "p":
-			l.switchConfigByLabel("project")
-		case "g":
-			l.switchConfigByLabel("global")
-		case " ", "x":
-			if l.cursor >= 0 && l.cursor < len(l.enabled) {
-				l.enabled[l.cursor] = !l.enabled[l.cursor]
-				l.err = ""
-			}
-		case "a":
-			for i := range l.enabled {
-				l.enabled[i] = true
-			}
-			l.err = ""
-		case "enter":
-			if l.selectedCount() < MinSelected {
-				l.err = fmt.Sprintf("select at least %d verifier (currently %d)", MinSelected, l.selectedCount())
-				return l, nil
-			}
-			l.confirmed = true
-			return l, tea.Quit
 		}
+		if l.phase == landingPhaseConfig {
+			return l.updateConfigKey(m)
+		}
+		return l.updateVerifierKey(m)
+	}
+	return l, nil
+}
+
+func (l Landing) updateConfigKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "up", "k":
+		if l.configCursor > 0 {
+			l.switchConfig(l.configCursor - 1)
+		}
+	case "down", "j":
+		if l.configCursor < len(l.configChoices)-1 {
+			l.switchConfig(l.configCursor + 1)
+		}
+	case "p":
+		l.switchConfigByLabel("project")
+	case "g":
+		l.switchConfigByLabel("global")
+	case "enter":
+		l.phase = landingPhaseVerifiers
+		l.err = ""
+	}
+	return l, nil
+}
+
+func (l Landing) updateVerifierKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "up", "k":
+		if l.cursor > 0 {
+			l.cursor--
+		}
+	case "down", "j":
+		if l.cursor < len(l.verifiers)-1 {
+			l.cursor++
+		}
+	case "b", "left":
+		if len(l.configChoices) > 1 {
+			l.phase = landingPhaseConfig
+			l.err = ""
+		}
+	case " ", "x":
+		if l.cursor >= 0 && l.cursor < len(l.enabled) {
+			l.enabled[l.cursor] = !l.enabled[l.cursor]
+			l.err = ""
+		}
+	case "a":
+		for i := range l.enabled {
+			l.enabled[i] = true
+		}
+		l.err = ""
+	case "enter":
+		if l.selectedCount() < MinSelected {
+			l.err = fmt.Sprintf("select at least %d verifier (currently %d)", MinSelected, l.selectedCount())
+			return l, nil
+		}
+		l.confirmed = true
+		return l, tea.Quit
 	}
 	return l, nil
 }
@@ -265,46 +307,49 @@ func (l Landing) View() string {
 		b.WriteString("\n\n")
 	}
 
-	if len(l.configChoices) > 1 {
-		b.WriteString(styleLandingTitle.Render("Config"))
+	if l.phase == landingPhaseConfig && len(l.configChoices) > 1 {
+		b.WriteString(renderLandingSectionTitle("Config", landingConfigHelp(l.configChoices), innerW))
 		b.WriteString("\n\n")
 		for i, choice := range l.configChoices {
 			b.WriteString(renderLandingConfigRow(choice, i == l.configCursor, innerW))
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
-	}
-
-	b.WriteString(styleLandingSeparator.Render(strings.Repeat("─", innerW)))
-	b.WriteString("\n\n")
-
-	b.WriteString(styleLandingTitle.Render("Verifiers"))
-	b.WriteString("\n\n")
-
-	nameWidth := 0
-	for _, v := range l.verifiers {
-		if n := lipgloss.Width(v.Name); n > nameWidth {
-			nameWidth = n
+		if l.err != "" {
+			b.WriteString(styleLandingError.Render(l.err))
+			b.WriteString("\n\n")
 		}
-	}
+	} else {
+		if len(l.configChoices) > 1 {
+			b.WriteString(renderLandingConfigSummary(l.configChoices[l.configCursor], innerW))
+			b.WriteString("\n\n")
+		}
 
-	for i, v := range l.verifiers {
-		b.WriteString(renderLandingVerifierRow(v, l.enabled[i], i == l.cursor, nameWidth, innerW))
+		b.WriteString(styleLandingSeparator.Render(strings.Repeat("─", innerW)))
+		b.WriteString("\n\n")
+
+		b.WriteString(renderLandingSectionTitle("Verifiers", landingVerifierHelp(len(l.configChoices) > 1), innerW))
+		b.WriteString("\n\n")
+
+		nameWidth := 0
+		for _, v := range l.verifiers {
+			if n := lipgloss.Width(v.Name); n > nameWidth {
+				nameWidth = n
+			}
+		}
+
+		for i, v := range l.verifiers {
+			b.WriteString(renderLandingVerifierRow(v, l.enabled[i], i == l.cursor, nameWidth, innerW))
+			b.WriteString("\n")
+		}
+
+		if l.err != "" {
+			b.WriteString("\n")
+			b.WriteString(styleLandingError.Render(l.err))
+			b.WriteString("\n")
+		}
 		b.WriteString("\n")
 	}
-
-	if l.err != "" {
-		b.WriteString("\n")
-		b.WriteString(styleLandingError.Render(l.err))
-		b.WriteString("\n")
-	}
-
-	b.WriteString("\n")
-	help := "↑/↓ navigate · space toggle · a select all · enter start · esc abort"
-	if len(l.configChoices) > 1 {
-		help = "p project · g global · tab switch · " + help
-	}
-	b.WriteString(styleLandingHelp.Render(help))
 
 	box := styleLandingBorder.Width(innerW + styleLandingBorder.GetHorizontalPadding()).Render(reanchorBrandBg(b.String()))
 	if l.width == 0 || l.height == 0 {
@@ -379,6 +424,48 @@ func renderLandingVerifierRow(v verifier.Verifier, enabled, selected bool, nameW
 		bulletStyle = styleLandingBulletOn
 	}
 	return " " + bulletStyle.Render(bullet) + "  " + styleLandingValue.Render(name) + "  " + styleLandingDirection.Render(v.Direction)
+}
+
+func renderLandingSectionTitle(title, help string, innerW int) string {
+	renderedTitle := styleLandingTitle.Render(title)
+	if help == "" {
+		return renderedTitle
+	}
+	gap := "  "
+	plain := title + gap + help
+	if lipgloss.Width(plain) > innerW {
+		help = truncate(help, max(innerW-lipgloss.Width(title)-lipgloss.Width(gap), 0))
+	}
+	return renderedTitle + gap + styleLandingHelp.Render(help)
+}
+
+func landingConfigHelp(choices []LandingConfigChoice) string {
+	help := "↑/↓ choose · enter continue · esc abort"
+	var shortcuts []string
+	for _, choice := range choices {
+		switch strings.ToLower(choice.Label) {
+		case "project":
+			shortcuts = append(shortcuts, "p project")
+		case "global":
+			shortcuts = append(shortcuts, "g global")
+		}
+	}
+	if len(shortcuts) > 0 {
+		help = strings.Join(shortcuts, " · ") + " · " + help
+	}
+	return help
+}
+
+func landingVerifierHelp(hasBack bool) string {
+	help := "↑/↓ choose · space toggle · a all · enter start · esc abort"
+	if hasBack {
+		help = "b back · " + help
+	}
+	return help
+}
+
+func renderLandingConfigSummary(choice LandingConfigChoice, innerW int) string {
+	return truncate(styleLandingLabel.Render("Config  ")+styleLandingValue.Render(choice.Label)+"  "+styleLandingDirection.Render(prettyPath(choice.Path)), innerW)
 }
 
 func renderLandingConfigRow(choice LandingConfigChoice, selected bool, innerW int) string {
