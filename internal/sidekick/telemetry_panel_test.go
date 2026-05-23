@@ -1,6 +1,7 @@
 package sidekick
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -112,6 +113,76 @@ func TestRenderTelemetryPanelSummary(t *testing.T) {
 	}
 	if w := lipgloss.Width(out); w != 48 {
 		t.Errorf("panel width = %d, want 48", w)
+	}
+}
+
+func TestRenderTelemetryPanelPartialOmitsStaleSections(t *testing.T) {
+	// A backend list summary: counts/cost/distance present, but no per-verifier
+	// series, heartbeat count or tokens. The panel must show the meaningful
+	// numbers and drop the sparkline section and beat count rather than render
+	// dead UI.
+	sum := telemetry.Summary{
+		SessionFound:        true,
+		Partial:             true,
+		GoalText:            "ship the panel",
+		EditCount:           3, BatchCount: 1, RunCount: 5,
+		TotalCostUSD:        0.42,
+		LastOverallDistance: sql.NullFloat64{Float64: 0.25, Valid: true},
+	}
+	m := Model{telemetryView: &telemetryPanel{loaded: true, sessionID: "abc", summary: sum}}
+	plain := ansi.Strip(m.renderTelemetryPanel(48, 16))
+
+	for _, want := range []string{"ship the panel", "work", "dist", "$0.420"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("partial panel missing %q:\n%s", want, plain)
+		}
+	}
+	for _, absent := range []string{"distance × runs", "no scored runs yet", "beats"} {
+		if strings.Contains(plain, absent) {
+			t.Errorf("partial panel should omit %q (stale in backend mode):\n%s", absent, plain)
+		}
+	}
+}
+
+func TestTelemetrySummaryMsgAppliesAndGuards(t *testing.T) {
+	// Matching session: summary applied, in-flight guard cleared, loaded set.
+	m := Model{telemetryView: &telemetryPanel{sessionID: "S1", fetching: true}}
+	next, _ := m.Update(telemetrySummaryMsg{
+		sessionID: "S1",
+		summary:   telemetry.Summary{SessionFound: true, GoalText: "g", RunCount: 4},
+	})
+	tv := next.(Model).telemetryView
+	if tv.fetching {
+		t.Errorf("matching result must clear the in-flight guard")
+	}
+	if !tv.loaded || !tv.summary.SessionFound || tv.summary.RunCount != 4 {
+		t.Errorf("matching-session summary not applied: %+v", tv.summary)
+	}
+
+	// Stale session (displayed episode changed since dispatch): summary ignored,
+	// but the guard is still cleared so the next tick can re-fetch.
+	m = Model{telemetryView: &telemetryPanel{sessionID: "S2", fetching: true}}
+	next, _ = m.Update(telemetrySummaryMsg{
+		sessionID: "OLD",
+		summary:   telemetry.Summary{SessionFound: true, RunCount: 99},
+	})
+	tv = next.(Model).telemetryView
+	if tv.fetching {
+		t.Errorf("stale result must still clear the in-flight guard")
+	}
+	if tv.summary.RunCount == 99 {
+		t.Errorf("stale-session summary must not be applied: %+v", tv.summary)
+	}
+
+	// Error on the matching session: queryErr surfaced, guard cleared.
+	m = Model{telemetryView: &telemetryPanel{sessionID: "S3", fetching: true}}
+	next, _ = m.Update(telemetrySummaryMsg{sessionID: "S3", err: errors.New("backend down")})
+	tv = next.(Model).telemetryView
+	if tv.fetching {
+		t.Errorf("error result must clear the in-flight guard")
+	}
+	if tv.queryErr == nil {
+		t.Errorf("error result must surface queryErr")
 	}
 }
 

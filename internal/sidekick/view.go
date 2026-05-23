@@ -1174,6 +1174,15 @@ func formatCost(cost float64, tokens int) string {
 	return ""
 }
 
+// formatCostUSD renders just the dollar cost, for summaries that carry cost but
+// not a token count (the backend list summary). Empty below the display floor.
+func formatCostUSD(cost float64) string {
+	if cost >= 0.01 {
+		return fmt.Sprintf("$%.3f", cost)
+	}
+	return ""
+}
+
 func toggleLabel(i int) string {
 	switch {
 	case i >= 0 && i < 9:

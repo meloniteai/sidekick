@@ -241,8 +241,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshNeedle()
 		m.refreshWorkspace()
 		m.refreshGitPanel()
-		m.refreshTelemetryPanel(false)
-		return m, tick()
+		telemetryCmd := m.refreshTelemetryPanel(false)
+		return m, tea.Batch(tick(), telemetryCmd)
+	case telemetrySummaryMsg:
+		// Result of an async backend summary fetch. Always clear the in-flight
+		// guard; apply the summary only if the displayed episode hasn't changed
+		// since the fetch was dispatched.
+		if tv := m.telemetryView; tv != nil {
+			tv.fetching = false
+			if msg.sessionID == tv.sessionID {
+				if msg.err != nil {
+					tv.queryErr = msg.err
+				} else {
+					tv.queryErr = nil
+					tv.summary = msg.summary
+					tv.loaded = true
+				}
+			}
+		}
+		return m, nil
 	}
 	if m.palette != nil {
 		next, cmd, done := m.palette.Update(msg)
@@ -289,7 +306,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// The displayed episode changed — re-scope the telemetry panel
 				// (and reopen the store if the worktree's repo differs) now,
 				// not on the next throttled tick.
-				m.refreshTelemetryPanel(true)
+				cmd = tea.Batch(cmd, m.refreshTelemetryPanel(true))
 			}
 			m.switcher = nil
 			return m, cmd
@@ -457,7 +474,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "g", "ctrl+g":
 			m.toggleGitPanel()
 		case "y", "ctrl+y":
-			m.toggleTelemetryPanel()
+			return m, m.toggleTelemetryPanel()
 		}
 	}
 	return m, nil
@@ -634,7 +651,7 @@ func (m *Model) dispatchPaletteAction(action paletteAction) tea.Cmd {
 	case paletteActionToggleEventLog:
 		m.showEventLog = !m.showEventLog
 	case paletteActionToggleTelemetry:
-		m.toggleTelemetryPanel()
+		return m.toggleTelemetryPanel()
 	case paletteActionSwitchSession:
 		m.openSessionSwitcher()
 	}

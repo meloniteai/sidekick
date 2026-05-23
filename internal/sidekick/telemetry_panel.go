@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
@@ -43,15 +44,27 @@ type telemetryPanel struct {
 	queryErr  error             // why the last LoadSummary failed, if any
 	loaded    bool              // a summary has been read at least once
 	lastFetch int               // tick of the last query
+	fetching  bool              // a backend summary fetch is in flight (async path)
+}
+
+// telemetrySummaryMsg carries the result of an async backend summary fetch back
+// into Update. In backend telemetry mode the panel can't read the local store,
+// so the fetch runs off the UI loop and posts its result here. sessionID guards
+// against a result that lands after the displayed episode has changed.
+type telemetrySummaryMsg struct {
+	sessionID string
+	summary   telemetry.Summary
+	err       error
 }
 
 // openTelemetryPanel toggles the panel on, opening the read-only store for the
 // displayed session's repo and doing an initial read so the first frame is
-// populated. Called from the palette action and the bare hotkey.
-func (m *Model) openTelemetryPanel() {
+// populated. Called from the palette action and the bare hotkey. Returns the
+// initial-fetch command (non-nil only in backend mode, where the read is async).
+func (m *Model) openTelemetryPanel() tea.Cmd {
 	tv := &telemetryPanel{}
 	m.telemetryView = tv
-	m.refreshTelemetryPanel(true)
+	return m.refreshTelemetryPanel(true)
 }
 
 // closeTelemetryPanel toggles the panel off and releases the read-only handle.
@@ -65,27 +78,27 @@ func (m *Model) closeTelemetryPanel() {
 	m.telemetryView = nil
 }
 
-// toggleTelemetryPanel flips the panel, mirroring toggleGitPanel.
-func (m *Model) toggleTelemetryPanel() {
+// toggleTelemetryPanel flips the panel, mirroring toggleGitPanel. Returns the
+// open's initial-fetch command (nil when closing).
+func (m *Model) toggleTelemetryPanel() tea.Cmd {
 	if m.telemetryView != nil {
 		m.closeTelemetryPanel()
-		return
+		return nil
 	}
-	m.openTelemetryPanel()
+	return m.openTelemetryPanel()
 }
 
-// refreshTelemetryPanel re-resolves the active episode and re-queries the store,
-// throttled to telemetryRefreshTicks unless force is set (panel just opened or a
-// session switch happened). It (re)opens the database when the path changes or a
-// previous open failed, so the panel recovers once the daemon creates the file
-// after the first recorded event.
-func (m *Model) refreshTelemetryPanel(force bool) {
+// refreshTelemetryPanel re-resolves the active episode and re-queries its
+// summary, throttled to telemetryRefreshTicks unless force is set. Local mode
+// reads the SQLite store synchronously and returns nil; backend mode returns a
+// command that fetches off the UI loop (see telemetryBackendFetch).
+func (m *Model) refreshTelemetryPanel(force bool) tea.Cmd {
 	tv := m.telemetryView
 	if tv == nil {
-		return
+		return nil
 	}
 	if !force && tv.lastFetch != 0 && m.tick-tv.lastFetch < telemetryRefreshTicks {
-		return
+		return nil
 	}
 	tv.lastFetch = m.tick
 	if tv.lastFetch == 0 {
@@ -95,14 +108,21 @@ func (m *Model) refreshTelemetryPanel(force bool) {
 	state := m.currentState()
 	if state == nil {
 		tv.openErr = fmt.Errorf("no active session")
-		return
+		return nil
 	}
 	tv.sessionID = state.TelemetrySessionID()
+
+	// Backend telemetry mode: events are POSTed to the API, not the local store,
+	// so the panel reads the summary back from the backend instead of opening a
+	// local database that would never see this session.
+	if re, ok := state.Emitter().(*telemetry.RemoteEmitter); ok {
+		return m.telemetryBackendFetch(re, force)
+	}
 
 	path, err := ipc.TelemetryDBPath(state.SessionWorktree())
 	if err != nil {
 		tv.openErr = err
-		return
+		return nil
 	}
 	// Reopen when the path changed (session switched to a different repo) or a
 	// prior open failed and the file may now exist.
@@ -115,12 +135,12 @@ func (m *Model) refreshTelemetryPanel(force bool) {
 		tv.openErr = nil
 		if _, statErr := os.Stat(path); statErr != nil {
 			tv.openErr = fmt.Errorf("no telemetry database yet")
-			return
+			return nil
 		}
 		store, openErr := telemetry.OpenReadOnly(path)
 		if openErr != nil {
 			tv.openErr = openErr
-			return
+			return nil
 		}
 		tv.store = store
 	}
@@ -128,11 +148,37 @@ func (m *Model) refreshTelemetryPanel(force bool) {
 	sum, qErr := telemetry.LoadSummary(tv.store.DB(), tv.sessionID)
 	if qErr != nil {
 		tv.queryErr = qErr
-		return
+		return nil
 	}
 	tv.queryErr = nil
 	tv.summary = sum
 	tv.loaded = true
+	return nil
+}
+
+// telemetryBackendFetch returns a command that fetches the active episode's
+// summary from the backend, releasing any local store handle the panel held (it
+// is never read in backend mode). It returns nil when a fetch is already in
+// flight and this is not a forced refresh, so the ~1s tick cadence can't pile up
+// overlapping requests; force bypasses that guard so a session switch re-fetches
+// at once.
+func (m *Model) telemetryBackendFetch(re *telemetry.RemoteEmitter, force bool) tea.Cmd {
+	tv := m.telemetryView
+	if tv.store != nil {
+		_ = tv.store.Close()
+		tv.store = nil
+		tv.dbPath = ""
+	}
+	tv.openErr = nil
+	if tv.fetching && !force {
+		return nil
+	}
+	tv.fetching = true
+	sid := tv.sessionID
+	return func() tea.Msg {
+		sum, err := re.FetchSummary(sid)
+		return telemetrySummaryMsg{sessionID: sid, summary: sum, err: err}
+	}
 }
 
 // renderTelemetryPanel draws the boxed panel at the same height as the compass
@@ -194,7 +240,9 @@ func (m Model) telemetryBodyRows(innerW, maxLines int) []string {
 
 // telemetrySummaryRows renders the executive summary block followed by the
 // per-verifier distance sparklines, clipped to maxLines with a "+N more" note
-// when the panel is too short to show every verifier.
+// when the panel is too short to show every verifier. A Partial summary (from
+// the backend list endpoint) renders a compact block without the heartbeat
+// count or sparkline section, neither of which it carries.
 func (m Model) telemetrySummaryRows(sum telemetry.Summary, innerW, maxLines int) []string {
 	var rows []string
 
@@ -206,6 +254,18 @@ func (m Model) telemetrySummaryRows(sum telemetry.Summary, innerW, maxLines int)
 	rows = append(rows, kvRow(innerW, "up", uptimeText(sum.StartedAt)+"  "+startedClock(sum.StartedAt)))
 	rows = append(rows, kvRow(innerW, "work",
 		fmt.Sprintf("%d edits · %d batches · %d runs", sum.EditCount, sum.BatchCount, sum.RunCount)))
+
+	if sum.Partial {
+		// Backend list summary: no heartbeat count, token total or per-verifier
+		// series. Show the overall distance (the meaningful convergence reading)
+		// and the dollar cost; skip the empty sparkline section.
+		rows = append(rows, kvRow(innerW, "dist", overallDistanceText(sum.LastOverallDistance)))
+		if cost := formatCostUSD(sum.TotalCostUSD); cost != "" {
+			rows = append(rows, kvRow(innerW, "cost", cost))
+		}
+		return clipRows(rows, innerW, maxLines)
+	}
+
 	rows = append(rows, kvRow(innerW, "beats",
 		fmt.Sprintf("%d  ", sum.HeartbeatCount)+overallDistanceText(sum.LastOverallDistance)))
 	if cost := formatCost(sum.TotalCostUSD, sum.TotalTokens); cost != "" {

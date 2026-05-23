@@ -38,6 +38,12 @@ type Summary struct {
 	// Verifiers holds one distance series per verifier that has produced at
 	// least one scored run this episode, sorted by name for stable rendering.
 	Verifiers []VerifierSeries
+
+	// Partial is true when the summary omits the per-verifier series, heartbeat
+	// count and token total — the case for a summary read from the backend's
+	// session-list endpoint, which doesn't carry them. The panel renders a
+	// compact block (no sparklines, no beat count) rather than dead UI.
+	Partial bool
 }
 
 // VerifierSeries is the ordered distance trajectory for a single verifier
