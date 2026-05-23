@@ -82,6 +82,12 @@ func TestStartTelemetrySessionMintsIDAndEmits(t *testing.T) {
 	if f.sessions[0].BaseRef != "abc123" || f.sessions[0].Worktree != "/repo" {
 		t.Fatalf("session record missing anchor: %+v", f.sessions[0])
 	}
+	if len(f.heartbeats) != 2 {
+		t.Fatalf("initial heartbeats = %d, want 2 (one per goal episode)", len(f.heartbeats))
+	}
+	if f.heartbeats[0].SessionID != first || f.heartbeats[1].SessionID != second {
+		t.Fatalf("initial heartbeats not tied to their episodes: %+v", f.heartbeats)
+	}
 }
 
 func TestRecordTelemetryEditCountsAndSequences(t *testing.T) {
@@ -145,17 +151,16 @@ func TestEmitHeartbeatCarriesCounts(t *testing.T) {
 	s.IncTelemetryBatchCount()
 
 	s.EmitHeartbeat()
-	if len(f.heartbeats) != 1 {
-		t.Fatalf("heartbeats = %d, want 1", len(f.heartbeats))
+	if len(f.heartbeats) != 2 {
+		t.Fatalf("heartbeats = %d, want 2 (initial + changed)", len(f.heartbeats))
 	}
-	hb := f.heartbeats[0]
+	hb := f.heartbeats[1]
 	if hb.EditCount != 1 || hb.BatchCount != 2 {
 		t.Fatalf("heartbeat counts: edits=%d batches=%d, want 1/2", hb.EditCount, hb.BatchCount)
 	}
 
 	// A fresh goal episode resets the counters.
 	s.StartTelemetrySession("next goal")
-	s.EmitHeartbeat()
 	last := f.heartbeats[len(f.heartbeats)-1]
 	if last.EditCount != 0 || last.BatchCount != 0 {
 		t.Fatalf("counters not reset on new episode: edits=%d batches=%d", last.EditCount, last.BatchCount)
@@ -168,8 +173,8 @@ func TestEmitHeartbeatSkipsUnchangedSamples(t *testing.T) {
 	s.SetEmitter(f)
 	s.StartTelemetrySession("goal")
 
-	// First sample of an episode always writes; idle ticks with no new
-	// edits/batches/distance must not append duplicate rows.
+	// StartTelemetrySession writes the first sample of an episode; idle ticks
+	// with no new edits/batches/distance must not append duplicate rows.
 	s.EmitHeartbeat()
 	s.EmitHeartbeat()
 	s.EmitHeartbeat()

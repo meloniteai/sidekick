@@ -9,9 +9,9 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	charmlog "github.com/charmbracelet/log"
-	"github.com/muesli/termenv"
 	"github.com/meloniteai/sidekick/internal/ipc"
 	"github.com/meloniteai/sidekick/internal/telemetry"
+	"github.com/muesli/termenv"
 )
 
 // EventLevel categorises an entry in the in-memory event log. Renderers use
@@ -167,7 +167,9 @@ func (s *State) TelemetrySessionID() string {
 }
 
 // StartTelemetrySession opens a new goal-episode telemetry session: it mints a
-// fresh session id, resets the per-episode counters, and emits a session row.
+// fresh session id, resets the per-episode counters, emits a session row, and
+// immediately records the first heartbeat so remote UIs can show the session as
+// active before the next ticker or file write.
 // A telemetry session is bounded by goal-set → next goal-set, the only unit in
 // which "iterations to converge" is meaningful — the underlying daemon.State is
 // reused across many goals. No-op when telemetry is disabled.
@@ -192,7 +194,9 @@ func (s *State) StartTelemetrySession(goal string) {
 	s.mu.Unlock()
 	if err := e.RecordSession(rec); err != nil {
 		s.LogEvent(EventError, "telemetry: record session: %v", err)
+		return
 	}
+	s.EmitHeartbeat()
 }
 
 // RecordTelemetryEdit emits one edit row for file, captured before RecordEdit's
