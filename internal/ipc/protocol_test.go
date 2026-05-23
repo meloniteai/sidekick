@@ -53,6 +53,101 @@ func TestSocketPathFor_WorktreeSharesTrunkFingerprint(t *testing.T) {
 	}
 }
 
+func TestSocketPathFor_CloneFallsBackToLiveSocketWithSameOrigin(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	t.Setenv("SIDEKICK_SOCK", "")
+	home, err := os.MkdirTemp("/tmp", "sidekick-ipc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	t.Setenv("HOME", home)
+
+	remote := "git@github-melonite:meloniteai/sidekick-ui.git"
+	trunk := t.TempDir()
+	mustGit(t, trunk, "init", "-q", "-b", "main")
+	mustGit(t, trunk, "commit", "--allow-empty", "-q", "-m", "init")
+	mustGit(t, trunk, "remote", "add", "origin", remote)
+
+	clone := t.TempDir()
+	mustGit(t, clone, "init", "-q", "-b", "main")
+	mustGit(t, clone, "commit", "--allow-empty", "-q", "-m", "init")
+	mustGit(t, clone, "remote", "add", "origin", remote)
+
+	trunkSock, err := SocketPathFor(trunk)
+	if err != nil {
+		t.Fatalf("trunk SocketPathFor: %v", err)
+	}
+	cloneSock, err := SocketPathFor(clone)
+	if err != nil {
+		t.Fatalf("clone SocketPathFor: %v", err)
+	}
+	if trunkSock == cloneSock {
+		t.Fatalf("independent clones should have distinct primary sockets: %s", trunkSock)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(trunkSock), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("unix", trunkSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	errCh := make(chan error, 1)
+	go serveStatusOnce(l, trunk, errCh)
+
+	got, err := SocketPathFor(clone)
+	if err != nil {
+		t.Fatalf("clone fallback SocketPathFor: %v", err)
+	}
+	if got != trunkSock {
+		t.Fatalf("clone socket = %s, want live same-origin socket %s", got, trunkSock)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	default:
+	}
+}
+
+func serveStatusOnce(l net.Listener, worktree string, errCh chan<- error) {
+	conn, err := l.Accept()
+	if err != nil {
+		errCh <- err
+		return
+	}
+	defer conn.Close()
+	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		errCh <- err
+		return
+	}
+	var req Request
+	if err := json.Unmarshal(line, &req); err != nil {
+		errCh <- err
+		return
+	}
+	if req.Type != TypeStatus {
+		errCh <- nil
+		return
+	}
+	data, err := json.Marshal(StatusReply{
+		Worktree:          worktree,
+		DisplayedWorktree: worktree,
+		Sessions:          []SessionSummary{{Worktree: worktree}},
+	})
+	if err != nil {
+		errCh <- err
+		return
+	}
+	errCh <- json.NewEncoder(conn).Encode(Response{OK: true, Data: data})
+}
+
 func mustGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

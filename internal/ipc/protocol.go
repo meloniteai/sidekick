@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +57,15 @@ func SocketPathFor(cwd string) (string, error) {
 		return "", err
 	}
 	if fp := repoFingerprintFor(cwd); fp != "" {
-		return filepath.Join(home, ".sidekick", "sockets", fp+".sock"), nil
+		socketDir := filepath.Join(home, ".sidekick", "sockets")
+		primary := filepath.Join(socketDir, fp+".sock")
+		if socketFileExists(primary) {
+			return primary, nil
+		}
+		if sock := socketPathForMatchingRemote(socketDir, cwd); sock != "" {
+			return sock, nil
+		}
+		return primary, nil
 	}
 	return filepath.Join(home, defaultSockRel), nil
 }
@@ -140,6 +149,124 @@ func repoFingerprintFor(cwd string) string {
 	abs = filepath.Clean(abs)
 	sum := sha256.Sum256([]byte(abs))
 	return hex.EncodeToString(sum[:])[:12]
+}
+
+func socketFileExists(path string) bool {
+	if _, err := os.Stat(path); err == nil {
+		return true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		// Let the eventual dial surface permission or filesystem errors with
+		// its normal context instead of silently falling back elsewhere.
+		return true
+	}
+	return false
+}
+
+func socketPathForMatchingRemote(socketDir, cwd string) string {
+	want := repoRemoteFor(cwd)
+	if want == "" {
+		return ""
+	}
+	entries, err := os.ReadDir(socketDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sock") {
+			continue
+		}
+		sock := filepath.Join(socketDir, entry.Name())
+		for _, worktree := range liveSocketWorktrees(sock) {
+			if repoRemoteFor(worktree) == want {
+				return sock
+			}
+		}
+	}
+	return ""
+}
+
+func liveSocketWorktrees(sock string) []string {
+	conn, err := net.DialTimeout("unix", sock, 200*time.Millisecond)
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
+	if err := json.NewEncoder(conn).Encode(Request{Type: TypeStatus}); err != nil {
+		return nil
+	}
+	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		return nil
+	}
+	var resp Response
+	if err := json.Unmarshal(line, &resp); err != nil || !resp.OK {
+		return nil
+	}
+	var status StatusReply
+	if err := json.Unmarshal(resp.Data, &status); err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	add(status.Worktree)
+	add(status.DisplayedWorktree)
+	for _, s := range status.Sessions {
+		add(s.Worktree)
+	}
+	return out
+}
+
+func repoRemoteFor(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return normalizeRemoteURL(string(out))
+}
+
+func normalizeRemoteURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if u, err := url.Parse(raw); err == nil && u.Scheme != "" {
+		host := strings.ToLower(u.Host)
+		path := strings.Trim(strings.TrimSuffix(u.EscapedPath(), ".git"), "/")
+		if host != "" && path != "" {
+			return host + "/" + path
+		}
+	}
+	if at := strings.LastIndex(raw, "@"); at >= 0 {
+		if colon := strings.Index(raw[at+1:], ":"); colon >= 0 {
+			host := strings.ToLower(raw[at+1 : at+1+colon])
+			path := strings.Trim(strings.TrimSuffix(raw[at+1+colon+1:], ".git"), "/")
+			if host != "" && path != "" {
+				return host + "/" + path
+			}
+		}
+	}
+	cleaned := strings.TrimRight(strings.TrimSuffix(raw, ".git"), "/")
+	if filepath.IsAbs(cleaned) {
+		if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+			cleaned = resolved
+		}
+		cleaned = filepath.Clean(cleaned)
+	}
+	return cleaned
 }
 
 // Request is a single command sent to the daemon. Source is an optional
