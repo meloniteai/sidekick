@@ -23,10 +23,11 @@ type capturedReq struct {
 // fakeBackend is a minimal stand-in for the sidekick-api: it resolves/creates a
 // project and accepts every live-emit POST, recording each request.
 type fakeBackend struct {
-	mu       sync.Mutex
-	reqs     []capturedReq
-	projects []map[string]any // seeded matches for GET /projects
-	runID    int64
+	mu               sync.Mutex
+	reqs             []capturedReq
+	projects         []map[string]any // seeded matches for GET /projects
+	notFoundProjects map[string]bool
+	runID            int64
 }
 
 func (f *fakeBackend) record(r *http.Request) {
@@ -62,6 +63,10 @@ func (f *fakeBackend) handler() http.Handler {
 	// findings, heartbeats. The verifier-run POST returns a server-assigned id.
 	mux.HandleFunc("/api/projects/", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
+		if f.projectGone(r.URL.Path) {
+			writeJSON(w, 404, map[string]any{"detail": "Not Found"})
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/verifier-runs") && r.Method == http.MethodPost {
 			f.mu.Lock()
 			f.runID++
@@ -73,6 +78,17 @@ func (f *fakeBackend) handler() http.Handler {
 		writeJSON(w, 201, map[string]any{})
 	})
 	return mux
+}
+
+func (f *fakeBackend) projectGone(path string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id := range f.notFoundProjects {
+		if strings.Contains(path, "/api/projects/"+id+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -158,6 +174,39 @@ func TestRemoteEmitterCreatesProjectWhenAbsent(t *testing.T) {
 	}
 	if created.body["repo_fingerprint"] != "fp-new" || created.body["name"] != "myrepo" {
 		t.Fatalf("create body = %+v, want fingerprint+name carried", created.body)
+	}
+}
+
+func TestRemoteEmitterRefreshesStaleProjectOnNotFound(t *testing.T) {
+	fb := &fakeBackend{
+		projects: []map[string]any{
+			{"project_id": "fresh-pid", "repo_fingerprint": "fp-stale"},
+		},
+		notFoundProjects: map[string]bool{"stale-pid": true},
+	}
+	srv := httptest.NewServer(fb.handler())
+	defer srv.Close()
+
+	e, err := OpenRemote(srv.URL+"/api", "fp-stale", "repo", "/repos/repo")
+	if err != nil {
+		t.Fatalf("OpenRemote: %v", err)
+	}
+	defer e.Close()
+	e.projectID = "stale-pid"
+	e.base = srv.URL + "/api/projects/stale-pid"
+
+	if err := e.RecordSession(SessionRecord{SessionID: "S1", GoalText: "do x", StartedAt: time.Now()}); err != nil {
+		t.Fatalf("RecordSession: %v", err)
+	}
+
+	if e.ProjectID() != "fresh-pid" {
+		t.Fatalf("ProjectID = %q, want fresh-pid after refresh", e.ProjectID())
+	}
+	if _, ok := fb.find(http.MethodPost, "/projects/stale-pid/sessions"); !ok {
+		t.Fatalf("missing first stale-project attempt; got %+v", fb.snapshot())
+	}
+	if _, ok := fb.find(http.MethodPost, "/projects/fresh-pid/sessions"); !ok {
+		t.Fatalf("missing retried fresh-project POST; got %+v", fb.snapshot())
 	}
 }
 

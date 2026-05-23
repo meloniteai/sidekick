@@ -3,6 +3,7 @@ package telemetry
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,13 +23,18 @@ import (
 // foreign keys the API enforces.
 type RemoteEmitter struct {
 	client    *http.Client
+	apiBase   string
 	base      string // "<api>/projects/<projectID>"
 	projectID string
+	fp        string
+	name      string
+	rootPath  string
 
 	edits   chan EditRecord
 	closing chan struct{}
 	once    sync.Once
 	wg      sync.WaitGroup
+	project sync.Mutex
 
 	logf func(format string, args ...any)
 }
@@ -59,8 +65,12 @@ func OpenRemote(apiBaseURL, repoFingerprint, name, rootPath string) (*RemoteEmit
 	}
 	e := &RemoteEmitter{
 		client:    client,
+		apiBase:   base,
 		base:      fmt.Sprintf("%s/projects/%s", base, projectID),
 		projectID: projectID,
+		fp:        repoFingerprint,
+		name:      name,
+		rootPath:  rootPath,
 		edits:     make(chan EditRecord, editQueueCap),
 		closing:   make(chan struct{}),
 		logf: func(format string, args ...any) {
@@ -272,7 +282,34 @@ func (e *RemoteEmitter) editWorker() {
 // post sends body as JSON to base+path. A nil out skips response decoding; a
 // non-2xx status is an error carrying a snippet of the body for diagnosis.
 func (e *RemoteEmitter) post(path string, body, out any) error {
-	return doJSON(e.client, http.MethodPost, e.base+path, body, out)
+	if err := doJSON(e.client, http.MethodPost, e.base+path, body, out); err != nil {
+		if !isStatus(err, http.StatusNotFound) {
+			return err
+		}
+		if rerr := e.refreshProject(); rerr != nil {
+			return err
+		}
+		return doJSON(e.client, http.MethodPost, e.base+path, body, out)
+	}
+	return nil
+}
+
+func (e *RemoteEmitter) refreshProject() error {
+	e.project.Lock()
+	defer e.project.Unlock()
+	projectID, err := resolveProject(e.client, e.apiBase, e.fp, e.name, e.rootPath)
+	if err != nil {
+		return err
+	}
+	if projectID == "" {
+		return fmt.Errorf("telemetry: resolve project returned empty id")
+	}
+	if projectID != e.projectID {
+		e.logf("telemetry: refreshed backend project %s -> %s", e.projectID, projectID)
+		e.projectID = projectID
+		e.base = fmt.Sprintf("%s/projects/%s", e.apiBase, projectID)
+	}
+	return nil
 }
 
 func doJSON(client *http.Client, method, url string, body, out any) error {
@@ -298,12 +335,38 @@ func doJSON(client *http.Client, method, url string, body, out any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("%s %s: %s: %s", method, url, resp.Status, strings.TrimSpace(string(snippet)))
+		return httpError{
+			Method:     method,
+			URL:        url,
+			Status:     resp.Status,
+			StatusCode: resp.StatusCode,
+			Snippet:    strings.TrimSpace(string(snippet)),
+		}
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
 	}
 	return nil
+}
+
+type httpError struct {
+	Method     string
+	URL        string
+	Status     string
+	StatusCode int
+	Snippet    string
+}
+
+func (e httpError) Error() string {
+	return fmt.Sprintf("%s %s: %s: %s", e.Method, e.URL, e.Status, e.Snippet)
+}
+
+func isStatus(err error, code int) bool {
+	var he httpError
+	if errors.As(err, &he) {
+		return he.StatusCode == code
+	}
+	return false
 }
 
 // Request bodies mirror the API's *Create schemas: the server-assigned id and
