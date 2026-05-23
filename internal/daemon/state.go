@@ -206,6 +206,7 @@ func (s *State) RecordTelemetryEdit(file string) {
 	s.mu.Lock()
 	e := s.emitter
 	sid := s.telemetrySessionID
+	wt := s.sessionWorktree
 	if e == nil || sid == "" {
 		s.mu.Unlock()
 		return
@@ -213,9 +214,15 @@ func (s *State) RecordTelemetryEdit(file string) {
 	s.telemetryEditCount++
 	seq := s.telemetryEditCount
 	s.mu.Unlock()
+	// Store the repo-relative key findings use so the two streams join; keep the
+	// raw path when it can't be anchored rather than dropping a real edit.
+	path := telemetry.NormalizeRepoPath(wt, file)
+	if path == "" {
+		path = file
+	}
 	if err := e.RecordEdit(telemetry.EditRecord{
 		SessionID: sid,
-		FilePath:  file,
+		FilePath:  path,
 		Seq:       seq,
 		TS:        time.Now(),
 	}); err != nil {

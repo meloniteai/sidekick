@@ -108,6 +108,33 @@ func TestRecordTelemetryEditCountsAndSequences(t *testing.T) {
 	}
 }
 
+func TestRecordTelemetryEditNormalizesPath(t *testing.T) {
+	f := &fakeEmitter{}
+	s := NewState()
+	s.SetSessionWorktree("/repo/.claude/worktrees/wt")
+	s.SetEmitter(f)
+	s.StartTelemetrySession("goal")
+
+	// Absolute worktree path -> repo-relative, so it shares one key with the
+	// finding stream (which already normalizes this way).
+	s.RecordTelemetryEdit("/repo/.claude/worktrees/wt/internal/sidekick/model.go")
+	// Already-relative path is preserved.
+	s.RecordTelemetryEdit("cmd/start.go")
+	// Path outside the worktree can't be anchored: keep the raw path rather than
+	// drop the edit (an edit is always to a real file).
+	s.RecordTelemetryEdit("/elsewhere/util.go")
+
+	if len(f.edits) != 3 {
+		t.Fatalf("edits = %d, want 3", len(f.edits))
+	}
+	want := []string{"internal/sidekick/model.go", "cmd/start.go", "/elsewhere/util.go"}
+	for i, w := range want {
+		if f.edits[i].FilePath != w {
+			t.Errorf("edit[%d].FilePath = %q, want %q", i, f.edits[i].FilePath, w)
+		}
+	}
+}
+
 func TestEmitHeartbeatCarriesCounts(t *testing.T) {
 	f := &fakeEmitter{}
 	s := NewState()

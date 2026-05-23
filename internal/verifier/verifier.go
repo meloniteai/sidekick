@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/meloniteai/sidekick/internal/ipc"
+	"github.com/meloniteai/sidekick/internal/telemetry"
 )
 
 // Session is the context piped to verifier subprocesses on stdin.
@@ -624,27 +625,10 @@ const DefaultFindingsCap = 50
 
 // normalizeFindingPath returns a clean repo-relative key for p against worktree.
 // A path that escapes the worktree (or can't be resolved) returns "" so it is
-// stored as a tree-global finding rather than under a bad key.
+// stored as a tree-global finding rather than under a bad key. The edit stream
+// normalizes through the same helper so both join on one key.
 func normalizeFindingPath(worktree, p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" {
-		return ""
-	}
-	if filepath.IsAbs(p) {
-		if worktree == "" {
-			return ""
-		}
-		rel, err := filepath.Rel(worktree, p)
-		if err != nil {
-			return ""
-		}
-		p = rel
-	}
-	p = filepath.Clean(p)
-	if p == "." || p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
-		return ""
-	}
-	return filepath.ToSlash(p)
+	return telemetry.NormalizeRepoPath(worktree, p)
 }
 
 // prepareFindings normalizes finding paths and applies the cap, keeping the
