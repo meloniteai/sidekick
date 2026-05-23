@@ -58,12 +58,6 @@ func TestSocketPathFor_CloneFallsBackToLiveSocketWithSameOrigin(t *testing.T) {
 		t.Skip("git not on PATH")
 	}
 	t.Setenv("SIDEKICK_SOCK", "")
-	home, err := os.MkdirTemp("/tmp", "sidekick-ipc-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	t.Setenv("HOME", home)
 
 	remote := "git@github-melonite:meloniteai/sidekick-ui.git"
 	trunk := t.TempDir()
@@ -75,6 +69,13 @@ func TestSocketPathFor_CloneFallsBackToLiveSocketWithSameOrigin(t *testing.T) {
 	mustGit(t, clone, "init", "-q", "-b", "main")
 	mustGit(t, clone, "commit", "--allow-empty", "-q", "-m", "init")
 	mustGit(t, clone, "remote", "add", "origin", remote)
+
+	home, err := os.MkdirTemp("/tmp", "sidekick-ipc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	t.Setenv("HOME", home)
 
 	trunkSock, err := SocketPathFor(trunk)
 	if err != nil {
