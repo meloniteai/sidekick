@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
+	skauth "github.com/meloniteai/sidekick/internal/auth"
 	"github.com/meloniteai/sidekick/internal/config"
 	"github.com/meloniteai/sidekick/internal/daemon"
 	"github.com/meloniteai/sidekick/internal/ipc"
@@ -630,17 +631,33 @@ func openTelemetry(worktree, mode, backendURL string) telemetry.Emitter {
 // reached so the caller can fall back to local. Returns the concrete type so the
 // caller's nil check is unambiguous.
 func openRemoteTelemetry(worktree, backendURL string) *telemetry.RemoteEmitter {
-	if strings.TrimSpace(backendURL) == "" {
+	target, ok := resolveBackendTargetForStart(backendURL)
+	if strings.TrimSpace(target.APIBase) == "" {
 		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry: no url configured\n")
 		return nil
 	}
-	e, err := telemetry.OpenRemote(backendURL, ipc.RepoFingerprint(worktree), filepath.Base(worktree), worktree)
+	if !ok || target.Token == "" {
+		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry: missing CLI auth; run sidekick login --org <slug> --api-base %s\n", skauth.RootAPIBase(target.APIBase))
+	}
+	e, err := telemetry.OpenRemote(target.APIBase, ipc.RepoFingerprint(worktree), filepath.Base(worktree), worktree, telemetry.WithAuthToken(target.Token))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry: %v\n", err)
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "[sidekick] telemetry sink: BACKEND %s (healthcheck ok, project %s)\n", backendURL, e.ProjectID())
+	fmt.Fprintf(os.Stderr, "[sidekick] telemetry sink: BACKEND %s (healthcheck ok, project %s)\n", target.APIBase, e.ProjectID())
 	return e
+}
+
+func resolveBackendTargetForStart(backendURL string) (skauth.BackendTarget, bool) {
+	authPath, err := skauth.AuthFilePath()
+	if err != nil {
+		return skauth.BackendTarget{APIBase: strings.TrimSpace(backendURL)}, false
+	}
+	target, ok, err := skauth.ResolveBackendTarget(authPath, backendURL)
+	if err != nil || !ok {
+		return skauth.BackendTarget{APIBase: strings.TrimSpace(backendURL)}, false
+	}
+	return target, true
 }
 
 // resolveBackendURL picks the remote telemetry URL from the environment
@@ -651,10 +668,20 @@ func resolveBackendURL(configPath, startDir string) string {
 		return v
 	}
 	f, _, err := config.LoadFrom(configPath, startDir)
+	if err == nil {
+		if v := strings.TrimSpace(f.Backend.URL); v != "" {
+			return v
+		}
+	}
+	authPath, err := skauth.AuthFilePath()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(f.Backend.URL)
+	profile, ok, err := skauth.CurrentProfile(authPath)
+	if err != nil || !ok {
+		return ""
+	}
+	return profile.APIBase
 }
 
 // telemetryEnabled reports whether collection is on. Default is on (the build

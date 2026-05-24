@@ -25,6 +25,7 @@ type RemoteEmitter struct {
 	client    *http.Client
 	apiBase   string
 	base      string // "<api>/projects/<projectID>"
+	token     string
 	projectID string
 	fp        string
 	name      string
@@ -45,21 +46,39 @@ type RemoteEmitter struct {
 // blocking the daemon's write path.
 const editQueueCap = 256
 
+// RemoteOption customizes the remote telemetry client.
+type RemoteOption func(*remoteOptions)
+
+type remoteOptions struct {
+	token string
+}
+
+// WithAuthToken attaches a bearer token to each backend request.
+func WithAuthToken(token string) RemoteOption {
+	return func(o *remoteOptions) {
+		o.token = strings.TrimSpace(token)
+	}
+}
+
 // OpenRemote resolves (or creates) the project keyed by repoFingerprint on the
 // backend at apiBaseURL (e.g. "http://localhost:8000/api"), then returns an
 // emitter bound to it. name and rootPath seed a freshly created project; they
 // are ignored when a project with the same fingerprint already exists. An
 // unreachable backend surfaces as an error so the caller can fall back to local.
-func OpenRemote(apiBaseURL, repoFingerprint, name, rootPath string) (*RemoteEmitter, error) {
+func OpenRemote(apiBaseURL, repoFingerprint, name, rootPath string, opts ...RemoteOption) (*RemoteEmitter, error) {
 	base := strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
 	if base == "" {
 		return nil, fmt.Errorf("telemetry: empty backend url")
 	}
+	var options remoteOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	if err := pingHealth(client, base); err != nil {
+	if err := pingHealth(client, base, options.token); err != nil {
 		return nil, fmt.Errorf("telemetry: backend healthcheck %s: %w", base+"/health", err)
 	}
-	projectID, err := resolveProject(client, base, repoFingerprint, name, rootPath)
+	projectID, err := resolveProject(client, base, options.token, repoFingerprint, name, rootPath)
 	if err != nil {
 		return nil, fmt.Errorf("telemetry: resolve project: %w", err)
 	}
@@ -67,6 +86,7 @@ func OpenRemote(apiBaseURL, repoFingerprint, name, rootPath string) (*RemoteEmit
 		client:    client,
 		apiBase:   base,
 		base:      fmt.Sprintf("%s/projects/%s", base, projectID),
+		token:     options.token,
 		projectID: projectID,
 		fp:        repoFingerprint,
 		name:      name,
@@ -88,50 +108,19 @@ func (e *RemoteEmitter) ProjectID() string { return e.projectID }
 // pingHealth checks the backend is a reachable, live sidekick-api before we
 // commit to it, so a wrong/down URL fails fast at start and the caller falls
 // back to local instead of silently dropping every event into the void.
-func pingHealth(client *http.Client, base string) error {
-	return doJSON(client, http.MethodGet, base+"/health", nil, nil)
+func pingHealth(client *http.Client, base, token string) error {
+	return doJSON(client, token, http.MethodGet, base+"/health", nil, nil)
 }
 
-// resolveProject finds the project whose repo_fingerprint matches, else creates
-// one. The API has no fingerprint lookup, so we list and match client-side; a
-// second daemon racing the create loses the unique constraint, so we re-list on
-// a failed create before giving up.
-func resolveProject(client *http.Client, base, fingerprint, name, rootPath string) (string, error) {
-	if id, err := findProject(client, base, fingerprint); err != nil {
-		return "", err
-	} else if id != "" {
-		return id, nil
-	}
+func resolveProject(client *http.Client, base, token, fingerprint, name, rootPath string) (string, error) {
 	body := map[string]any{"name": name, "repo_fingerprint": fingerprint, "root_path": rootPath}
-	var created struct {
+	var resolved struct {
 		ProjectID string `json:"project_id"`
 	}
-	if err := doJSON(client, http.MethodPost, base+"/projects", body, &created); err != nil {
-		if id, lerr := findProject(client, base, fingerprint); lerr == nil && id != "" {
-			return id, nil
-		}
+	if err := doJSON(client, token, http.MethodPost, base+"/projects/resolve", body, &resolved); err != nil {
 		return "", err
 	}
-	return created.ProjectID, nil
-}
-
-func findProject(client *http.Client, base, fingerprint string) (string, error) {
-	if fingerprint == "" {
-		return "", nil
-	}
-	var projects []struct {
-		ProjectID       string `json:"project_id"`
-		RepoFingerprint string `json:"repo_fingerprint"`
-	}
-	if err := doJSON(client, http.MethodGet, base+"/projects", nil, &projects); err != nil {
-		return "", err
-	}
-	for _, p := range projects {
-		if p.RepoFingerprint == fingerprint {
-			return p.ProjectID, nil
-		}
-	}
-	return "", nil
+	return resolved.ProjectID, nil
 }
 
 func (e *RemoteEmitter) RecordSession(r SessionRecord) error {
@@ -282,14 +271,14 @@ func (e *RemoteEmitter) editWorker() {
 // post sends body as JSON to base+path. A nil out skips response decoding; a
 // non-2xx status is an error carrying a snippet of the body for diagnosis.
 func (e *RemoteEmitter) post(path string, body, out any) error {
-	if err := doJSON(e.client, http.MethodPost, e.base+path, body, out); err != nil {
+	if err := doJSON(e.client, e.token, http.MethodPost, e.base+path, body, out); err != nil {
 		if !isStatus(err, http.StatusNotFound) {
 			return err
 		}
 		if rerr := e.refreshProject(); rerr != nil {
 			return err
 		}
-		return doJSON(e.client, http.MethodPost, e.base+path, body, out)
+		return doJSON(e.client, e.token, http.MethodPost, e.base+path, body, out)
 	}
 	return nil
 }
@@ -297,7 +286,7 @@ func (e *RemoteEmitter) post(path string, body, out any) error {
 func (e *RemoteEmitter) refreshProject() error {
 	e.project.Lock()
 	defer e.project.Unlock()
-	projectID, err := resolveProject(e.client, e.apiBase, e.fp, e.name, e.rootPath)
+	projectID, err := resolveProject(e.client, e.apiBase, e.token, e.fp, e.name, e.rootPath)
 	if err != nil {
 		return err
 	}
@@ -312,7 +301,7 @@ func (e *RemoteEmitter) refreshProject() error {
 	return nil
 }
 
-func doJSON(client *http.Client, method, url string, body, out any) error {
+func doJSON(client *http.Client, token, method, url string, body, out any) error {
 	var reader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
@@ -327,6 +316,9 @@ func doJSON(client *http.Client, method, url string, body, out any) error {
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

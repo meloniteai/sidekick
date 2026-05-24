@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	skauth "github.com/meloniteai/sidekick/internal/auth"
 	"github.com/meloniteai/sidekick/internal/config"
 	"github.com/meloniteai/sidekick/internal/daemon"
 	"github.com/meloniteai/sidekick/internal/verifier"
@@ -199,6 +200,39 @@ func TestBindStartContract(t *testing.T) {
 				t.Fatalf("%s accepted an unknown positional arg; expected NoArgs rejection", tc.name)
 			}
 		})
+	}
+}
+
+func TestResolveBackendURLFallsBackToAuthProfile(t *testing.T) {
+	dir := t.TempDir()
+	authFile := filepath.Join(dir, "auth.json")
+	t.Setenv("SIDEKICK_AUTH_FILE", authFile)
+	t.Setenv("SIDEKICK_GLOBAL_CONFIG", filepath.Join(dir, "missing-global.yaml"))
+	if err := skauth.PutProfile(authFile, skauth.Profile{OrgSlug: "acme", APIBase: "https://sidekick.example/api", Token: "sk_live_token"}); err != nil {
+		t.Fatalf("PutProfile: %v", err)
+	}
+
+	if got := resolveBackendURL("", dir); got != "https://sidekick.example/api" {
+		t.Fatalf("resolveBackendURL = %q", got)
+	}
+}
+
+func TestResolveBackendTargetForStartScopesConfiguredURL(t *testing.T) {
+	authFile := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv("SIDEKICK_AUTH_FILE", authFile)
+	if err := skauth.PutProfile(authFile, skauth.Profile{OrgSlug: "acme", APIBase: "https://sidekick.example/api", Token: "sk_live_token"}); err != nil {
+		t.Fatalf("PutProfile: %v", err)
+	}
+
+	target, ok := resolveBackendTargetForStart("https://override.example/api")
+	if !ok {
+		t.Fatalf("resolveBackendTargetForStart ok = false")
+	}
+	if target.APIBase != "https://override.example/api/orgs/acme" {
+		t.Fatalf("APIBase = %q", target.APIBase)
+	}
+	if target.Token != "sk_live_token" {
+		t.Fatalf("token = %q", target.Token)
 	}
 }
 

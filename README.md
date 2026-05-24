@@ -118,6 +118,27 @@ sidekick --headless --goal "ship auth" # pin the goal up front
 Git worktrees are supported in both modes: the daemon spins up a separate
 session per worktree on first hook event, and the TUI lets you switch between them.
 
+## Backend telemetry
+
+Sidekick can emit live telemetry to `sidekick-api` instead of only writing the
+local SQLite store. Pair the CLI once per org:
+
+```bash
+sidekick login --org acme --api-base https://sidekick-api-origin.melonite.ai/api
+sidekick auth status
+```
+
+The login command opens a browser approval page, polls until the signed-in
+Sidekick user approves the device, and stores an opaque CLI token in
+`~/.sidekick/auth.json` with `0600` permissions. `sidekick logout` revokes and
+removes the active token.
+
+When an auth profile exists, `sidekick start` in auto/backend telemetry mode
+uses the stored org and token, resolves the repo through
+`/api/orgs/{org}/projects/resolve`, and sends each telemetry event with the CLI
+bearer token. If backend auth is missing or invalid, auto mode falls back to the
+local store and prints the login command to run.
+
 ## Verifiers
 
 There are multiple options. Choose what works best for you:

@@ -27,7 +27,7 @@ func (e *RemoteEmitter) FetchSummary(sessionID string) (Summary, error) {
 		return Summary{}, nil
 	}
 	var sessions []sessionSummaryPayload
-	err := getJSON(e.client, e.base+"/sessions", &sessions)
+	err := getJSON(e.client, e.token, e.base+"/sessions", &sessions)
 	if errors.Is(err, errRemoteNotFound) {
 		return Summary{SessionID: sessionID}, nil
 	}
@@ -84,10 +84,13 @@ func (p sessionSummaryPayload) toSummary() Summary {
 // errRemoteNotFound so callers can treat a missing resource as empty; any other
 // non-2xx is an error carrying a body snippet for diagnosis. It mirrors doJSON's
 // read path without the request-body handling the POST helpers need.
-func getJSON(client *http.Client, url string, out any) error {
+func getJSON(client *http.Client, token, url string, out any) error {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

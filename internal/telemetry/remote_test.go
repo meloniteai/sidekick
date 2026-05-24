@@ -16,6 +16,7 @@ import (
 type capturedReq struct {
 	method string
 	path   string
+	auth   string
 	body   map[string]any
 	list   []map[string]any // populated when the body is a JSON array (findings)
 }
@@ -32,7 +33,7 @@ type fakeBackend struct {
 
 func (f *fakeBackend) record(r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
-	cr := capturedReq{method: r.Method, path: r.URL.Path}
+	cr := capturedReq{method: r.Method, path: r.URL.Path, auth: r.Header.Get("Authorization")}
 	if len(raw) > 0 {
 		if raw[0] == '[' {
 			_ = json.Unmarshal(raw, &cr.list)
@@ -47,21 +48,28 @@ func (f *fakeBackend) record(r *http.Request) {
 
 func (f *fakeBackend) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/orgs/acme/health", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
 		writeJSON(w, 200, map[string]any{"status": "ok"})
 	})
-	mux.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/orgs/acme/projects/resolve", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
-		if r.Method == http.MethodGet {
-			writeJSON(w, 200, f.projects)
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		writeJSON(w, 201, map[string]any{"project_id": "created-pid"})
+		fingerprint, _ := f.reqs[len(f.reqs)-1].body["repo_fingerprint"].(string)
+		for _, p := range f.projects {
+			if p["repo_fingerprint"] == fingerprint {
+				writeJSON(w, 200, p)
+				return
+			}
+		}
+		writeJSON(w, 200, map[string]any{"project_id": "created-pid"})
 	})
 	// Everything under a project: sessions, edits, batches, verifier-runs,
 	// findings, heartbeats. The verifier-run POST returns a server-assigned id.
-	mux.HandleFunc("/api/projects/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/orgs/acme/projects/", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
 		if f.projectGone(r.URL.Path) {
 			writeJSON(w, 404, map[string]any{"detail": "Not Found"})
@@ -84,7 +92,7 @@ func (f *fakeBackend) projectGone(path string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for id := range f.notFoundProjects {
-		if strings.Contains(path, "/api/projects/"+id+"/") {
+		if strings.Contains(path, "/api/orgs/acme/projects/"+id+"/") {
 			return true
 		}
 	}
@@ -128,7 +136,7 @@ func TestRemoteEmitterFailsClosedOnUnhealthyBackend(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := OpenRemote(srv.URL+"/api", "fp", "repo", "/repos/repo"); err == nil {
+	if _, err := OpenRemote(srv.URL+"/api/orgs/acme", "fp", "repo", "/repos/repo"); err == nil {
 		t.Fatalf("OpenRemote should error when the backend healthcheck fails")
 	}
 }
@@ -140,7 +148,7 @@ func TestRemoteEmitterReusesProjectByFingerprint(t *testing.T) {
 	srv := httptest.NewServer(fb.handler())
 	defer srv.Close()
 
-	e, err := OpenRemote(srv.URL+"/api", "fp-123", "myrepo", "/repos/myrepo")
+	e, err := OpenRemote(srv.URL+"/api/orgs/acme", "fp-123", "myrepo", "/repos/myrepo")
 	if err != nil {
 		t.Fatalf("OpenRemote: %v", err)
 	}
@@ -159,7 +167,7 @@ func TestRemoteEmitterCreatesProjectWhenAbsent(t *testing.T) {
 	srv := httptest.NewServer(fb.handler())
 	defer srv.Close()
 
-	e, err := OpenRemote(srv.URL+"/api", "fp-new", "myrepo", "/repos/myrepo")
+	e, err := OpenRemote(srv.URL+"/api/orgs/acme", "fp-new", "myrepo", "/repos/myrepo")
 	if err != nil {
 		t.Fatalf("OpenRemote: %v", err)
 	}
@@ -168,12 +176,34 @@ func TestRemoteEmitterCreatesProjectWhenAbsent(t *testing.T) {
 	if e.ProjectID() != "created-pid" {
 		t.Fatalf("ProjectID = %q, want created-pid", e.ProjectID())
 	}
-	created, ok := fb.find(http.MethodPost, "/projects")
+	created, ok := fb.find(http.MethodPost, "/projects/resolve")
 	if !ok {
-		t.Fatalf("absent fingerprint should POST a new project")
+		t.Fatalf("absent fingerprint should resolve a project")
 	}
 	if created.body["repo_fingerprint"] != "fp-new" || created.body["name"] != "myrepo" {
 		t.Fatalf("create body = %+v, want fingerprint+name carried", created.body)
+	}
+}
+
+func TestRemoteEmitterSendsBearerToken(t *testing.T) {
+	fb := &fakeBackend{}
+	srv := httptest.NewServer(fb.handler())
+	defer srv.Close()
+
+	e, err := OpenRemote(srv.URL+"/api/orgs/acme", "fp", "repo", "/repos/repo", WithAuthToken("sk_live_test"))
+	if err != nil {
+		t.Fatalf("OpenRemote: %v", err)
+	}
+	if err := e.RecordSession(SessionRecord{SessionID: "S1", GoalText: "do x", StartedAt: time.Now()}); err != nil {
+		t.Fatalf("RecordSession: %v", err)
+	}
+	if err := e.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	for _, req := range fb.snapshot() {
+		if req.auth != "Bearer sk_live_test" {
+			t.Fatalf("%s %s Authorization = %q, want bearer token", req.method, req.path, req.auth)
+		}
 	}
 }
 
@@ -187,13 +217,13 @@ func TestRemoteEmitterRefreshesStaleProjectOnNotFound(t *testing.T) {
 	srv := httptest.NewServer(fb.handler())
 	defer srv.Close()
 
-	e, err := OpenRemote(srv.URL+"/api", "fp-stale", "repo", "/repos/repo")
+	e, err := OpenRemote(srv.URL+"/api/orgs/acme", "fp-stale", "repo", "/repos/repo")
 	if err != nil {
 		t.Fatalf("OpenRemote: %v", err)
 	}
 	defer e.Close()
 	e.projectID = "stale-pid"
-	e.base = srv.URL + "/api/projects/stale-pid"
+	e.base = srv.URL + "/api/orgs/acme/projects/stale-pid"
 
 	if err := e.RecordSession(SessionRecord{SessionID: "S1", GoalText: "do x", StartedAt: time.Now()}); err != nil {
 		t.Fatalf("RecordSession: %v", err)
@@ -215,7 +245,7 @@ func TestRemoteEmitterPostsEachEvent(t *testing.T) {
 	srv := httptest.NewServer(fb.handler())
 	defer srv.Close()
 
-	e, err := OpenRemote(srv.URL+"/api", "fp", "repo", "/repos/repo")
+	e, err := OpenRemote(srv.URL+"/api/orgs/acme", "fp", "repo", "/repos/repo")
 	if err != nil {
 		t.Fatalf("OpenRemote: %v", err)
 	}
@@ -278,7 +308,7 @@ func TestRemoteEmitterDrainsBufferedEditsOnClose(t *testing.T) {
 	srv := httptest.NewServer(fb.handler())
 	defer srv.Close()
 
-	e, err := OpenRemote(srv.URL+"/api", "fp", "repo", "/repos/repo")
+	e, err := OpenRemote(srv.URL+"/api/orgs/acme", "fp", "repo", "/repos/repo")
 	if err != nil {
 		t.Fatalf("OpenRemote: %v", err)
 	}
