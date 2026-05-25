@@ -15,7 +15,7 @@ import (
 	skauth "github.com/meloniteai/sidekick/internal/auth"
 )
 
-const defaultAPIBase = "https://sidekick-api-origin.melonite.ai/api"
+const defaultAPIBase = "https://sidekick.melonite.ai/api"
 
 var openBrowser = defaultOpenBrowser
 
