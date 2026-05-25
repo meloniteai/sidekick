@@ -1,0 +1,53 @@
+goal_source: ""
+verifiers:
+    - name: no-storytelling
+      type: agent
+      direction: SE
+      timeout: 60s
+      llm:
+        agent: claude
+        model: haiku
+        thinking: low
+        skill: .sidekick/skills/no-storytelling/SKILL.md
+      permissions:
+        filesystem: read-only
+    - name: agents-md
+      type: agent
+      direction: NW
+      timeout: 180s
+      llm:
+        agent: codex
+        model: gpt-5.5
+        thinking: low
+        skill: .sidekick/skills/agents-md/SKILL.md
+      permissions:
+        filesystem: read-only
+    - name: unit tests
+      type: binary
+      direction: "N"
+      timeout: 60s
+      binary:
+        command:
+            - make
+            - test
+        pass_reason: checks passed
+        fail_reason: checks failed
+    - name: e2e tests
+      type: binary
+      direction: NE
+      timeout: 60s
+      binary:
+        command:
+            - make
+            - e2e
+        pass_reason: checks passed
+        fail_reason: checks failed
+    - name: architect
+      type: agent
+      direction: E
+      timeout: 120s
+      llm:
+        agent: claude
+        model: haiku
+        thinking: low
+        skill: .sidekick/skills/architect/SKILL.md
