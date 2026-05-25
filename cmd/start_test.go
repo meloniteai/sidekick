@@ -236,6 +236,25 @@ func TestResolveBackendTargetForStartScopesConfiguredURL(t *testing.T) {
 	}
 }
 
+func TestBackendAuthTokenProviderReloadsAuthFile(t *testing.T) {
+	authFile := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv("SIDEKICK_AUTH_FILE", authFile)
+	if err := skauth.PutProfile(authFile, skauth.Profile{OrgSlug: "acme", APIBase: "https://sidekick.example/api", Token: "sk_live_old"}); err != nil {
+		t.Fatalf("PutProfile old: %v", err)
+	}
+	provider := backendAuthTokenProvider("https://override.example/api")
+	if got := provider(); got != "sk_live_old" {
+		t.Fatalf("provider before refresh = %q", got)
+	}
+
+	if err := skauth.PutProfile(authFile, skauth.Profile{OrgSlug: "acme", APIBase: "https://sidekick.example/api", Token: "sk_live_new"}); err != nil {
+		t.Fatalf("PutProfile new: %v", err)
+	}
+	if got := provider(); got != "sk_live_new" {
+		t.Fatalf("provider after refresh = %q", got)
+	}
+}
+
 // TestNewSessionPinsStartupConfigScope guards the scope-stability invariant: a
 // goal that anchors a *new* worktree must keep the config the session started
 // on. When the manager is seeded with a path (the startup-resolved scope),

@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -27,7 +26,7 @@ func (e *RemoteEmitter) FetchSummary(sessionID string) (Summary, error) {
 		return Summary{}, nil
 	}
 	var sessions []sessionSummaryPayload
-	err := getJSON(e.client, e.token, e.base+"/sessions", &sessions)
+	err := e.get("/sessions", &sessions)
 	if errors.Is(err, errRemoteNotFound) {
 		return Summary{SessionID: sessionID}, nil
 	}
@@ -40,6 +39,17 @@ func (e *RemoteEmitter) FetchSummary(sessionID string) (Summary, error) {
 		}
 	}
 	return Summary{SessionID: sessionID}, nil
+}
+
+func (e *RemoteEmitter) get(path string, out any) error {
+	token := e.authToken()
+	err := getJSON(e.client, token, e.base+path, out)
+	if isStatus(err, http.StatusUnauthorized) {
+		if fresh := e.authToken(); fresh != token {
+			return getJSON(e.client, fresh, e.base+path, out)
+		}
+	}
+	return err
 }
 
 // sessionSummaryPayload mirrors the API's SessionSummary list element. Only the
@@ -102,7 +112,13 @@ func getJSON(client *http.Client, token, url string, out any) error {
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("GET %s: %s: %s", url, resp.Status, strings.TrimSpace(string(snippet)))
+		return httpError{
+			Method:     http.MethodGet,
+			URL:        url,
+			Status:     resp.Status,
+			StatusCode: resp.StatusCode,
+			Snippet:    strings.TrimSpace(string(snippet)),
+		}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

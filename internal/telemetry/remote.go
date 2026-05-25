@@ -25,7 +25,7 @@ type RemoteEmitter struct {
 	client    *http.Client
 	apiBase   string
 	base      string // "<api>/projects/<projectID>"
-	token     string
+	tokenFunc func() string
 	projectID string
 	fp        string
 	name      string
@@ -50,13 +50,26 @@ const editQueueCap = 256
 type RemoteOption func(*remoteOptions)
 
 type remoteOptions struct {
-	token string
+	tokenFunc func() string
 }
 
 // WithAuthToken attaches a bearer token to each backend request.
 func WithAuthToken(token string) RemoteOption {
 	return func(o *remoteOptions) {
-		o.token = strings.TrimSpace(token)
+		token = strings.TrimSpace(token)
+		o.tokenFunc = func() string { return token }
+	}
+}
+
+// WithAuthTokenProvider attaches the current bearer token to each backend
+// request. The provider is called for every request so long-running daemons can
+// pick up a refreshed CLI login without restarting.
+func WithAuthTokenProvider(provider func() string) RemoteOption {
+	return func(o *remoteOptions) {
+		if provider == nil {
+			return
+		}
+		o.tokenFunc = func() string { return strings.TrimSpace(provider()) }
 	}
 }
 
@@ -74,11 +87,15 @@ func OpenRemote(apiBaseURL, repoFingerprint, name, rootPath string, opts ...Remo
 	for _, opt := range opts {
 		opt(&options)
 	}
+	tokenFunc := options.tokenFunc
+	if tokenFunc == nil {
+		tokenFunc = func() string { return "" }
+	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	if err := pingHealth(client, base, options.token); err != nil {
+	if err := pingHealth(client, base, tokenFunc()); err != nil {
 		return nil, fmt.Errorf("telemetry: backend healthcheck %s: %w", base+"/health", err)
 	}
-	projectID, err := resolveProject(client, base, options.token, repoFingerprint, name, rootPath)
+	projectID, err := resolveProject(client, base, tokenFunc(), repoFingerprint, name, rootPath)
 	if err != nil {
 		return nil, fmt.Errorf("telemetry: resolve project: %w", err)
 	}
@@ -86,7 +103,7 @@ func OpenRemote(apiBaseURL, repoFingerprint, name, rootPath string, opts ...Remo
 		client:    client,
 		apiBase:   base,
 		base:      fmt.Sprintf("%s/projects/%s", base, projectID),
-		token:     options.token,
+		tokenFunc: tokenFunc,
 		projectID: projectID,
 		fp:        repoFingerprint,
 		name:      name,
@@ -104,6 +121,13 @@ func OpenRemote(apiBaseURL, repoFingerprint, name, rootPath string, opts ...Remo
 
 // ProjectID returns the resolved backend project id this emitter writes to.
 func (e *RemoteEmitter) ProjectID() string { return e.projectID }
+
+func (e *RemoteEmitter) authToken() string {
+	if e.tokenFunc == nil {
+		return ""
+	}
+	return strings.TrimSpace(e.tokenFunc())
+}
 
 // pingHealth checks the backend is a reachable, live sidekick-api before we
 // commit to it, so a wrong/down URL fails fast at start and the caller falls
@@ -271,14 +295,24 @@ func (e *RemoteEmitter) editWorker() {
 // post sends body as JSON to base+path. A nil out skips response decoding; a
 // non-2xx status is an error carrying a snippet of the body for diagnosis.
 func (e *RemoteEmitter) post(path string, body, out any) error {
-	if err := doJSON(e.client, e.token, http.MethodPost, e.base+path, body, out); err != nil {
+	token := e.authToken()
+	if err := doJSON(e.client, token, http.MethodPost, e.base+path, body, out); err != nil {
+		if isStatus(err, http.StatusUnauthorized) {
+			if fresh := e.authToken(); fresh != token {
+				if retryErr := doJSON(e.client, fresh, http.MethodPost, e.base+path, body, out); retryErr == nil {
+					return nil
+				} else {
+					err = retryErr
+				}
+			}
+		}
 		if !isStatus(err, http.StatusNotFound) {
 			return err
 		}
 		if rerr := e.refreshProject(); rerr != nil {
 			return err
 		}
-		return doJSON(e.client, e.token, http.MethodPost, e.base+path, body, out)
+		return doJSON(e.client, e.authToken(), http.MethodPost, e.base+path, body, out)
 	}
 	return nil
 }
@@ -286,7 +320,7 @@ func (e *RemoteEmitter) post(path string, body, out any) error {
 func (e *RemoteEmitter) refreshProject() error {
 	e.project.Lock()
 	defer e.project.Unlock()
-	projectID, err := resolveProject(e.client, e.apiBase, e.token, e.fp, e.name, e.rootPath)
+	projectID, err := resolveProject(e.client, e.apiBase, e.authToken(), e.fp, e.name, e.rootPath)
 	if err != nil {
 		return err
 	}
