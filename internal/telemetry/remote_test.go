@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -204,6 +205,61 @@ func TestRemoteEmitterSendsBearerToken(t *testing.T) {
 		if req.auth != "Bearer sk_live_test" {
 			t.Fatalf("%s %s Authorization = %q, want bearer token", req.method, req.path, req.auth)
 		}
+	}
+}
+
+func TestRemoteEmitterRetriesWithFreshProvidedTokenOnUnauthorized(t *testing.T) {
+	var token atomic.Value
+	token.Store("sk_live_old")
+	var mu sync.Mutex
+	var reqs []capturedReq
+	record := func(r *http.Request) {
+		mu.Lock()
+		reqs = append(reqs, capturedReq{method: r.Method, path: r.URL.Path, auth: r.Header.Get("Authorization")})
+		mu.Unlock()
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		record(r)
+		switch {
+		case r.URL.Path == "/api/orgs/acme/health":
+			writeJSON(w, 200, map[string]any{"status": "ok"})
+		case r.URL.Path == "/api/orgs/acme/projects/resolve":
+			writeJSON(w, 200, map[string]any{"project_id": "pid"})
+		case r.URL.Path == "/api/orgs/acme/projects/pid/sessions":
+			if r.Header.Get("Authorization") == "Bearer sk_live_old" {
+				token.Store("sk_live_new")
+				writeJSON(w, http.StatusUnauthorized, map[string]any{"detail": "invalid cli token"})
+				return
+			}
+			writeJSON(w, 201, map[string]any{})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	e, err := OpenRemote(srv.URL+"/api/orgs/acme", "fp", "repo", "/repos/repo", WithAuthTokenProvider(func() string {
+		return token.Load().(string)
+	}))
+	if err != nil {
+		t.Fatalf("OpenRemote: %v", err)
+	}
+	defer e.Close()
+
+	if err := e.RecordSession(SessionRecord{SessionID: "S1", GoalText: "do x", StartedAt: time.Now()}); err != nil {
+		t.Fatalf("RecordSession: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	var sessionAuths []string
+	for _, req := range reqs {
+		if strings.HasSuffix(req.path, "/projects/pid/sessions") {
+			sessionAuths = append(sessionAuths, req.auth)
+		}
+	}
+	if got, want := strings.Join(sessionAuths, ","), "Bearer sk_live_old,Bearer sk_live_new"; got != want {
+		t.Fatalf("session Authorization sequence = %q, want %q", got, want)
 	}
 }
 

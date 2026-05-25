@@ -124,9 +124,11 @@ Sidekick can emit live telemetry to `sidekick-api` instead of only writing the
 local SQLite store. Pair the CLI once per org:
 
 ```bash
-sidekick login --org acme --api-base https://sidekick-api-origin.melonite.ai/api
+sidekick login --org acme
 sidekick auth status
 ```
+
+Pass `--api-base` only when pairing with a non-default backend.
 
 The login command opens a browser approval page, polls until the signed-in
 Sidekick user approves the device, and stores an opaque CLI token in

@@ -639,7 +639,7 @@ func openRemoteTelemetry(worktree, backendURL string) *telemetry.RemoteEmitter {
 	if !ok || target.Token == "" {
 		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry: missing CLI auth; run sidekick login --org <slug> --api-base %s\n", skauth.RootAPIBase(target.APIBase))
 	}
-	e, err := telemetry.OpenRemote(target.APIBase, ipc.RepoFingerprint(worktree), filepath.Base(worktree), worktree, telemetry.WithAuthToken(target.Token))
+	e, err := telemetry.OpenRemote(target.APIBase, ipc.RepoFingerprint(worktree), filepath.Base(worktree), worktree, telemetry.WithAuthTokenProvider(backendAuthTokenProvider(backendURL)))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry: %v\n", err)
 		return nil
@@ -658,6 +658,16 @@ func resolveBackendTargetForStart(backendURL string) (skauth.BackendTarget, bool
 		return skauth.BackendTarget{APIBase: strings.TrimSpace(backendURL)}, false
 	}
 	return target, true
+}
+
+func backendAuthTokenProvider(backendURL string) func() string {
+	return func() string {
+		target, ok := resolveBackendTargetForStart(backendURL)
+		if !ok {
+			return ""
+		}
+		return target.Token
+	}
 }
 
 // resolveBackendURL picks the remote telemetry URL from the environment

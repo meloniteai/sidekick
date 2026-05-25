@@ -110,6 +110,15 @@ func TestLoginPrintsFallbackURLWhenBrowserOpenFails(t *testing.T) {
 	}
 }
 
+func TestLoginAPIBaseDefaultsToMeloniteAPI(t *testing.T) {
+	t.Setenv("SIDEKICK_API_BASE", "")
+	t.Setenv("SIDEKICK_BACKEND_URL", "")
+
+	if got := loginAPIBase(""); got != "https://sidekick.melonite.ai/api" {
+		t.Fatalf("loginAPIBase default = %q", got)
+	}
+}
+
 func TestLogoutRevokesAndRemovesCurrentToken(t *testing.T) {
 	authFile := filepath.Join(t.TempDir(), "auth.json")
 	t.Setenv("SIDEKICK_AUTH_FILE", authFile)
