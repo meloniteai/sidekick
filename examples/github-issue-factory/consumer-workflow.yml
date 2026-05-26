@@ -1,0 +1,31 @@
+name: Sidekick Codex issue factory
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  factory:
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: meloniteai/sidekick/.github/workflows/codex-issue-factory.yml@main
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      issue-title: ${{ github.event.issue.title }}
+      issue-body: ${{ github.event.issue.body }}
+      issue-url: ${{ github.event.issue.html_url }}
+      issue-author-association: ${{ github.event.issue.author_association }}
+      project-setup-command: npm ci
+      sidekick-config-path: .sidekick/sidekick.yaml
+      sidekick-backend-url: https://sidekick.melonite.ai/api
+      telemetry-mode: backend
+      codex-mode: live
+      publish-mode: live
+    secrets:
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+      SIDEKICK_AUTH_JSON: ${{ secrets.SIDEKICK_AUTH_JSON }}
+      CODEX_FACTORY_GH_TOKEN: ${{ secrets.CODEX_FACTORY_GH_TOKEN }}

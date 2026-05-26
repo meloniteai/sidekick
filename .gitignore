@@ -1,4 +1,6 @@
 /sidekick
 /sidekick.yaml
 assets/*.mov
-docs
+
+# Local issue-factory act runs
+.factory-act/

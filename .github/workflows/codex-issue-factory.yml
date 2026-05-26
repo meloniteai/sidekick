@@ -1,0 +1,383 @@
+name: Codex issue factory
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: Source GitHub issue number.
+        required: true
+        type: string
+      issue-title:
+        description: Source GitHub issue title.
+        required: true
+        type: string
+      issue-body:
+        description: Source GitHub issue body.
+        required: false
+        type: string
+        default: ""
+      issue-url:
+        description: Source GitHub issue URL.
+        required: false
+        type: string
+        default: ""
+      issue-author-association:
+        description: Source issue author association.
+        required: false
+        type: string
+        default: ""
+      allowed-author-associations:
+        description: Comma-separated author associations allowed to trigger implementation.
+        required: false
+        type: string
+        default: OWNER,MEMBER,COLLABORATOR
+      project-setup-command:
+        description: Optional command run in the consuming repo before Codex.
+        required: false
+        type: string
+        default: ""
+      sidekick-config-path:
+        description: Path to sidekick.yaml in the consuming repo.
+        required: false
+        type: string
+        default: ""
+      sidekick-config:
+        description: Inline Sidekick config. Takes precedence over sidekick-config-path.
+        required: false
+        type: string
+        default: ""
+      sidekick-backend-url:
+        description: Sidekick backend API URL.
+        required: false
+        type: string
+        default: ""
+      telemetry-mode:
+        description: "Sidekick telemetry mode: auto, local, or backend."
+        required: false
+        type: string
+        default: local
+      codex-mode:
+        description: "Codex execution mode: live or stub."
+        required: false
+        type: string
+        default: live
+      codex-sandbox:
+        description: Sandbox passed to codex exec.
+        required: false
+        type: string
+        default: workspace-write
+      codex-model:
+        description: Optional Codex model name.
+        required: false
+        type: string
+        default: ""
+      publish-mode:
+        description: "Publish mode: live or dry-run."
+        required: false
+        type: string
+        default: live
+      sidekick-assets-mode:
+        description: checkout for GitHub usage, workspace for local act harnesses.
+        required: false
+        type: string
+        default: checkout
+      sidekick-repository:
+        description: Repository containing the Sidekick workflow assets.
+        required: false
+        type: string
+        default: meloniteai/sidekick
+      sidekick-ref:
+        description: Optional Sidekick ref to check out. Defaults to the workflow SHA.
+        required: false
+        type: string
+        default: ""
+      node-version:
+        description: Node version for Codex and common JS project setup.
+        required: false
+        type: string
+        default: "24"
+    secrets:
+      CODEX_AUTH_JSON:
+        description: Contents of ~/.codex/auth.json.
+        required: false
+      SIDEKICK_AUTH_JSON:
+        description: Contents of ~/.sidekick/auth.json.
+        required: false
+      CODEX_FACTORY_GH_TOKEN:
+        description: Optional token for pushing branches, opening PRs, and commenting.
+        required: false
+    outputs:
+      changed:
+        description: Whether Codex produced a repository diff.
+        value: ${{ jobs.implement.outputs.changed }}
+      artifact-name:
+        description: Name of the implementation artifact.
+        value: ${{ jobs.implement.outputs.artifact-name }}
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Check issue author
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.author.outputs.allowed }}
+      association: ${{ steps.author.outputs.association }}
+    steps:
+      - id: author
+        name: Author association gate
+        shell: bash
+        env:
+          ASSOCIATION: ${{ inputs.issue-author-association }}
+          ALLOWED_AUTHOR_ASSOCIATIONS: ${{ inputs.allowed-author-associations }}
+        run: |
+          set -euo pipefail
+          association="$(printf '%s' "$ASSOCIATION" | tr '[:lower:]' '[:upper:]' | xargs)"
+          allowed=false
+
+          IFS=',' read -ra allowed_values <<< "$ALLOWED_AUTHOR_ASSOCIATIONS"
+          for value in "${allowed_values[@]}"; do
+            candidate="$(printf '%s' "$value" | tr '[:lower:]' '[:upper:]' | xargs)"
+            if [ -n "$candidate" ] && [ "$association" = "$candidate" ]; then
+              allowed=true
+              break
+            fi
+          done
+
+          echo "association=$association" >> "$GITHUB_OUTPUT"
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+          echo "issue author association: ${association:-<empty>}"
+          echo "allowed: $allowed"
+
+  implement:
+    name: Implement issue with Codex
+    needs: gate
+    if: ${{ needs.gate.outputs.allowed == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.factory.outputs.changed }}
+      artifact-path: ${{ steps.factory.outputs.artifact-path }}
+      artifact-name: codex-issue-factory-${{ inputs.issue-number }}
+      sidekick-status-path: ${{ steps.factory.outputs.sidekick-status-path }}
+    steps:
+      - name: Checkout Sidekick workflow assets
+        if: ${{ inputs.sidekick-assets-mode == 'checkout' }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.sidekick-repository }}
+          ref: ${{ inputs.sidekick-ref || github.workflow_sha }}
+          path: .
+
+      - name: Checkout workspace Sidekick assets
+        if: ${{ inputs.sidekick-assets-mode == 'workspace' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: .
+
+      - name: Use workspace Sidekick assets
+        if: ${{ inputs.sidekick-assets-mode == 'workspace' }}
+        shell: bash
+        run: test -f "$GITHUB_WORKSPACE/.github/actions/issue-factory-run/action.yml"
+
+      - name: Checkout consuming repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          path: work
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - id: factory
+        name: Run Sidekick issue factory action
+        uses: ./.github/actions/issue-factory-run
+        with:
+          workspace-path: ${{ github.workspace }}/work
+          issue-number: ${{ inputs.issue-number }}
+          issue-title: ${{ inputs.issue-title }}
+          issue-body: ${{ inputs.issue-body }}
+          issue-url: ${{ inputs.issue-url }}
+          sidekick-config-path: ${{ inputs.sidekick-config-path }}
+          sidekick-config: ${{ inputs.sidekick-config }}
+          project-setup-command: ${{ inputs.project-setup-command }}
+          codex-auth-json: ${{ secrets.CODEX_AUTH_JSON }}
+          sidekick-auth-json: ${{ secrets.SIDEKICK_AUTH_JSON }}
+          sidekick-backend-url: ${{ inputs.sidekick-backend-url }}
+          telemetry-mode: ${{ inputs.telemetry-mode }}
+          codex-mode: ${{ inputs.codex-mode }}
+          codex-sandbox: ${{ inputs.codex-sandbox }}
+          codex-model: ${{ inputs.codex-model }}
+
+      - name: Upload implementation artifacts
+        if: ${{ always() && steps.factory.outputs.artifact-path != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-issue-factory-${{ inputs.issue-number }}
+          path: ${{ steps.factory.outputs.artifact-path }}/
+          if-no-files-found: error
+
+  publish:
+    name: Publish Codex pull request
+    needs: [gate, implement]
+    if: ${{ needs.gate.outputs.allowed == 'true' && needs.implement.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    env:
+      ISSUE_NUMBER: ${{ inputs.issue-number }}
+      ISSUE_TITLE: ${{ inputs.issue-title }}
+      ISSUE_URL: ${{ inputs.issue-url }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+      CODEX_CHANGED: ${{ needs.implement.outputs.changed }}
+      PUBLISH_MODE: ${{ inputs.publish-mode }}
+      GH_TOKEN: ${{ secrets.CODEX_FACTORY_GH_TOKEN || github.token }}
+    steps:
+      - name: Validate publish mode
+        shell: bash
+        run: |
+          case "$PUBLISH_MODE" in
+            live|dry-run) ;;
+            *)
+              echo "::error::publish-mode must be live or dry-run, got '$PUBLISH_MODE'."
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout consuming repository for publish
+        if: ${{ inputs.publish-mode == 'live' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: publish-work
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: codex-issue-factory-${{ inputs.issue-number }}
+          path: codex-artifacts
+
+      - id: publish
+        name: Publish result
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          artifact_dir="$PWD/codex-artifacts"
+          publish_dir="$PWD/publish-output"
+          mkdir -p "$publish_dir"
+
+          write_pr_body() {
+            {
+              printf 'Closes #%s\n\n' "$ISSUE_NUMBER"
+              printf 'This PR was generated by the Sidekick Codex issue factory from issue #%s.\n\n' "$ISSUE_NUMBER"
+
+              printf '## Codex summary\n\n'
+              if [ -s "$artifact_dir/codex-final-message.md" ]; then
+                cat "$artifact_dir/codex-final-message.md"
+              else
+                printf 'Codex did not return a final message.\n'
+              fi
+
+              printf '\n## Sidekick\n\n'
+              printf 'Sidekick ran headless for this issue factory session.\n\n'
+
+              printf '<details><summary>Final Sidekick status</summary>\n\n'
+              printf '```json\n'
+              if [ -s "$artifact_dir/sidekick-status.json" ]; then
+                cat "$artifact_dir/sidekick-status.json"
+              else
+                printf '{"error":"sidekick status artifact missing"}\n'
+              fi
+              printf '\n```\n\n</details>\n'
+            } > "$publish_dir/pr-body.md"
+          }
+
+          write_no_diff_comment() {
+            {
+              printf 'Codex finished the issue factory run, but it did not produce a repository diff.\n\n'
+              printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex logs.\n'
+            } > "$publish_dir/issue-comment.md"
+          }
+
+          write_pr_body
+
+          if [ "$CODEX_CHANGED" != "true" ]; then
+            write_no_diff_comment
+            if [ "$PUBLISH_MODE" = "live" ]; then
+              gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"
+            fi
+            exit 0
+          fi
+
+          branch_name="codex/issue-${ISSUE_NUMBER}"
+
+          if [ "$PUBLISH_MODE" = "dry-run" ]; then
+            {
+              printf 'Codex finished implementing this issue in dry-run mode.\n\n'
+              printf 'Would publish branch `%s` and open or update a pull request.\n\n' "$branch_name"
+              if [ -n "$ISSUE_URL" ]; then
+                printf 'Issue: %s\n\n' "$ISSUE_URL"
+              fi
+              printf 'Artifacts include `codex.patch`, `sidekick-status.json`, and the draft PR body.\n'
+            } > "$publish_dir/issue-comment.md"
+            printf 'dry-run://%s\n' "$branch_name" > "$publish_dir/pr-url.txt"
+            exit 0
+          fi
+
+          cd publish-work
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch_name" "origin/$DEFAULT_BRANCH"
+
+          git apply --binary "$artifact_dir/codex.patch"
+          git add -A
+          if git diff --cached --quiet; then
+            {
+              printf 'Codex produced a patch artifact, but applying it resulted in no staged changes.\n\n'
+              printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex logs.\n'
+            } > "$publish_dir/issue-comment.md"
+            gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"
+            exit 0
+          fi
+
+          git commit -m "codex: implement issue #${ISSUE_NUMBER}"
+          git push --force-with-lease origin "$branch_name"
+
+          pr_url="$(gh pr list --head "$branch_name" --state open --json url --jq '.[0].url // empty')"
+          if [ -n "$pr_url" ]; then
+            gh pr edit "$pr_url" --body-file "$publish_dir/pr-body.md"
+          else
+            pr_url="$(gh pr create \
+              --base "$DEFAULT_BRANCH" \
+              --head "$branch_name" \
+              --title "Codex: ${ISSUE_TITLE}" \
+              --body-file "$publish_dir/pr-body.md")"
+          fi
+          printf '%s\n' "$pr_url" > "$publish_dir/pr-url.txt"
+
+          {
+            printf 'Codex finished implementing this issue and opened or updated a PR:\n\n'
+            printf '%s\n\n' "$pr_url"
+            printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex logs.\n'
+          } > "$publish_dir/issue-comment.md"
+
+          gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"
+
+      - name: Upload publish artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-issue-factory-publish-${{ inputs.issue-number }}
+          path: publish-output/
+          if-no-files-found: warn

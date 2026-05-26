@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/factory-act [--live]
+
+Run the GitHub issue factory workflow locally with nektos/act in an isolated
+copy of this repository. Stub mode is the default. --live injects local
+~/.codex/auth.json and ~/.sidekick/auth.json and runs an act-only workflow copy
+with live Codex inputs.
+EOF
+}
+
+mode="stub"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --live)
+      mode="live"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+act_bin="${ACT_BIN:-}"
+if [ -z "$act_bin" ]; then
+  if command -v act >/dev/null 2>&1; then
+    act_bin="$(command -v act)"
+  elif [ -x "$(go env GOPATH 2>/dev/null)/bin/act" ]; then
+    act_bin="$(go env GOPATH)/bin/act"
+  fi
+fi
+
+if [ -z "$act_bin" ]; then
+  echo "act is required. Install it with: brew install act" >&2
+  exit 127
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is required for act." >&2
+  exit 127
+fi
+
+source_root="$(git rev-parse --show-toplevel)"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+run_root="$source_root/.factory-act/$stamp-$mode"
+work_root="$run_root/work"
+repo_copy="$work_root/sidekick"
+artifact_root="$run_root/artifacts"
+mkdir -p "$work_root" "$artifact_root"
+
+echo "factory-act run: $run_root"
+
+git clone --local --no-hardlinks "$source_root" "$repo_copy" >/dev/null
+rsync -a \
+  --exclude '.git/' \
+  --exclude '.git' \
+  --exclude '.factory-act/' \
+  --exclude 'sidekick' \
+  "$source_root/" "$repo_copy/"
+
+git -C "$repo_copy" config user.email "factory-act@sidekick.local"
+git -C "$repo_copy" config user.name "sidekick factory act"
+git -C "$repo_copy" add -A
+if ! git -C "$repo_copy" diff --cached --quiet; then
+  git -C "$repo_copy" commit -q -m "factory-act source snapshot"
+fi
+
+workflow="examples/github-issue-factory/local-issue-factory.yml"
+event="examples/github-issue-factory/issue-event.json"
+secret_file=""
+
+if [ "$mode" = "live" ]; then
+  live_workflow="$run_root/local-issue-factory-live.yml"
+  sed \
+    -e 's/codex-mode: stub/codex-mode: live/' \
+    -e 's/telemetry-mode: local/telemetry-mode: backend/' \
+    -e 's/codex-sandbox: workspace-write/codex-sandbox: danger-full-access/' \
+    "$repo_copy/$workflow" > "$live_workflow"
+  workflow="$live_workflow"
+
+  codex_auth="$HOME/.codex/auth.json"
+  sidekick_auth="$HOME/.sidekick/auth.json"
+  if [ ! -f "$codex_auth" ]; then
+    echo "missing $codex_auth for --live" >&2
+    exit 1
+  fi
+  if [ ! -f "$sidekick_auth" ]; then
+    echo "missing $sidekick_auth for --live" >&2
+    exit 1
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    codex_secret="$(jq -c . "$codex_auth")"
+    sidekick_secret="$(jq -c . "$sidekick_auth")"
+  else
+    codex_secret="$(tr -d '\n' < "$codex_auth")"
+    sidekick_secret="$(tr -d '\n' < "$sidekick_auth")"
+  fi
+
+  secret_file="$run_root/secrets.env"
+  (
+    umask 077
+    {
+      printf 'CODEX_AUTH_JSON=%s\n' "$codex_secret"
+      printf 'SIDEKICK_AUTH_JSON=%s\n' "$sidekick_secret"
+    } > "$secret_file"
+  )
+fi
+
+act_args=(
+  issues
+  -W "$workflow"
+  -e "$event"
+  --artifact-server-path "$artifact_root"
+  --container-architecture "${ACT_CONTAINER_ARCHITECTURE:-linux/amd64}"
+  -P "ubuntu-latest=${ACT_IMAGE:-ghcr.io/catthehacker/ubuntu:act-latest}"
+)
+
+if [ "$mode" = "live" ]; then
+  act_args+=(
+    --secret-file "$secret_file"
+  )
+fi
+
+(
+  cd "$repo_copy"
+  "$act_bin" "${act_args[@]}" 2>&1 | tee "$run_root/act.log"
+)
+
+echo
+echo "act log: $run_root/act.log"
+echo "artifacts: $artifact_root"

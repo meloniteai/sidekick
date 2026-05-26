@@ -1,0 +1,578 @@
+name: Sidekick issue factory run
+description: Run one Codex issue-factory session under a headless Sidekick daemon.
+
+inputs:
+  workspace-path:
+    description: Repository workspace to modify. Defaults to GITHUB_WORKSPACE.
+    required: false
+    default: ""
+  issue-number:
+    description: Source GitHub issue number.
+    required: true
+  issue-title:
+    description: Source GitHub issue title.
+    required: true
+  issue-body:
+    description: Source GitHub issue body.
+    required: false
+    default: ""
+  issue-url:
+    description: Source GitHub issue URL.
+    required: false
+    default: ""
+  sidekick-config-path:
+    description: Path to sidekick.yaml, relative to workspace-path or absolute.
+    required: false
+    default: ""
+  sidekick-config:
+    description: Inline sidekick.yaml content. Takes precedence over sidekick-config-path.
+    required: false
+    default: ""
+  project-setup-command:
+    description: Optional command run in workspace-path before Sidekick starts.
+    required: false
+    default: ""
+  codex-auth-json:
+    description: Contents of ~/.codex/auth.json for live Codex mode.
+    required: false
+    default: ""
+  sidekick-auth-json:
+    description: Contents of ~/.sidekick/auth.json for backend telemetry.
+    required: false
+    default: ""
+  sidekick-backend-url:
+    description: Sidekick backend API URL.
+    required: false
+    default: ""
+  telemetry-mode:
+    description: "Sidekick telemetry mode: auto, local, or backend."
+    required: false
+    default: local
+  codex-mode:
+    description: "Codex execution mode: live or stub."
+    required: false
+    default: live
+  codex-sandbox:
+    description: Sandbox passed to codex exec in live mode.
+    required: false
+    default: workspace-write
+  codex-model:
+    description: Optional Codex model name.
+    required: false
+    default: ""
+  sidekick-settle-seconds:
+    description: Seconds to wait before collecting final Sidekick status.
+    required: false
+    default: "4"
+  stub-output-path:
+    description: Workspace-relative file written by codex-mode=stub.
+    required: false
+    default: codex-factory-stub-output.md
+
+outputs:
+  changed:
+    description: Whether Codex produced a repository diff.
+    value: ${{ steps.diff.outputs.changed }}
+  artifact-path:
+    description: Directory containing Codex and Sidekick artifacts.
+    value: ${{ steps.paths.outputs.artifact_dir }}
+  sidekick-status-path:
+    description: Final Sidekick status JSON path.
+    value: ${{ steps.collect.outputs.sidekick_status_path }}
+
+runs:
+  using: composite
+  steps:
+    - id: paths
+      name: Prepare isolated paths
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        workspace="${{ inputs.workspace-path }}"
+        if [ -z "$workspace" ]; then
+          workspace="$GITHUB_WORKSPACE"
+        fi
+        workspace="$(cd "$workspace" && pwd)"
+
+        sidekick_repo="$(cd "$GITHUB_ACTION_PATH/../../.." && pwd)"
+        root="$RUNNER_TEMP/sidekick-issue-factory"
+        home="$root/home"
+        tool_dir="$root/bin"
+        artifact_dir="$root/artifacts"
+
+        rm -rf "$root"
+        mkdir -p "$home/.codex" "$home/.sidekick" "$tool_dir" "$artifact_dir"
+
+        {
+          echo "workspace=$workspace"
+          echo "sidekick_repo=$sidekick_repo"
+          echo "home=$home"
+          echo "tool_dir=$tool_dir"
+          echo "artifact_dir=$artifact_dir"
+        } >> "$GITHUB_OUTPUT"
+        echo "$tool_dir" >> "$GITHUB_PATH"
+
+    - name: Build Sidekick
+      shell: bash
+      env:
+        SIDEKICK_REPO: ${{ steps.paths.outputs.sidekick_repo }}
+        TOOL_DIR: ${{ steps.paths.outputs.tool_dir }}
+      run: |
+        set -euo pipefail
+        cd "$SIDEKICK_REPO"
+        go build -o "$TOOL_DIR/sidekick" .
+        "$TOOL_DIR/sidekick" --help >/dev/null
+
+    - name: Install or stub Codex
+      shell: bash
+      env:
+        TOOL_DIR: ${{ steps.paths.outputs.tool_dir }}
+        CODEX_MODE: ${{ inputs.codex-mode }}
+      run: |
+        set -euo pipefail
+
+        case "$CODEX_MODE" in
+          live)
+            if ! command -v codex >/dev/null 2>&1; then
+              npm install -g @openai/codex
+            fi
+            ;;
+          stub)
+            cat > "$TOOL_DIR/codex" <<'BASH'
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        subcommand="${1:-}"
+        if [ "$subcommand" = "mcp" ]; then
+          exit 0
+        fi
+
+        if [ "$subcommand" = "app-server" ]; then
+          # Enough of a JSON-RPC loop for older hook-trust probes. The current
+          # action bypasses hook trust, but keeping this makes the stub useful
+          # for local experiments.
+          while IFS= read -r line; do
+            case "$line" in
+              *'"method":"initialize"'*)
+                printf '{"id":1,"result":{"protocolVersion":"0.1.0","capabilities":{},"serverInfo":{"name":"codex-stub","version":"0"}}}\n'
+                ;;
+              *'"method":"hooks/list"'*)
+                printf '{"id":2,"result":{"data":[{"cwd":"%s","hooks":[{"key":"sidekick-stub","command":"sidekick hook write","currentHash":"stub"}]}]}}\n' "${PWD}"
+                ;;
+            esac
+          done
+          exit 0
+        fi
+
+        if [ "$subcommand" != "exec" ]; then
+          echo "codex stub: unsupported subcommand ${subcommand:-<empty>}" >&2
+          exit 2
+        fi
+        shift
+
+        cd_dir=""
+        final_message=""
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --cd)
+              cd_dir="$2"
+              shift 2
+              ;;
+            --output-last-message)
+              final_message="$2"
+              shift 2
+              ;;
+            --sandbox|--model|-c|--enable)
+              shift 2
+              ;;
+            --*)
+              shift
+              ;;
+            -)
+              shift
+              ;;
+            *)
+              shift
+              ;;
+          esac
+        done
+
+        if [ -n "$cd_dir" ]; then
+          cd "$cd_dir"
+        fi
+        prompt="$(cat)"
+        output_path="${FACTORY_STUB_OUTPUT_PATH:-codex-factory-stub-output.md}"
+        mkdir -p "$(dirname "$output_path")"
+
+        {
+          printf '# Codex factory stub\n\n'
+          printf 'Generated by `codex-mode=stub`.\n\n'
+          printf 'Prompt SHA256: '
+          if command -v sha256sum >/dev/null 2>&1; then
+            printf '%s' "$prompt" | sha256sum | awk '{print $1}'
+          else
+            printf '%s' "$prompt" | shasum -a 256 | awk '{print $1}'
+          fi
+          printf '\n'
+        } > "$output_path"
+
+        if command -v sidekick >/dev/null 2>&1; then
+          printf '{"tool":"codex-stub","file_path":"%s"}\n' "$PWD/$output_path" | sidekick hook write >/dev/null 2>&1 || true
+        fi
+
+        if [ -n "$final_message" ]; then
+          mkdir -p "$(dirname "$final_message")"
+          {
+            printf 'Stub Codex completed.\n\n'
+            printf '%s\n' "- Wrote \`$output_path\`."
+            printf '%s\n' '- Triggered the Sidekick write hook when available.'
+          } > "$final_message"
+        fi
+
+        printf 'Stub Codex wrote %s\n' "$output_path"
+        BASH
+            chmod +x "$TOOL_DIR/codex"
+            ;;
+          *)
+            echo "::error::codex-mode must be live or stub, got '$CODEX_MODE'."
+            exit 1
+            ;;
+        esac
+
+    - name: Configure isolated auth
+      shell: bash
+      env:
+        HOME: ${{ steps.paths.outputs.home }}
+        CODEX_MODE: ${{ inputs.codex-mode }}
+        CODEX_AUTH_JSON: ${{ inputs.codex-auth-json }}
+        SIDEKICK_AUTH_JSON: ${{ inputs.sidekick-auth-json }}
+      run: |
+        set -euo pipefail
+
+        if [ "$CODEX_MODE" = "live" ] && [ -z "$CODEX_AUTH_JSON" ]; then
+          echo "::error::codex-auth-json is required when codex-mode=live."
+          exit 1
+        fi
+
+        if [ -n "$CODEX_AUTH_JSON" ]; then
+          printf '%s' "$CODEX_AUTH_JSON" > "$HOME/.codex/auth.json"
+          chmod 600 "$HOME/.codex/auth.json"
+          node -e 'const fs=require("fs"); JSON.parse(fs.readFileSync(process.argv[1],"utf8"));' "$HOME/.codex/auth.json"
+        fi
+
+        if [ -n "$SIDEKICK_AUTH_JSON" ]; then
+          printf '%s' "$SIDEKICK_AUTH_JSON" > "$HOME/.sidekick/auth.json"
+          chmod 600 "$HOME/.sidekick/auth.json"
+          node -e 'const fs=require("fs"); JSON.parse(fs.readFileSync(process.argv[1],"utf8"));' "$HOME/.sidekick/auth.json"
+        fi
+
+    - name: Wire Sidekick into Codex
+      shell: bash
+      env:
+        HOME: ${{ steps.paths.outputs.home }}
+      run: |
+        set -euo pipefail
+        sidekick install --codex --no-claude --yes
+
+    - id: config
+      name: Resolve Sidekick config
+      shell: bash
+      env:
+        WORKSPACE: ${{ steps.paths.outputs.workspace }}
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        INLINE_CONFIG: ${{ inputs.sidekick-config }}
+        CONFIG_PATH: ${{ inputs.sidekick-config-path }}
+      run: |
+        set -euo pipefail
+
+        if [ -n "$INLINE_CONFIG" ]; then
+          resolved="$ARTIFACT_DIR/sidekick-inline.yaml"
+          printf '%s\n' "$INLINE_CONFIG" > "$resolved"
+        elif [ -n "$CONFIG_PATH" ]; then
+          case "$CONFIG_PATH" in
+            /*) resolved="$CONFIG_PATH" ;;
+            *) resolved="$WORKSPACE/$CONFIG_PATH" ;;
+          esac
+        else
+          resolved="$ARTIFACT_DIR/sidekick-default.yaml"
+          cat > "$resolved" <<'YAML'
+        quiet_period: 2s
+        verifiers:
+          - name: diff-check
+            type: binary
+            direction: W
+            timeout: 30s
+            binary:
+              command:
+                - sh
+                - -c
+                - |
+                  cat >/dev/null
+                  git diff --check
+              pass_reason: git diff --check passed
+              fail_reason: git diff --check failed
+          - name: workspace
+            type: binary
+            direction: E
+            timeout: 30s
+            binary:
+              command:
+                - sh
+                - -c
+                - |
+                  cat >/dev/null
+                  git status --short >/dev/null
+              pass_reason: git status completed
+              fail_reason: git status failed
+        YAML
+        fi
+
+        if [ ! -f "$resolved" ]; then
+          echo "::error::Sidekick config not found: $resolved"
+          exit 1
+        fi
+
+        echo "path=$resolved" >> "$GITHUB_OUTPUT"
+
+    - name: Run project setup
+      if: ${{ inputs.project-setup-command != '' }}
+      shell: bash
+      env:
+        WORKSPACE: ${{ steps.paths.outputs.workspace }}
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        PROJECT_SETUP_COMMAND: ${{ inputs.project-setup-command }}
+      run: |
+        set -euo pipefail
+        cd "$WORKSPACE"
+        bash -lc "$PROJECT_SETUP_COMMAND" 2>&1 | tee "$ARTIFACT_DIR/project-setup.log"
+
+    - id: sidekick
+      name: Start Sidekick headless
+      shell: bash
+      env:
+        HOME: ${{ steps.paths.outputs.home }}
+        WORKSPACE: ${{ steps.paths.outputs.workspace }}
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        SIDEKICK_CONFIG: ${{ steps.config.outputs.path }}
+        SIDEKICK_BACKEND_URL: ${{ inputs.sidekick-backend-url }}
+        TELEMETRY_MODE: ${{ inputs.telemetry-mode }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        ISSUE_TITLE: ${{ inputs.issue-title }}
+        ISSUE_BODY: ${{ inputs.issue-body }}
+        ISSUE_URL: ${{ inputs.issue-url }}
+      run: |
+        set -euo pipefail
+
+        case "$TELEMETRY_MODE" in
+          auto|local|backend) ;;
+          *)
+            echo "::error::telemetry-mode must be auto, local, or backend, got '$TELEMETRY_MODE'."
+            exit 1
+            ;;
+        esac
+
+        goal_file="$ARTIFACT_DIR/sidekick-goal.txt"
+        log_file="$ARTIFACT_DIR/sidekick.log"
+        {
+          printf 'Implement GitHub issue #%s: %s\n\n' "$ISSUE_NUMBER" "$ISSUE_TITLE"
+          if [ -n "$ISSUE_URL" ]; then
+            printf 'Issue URL: %s\n\n' "$ISSUE_URL"
+          fi
+          printf '%s\n' "$ISSUE_BODY"
+        } > "$goal_file"
+
+        cd "$WORKSPACE"
+        sidekick --headless \
+          --config "$SIDEKICK_CONFIG" \
+          --telemetry-mode "$TELEMETRY_MODE" \
+          --goal "$(cat "$goal_file")" \
+          > "$log_file" 2>&1 &
+
+        sidekick_pid="$!"
+        echo "$sidekick_pid" > "$ARTIFACT_DIR/sidekick.pid"
+        echo "pid=$sidekick_pid" >> "$GITHUB_OUTPUT"
+
+        for _ in $(seq 1 30); do
+          if ! kill -0 "$sidekick_pid" 2>/dev/null; then
+            cat "$log_file"
+            echo "::error::sidekick exited before it became ready."
+            exit 1
+          fi
+          if sidekick status >/dev/null 2>&1; then
+            exit 0
+          fi
+          sleep 1
+        done
+
+        cat "$log_file"
+        echo "::error::sidekick did not become ready."
+        exit 1
+
+    - id: codex
+      name: Run Codex
+      shell: bash
+      env:
+        HOME: ${{ steps.paths.outputs.home }}
+        WORKSPACE: ${{ steps.paths.outputs.workspace }}
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        ISSUE_NUMBER: ${{ inputs.issue-number }}
+        ISSUE_TITLE: ${{ inputs.issue-title }}
+        ISSUE_BODY: ${{ inputs.issue-body }}
+        ISSUE_URL: ${{ inputs.issue-url }}
+        REPOSITORY: ${{ github.repository }}
+        CODEX_SANDBOX: ${{ inputs.codex-sandbox }}
+        CODEX_MODEL: ${{ inputs.codex-model }}
+        FACTORY_STUB_OUTPUT_PATH: ${{ inputs.stub-output-path }}
+      run: |
+        set -euo pipefail
+
+        prompt_file="$ARTIFACT_DIR/codex-prompt.md"
+        {
+          printf 'Implement GitHub issue #%s in %s.\n\n' "$ISSUE_NUMBER" "$REPOSITORY"
+          if [ -n "$ISSUE_URL" ]; then
+            printf 'Issue URL: %s\n\n' "$ISSUE_URL"
+          fi
+          printf 'Issue title:\n%s\n\n' "$ISSUE_TITLE"
+          printf 'Issue body:\n%s\n\n' "$ISSUE_BODY"
+          cat <<'MARKDOWN'
+        Use the Sidekick MCP compass throughout the session:
+        - Call sidekick_status before editing to confirm the daemon is reachable.
+        - After meaningful edits, call sidekick_status again and wait briefly if verifiers are running.
+        - If a verifier reports a high distance, call sidekick_explain and address the feedback when it is relevant.
+
+        Keep the change focused on the issue. Follow AGENTS.md. Run relevant tests before finishing.
+        Do not create commits, push branches, or open pull requests; this workflow publishes your final diff.
+        MARKDOWN
+        } > "$prompt_file"
+
+        cd "$WORKSPACE"
+        args=(
+          exec
+          --cd "$WORKSPACE"
+          --sandbox "$CODEX_SANDBOX"
+          --enable hooks
+          --dangerously-bypass-hook-trust
+          --output-last-message "$ARTIFACT_DIR/codex-final-message.md"
+        )
+        if [ -n "$CODEX_MODEL" ]; then
+          args+=(--model "$CODEX_MODEL")
+        fi
+        args+=(-)
+
+        set +e
+        codex "${args[@]}" < "$prompt_file" 2>&1 | tee "$ARTIFACT_DIR/codex.log"
+        status=${PIPESTATUS[0]}
+        set -e
+        echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Notify Sidekick about changed files
+      if: always()
+      shell: bash
+      env:
+        HOME: ${{ steps.paths.outputs.home }}
+        WORKSPACE: ${{ steps.paths.outputs.workspace }}
+      run: |
+        set -euo pipefail
+
+        cd "$WORKSPACE"
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          exit 0
+        fi
+
+        changed_files="$(mktemp)"
+        {
+          git diff --name-only --diff-filter=ACMRTUXB HEAD --
+          git ls-files --others --exclude-standard
+        } | sort -u > "$changed_files"
+
+        if [ ! -s "$changed_files" ]; then
+          exit 0
+        fi
+
+        while IFS= read -r path; do
+          if [ -z "$path" ]; then
+            continue
+          fi
+          python3 - "$WORKSPACE/$path" <<'PY' | sidekick hook write >/dev/null 2>&1 || true
+        import json
+        import sys
+
+        print(json.dumps({"tool": "sidekick-issue-factory", "file_path": sys.argv[1]}))
+        PY
+        done < "$changed_files"
+
+    - id: collect
+      name: Collect Sidekick artifacts
+      if: always()
+      shell: bash
+      env:
+        HOME: ${{ steps.paths.outputs.home }}
+        WORKSPACE: ${{ steps.paths.outputs.workspace }}
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        SETTLE_SECONDS: ${{ inputs.sidekick-settle-seconds }}
+      run: |
+        set -euo pipefail
+
+        cd "$WORKSPACE"
+        sleep "$SETTLE_SECONDS"
+        if sidekick status > "$ARTIFACT_DIR/sidekick-status.json" 2>"$ARTIFACT_DIR/sidekick-status.err"; then
+          :
+        else
+          printf '{"error":"sidekick status unavailable"}\n' > "$ARTIFACT_DIR/sidekick-status.json"
+        fi
+
+        if [ ! -f "$ARTIFACT_DIR/codex-final-message.md" ]; then
+          printf 'Codex did not return a final message.\n' > "$ARTIFACT_DIR/codex-final-message.md"
+        fi
+
+        echo "sidekick_status_path=$ARTIFACT_DIR/sidekick-status.json" >> "$GITHUB_OUTPUT"
+
+    - name: Stop Sidekick
+      if: always()
+      shell: bash
+      env:
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+      run: |
+        set -euo pipefail
+        if [ -f "$ARTIFACT_DIR/sidekick.pid" ]; then
+          sidekick_pid="$(cat "$ARTIFACT_DIR/sidekick.pid")"
+          if kill -0 "$sidekick_pid" 2>/dev/null; then
+            kill "$sidekick_pid"
+            wait "$sidekick_pid" 2>/dev/null || true
+          fi
+        fi
+
+    - id: diff
+      name: Export Codex patch
+      if: always()
+      shell: bash
+      env:
+        WORKSPACE: ${{ steps.paths.outputs.workspace }}
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+      run: |
+        set -euo pipefail
+        cd "$WORKSPACE"
+
+        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          if [ -n "$(git ls-files --others --exclude-standard)" ]; then
+            git ls-files --others --exclude-standard -z | xargs -0 git add -N --
+          fi
+          git diff --binary > "$ARTIFACT_DIR/codex.patch"
+          if git diff --quiet --exit-code; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          printf '' > "$ARTIFACT_DIR/codex.patch"
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Fail when Codex fails
+      if: ${{ steps.codex.outputs.exit_code != '0' }}
+      shell: bash
+      run: |
+        echo "::error::codex exec failed with exit code ${{ steps.codex.outputs.exit_code }}."
+        exit 1

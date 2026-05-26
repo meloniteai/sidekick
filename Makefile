@@ -1,4 +1,4 @@
-.PHONY: test e2e e2e-agents
+.PHONY: test e2e e2e-agents factory-act factory-act-live
 
 test:
 	go test ./...
@@ -13,3 +13,9 @@ e2e:
 # Requires ANTHROPIC_API_KEY and OPENAI_API_KEY in the environment.
 e2e-agents:
 	SIDEKICK_E2E_REAL_AGENT=1 go test -tags=e2e -count=1 -run 'AgentVerifier' -v ./e2e/
+
+factory-act:
+	scripts/factory-act
+
+factory-act-live:
+	scripts/factory-act --live

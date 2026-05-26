@@ -1,0 +1,28 @@
+quiet_period: 2s
+verifiers:
+  - name: stub-output
+    type: binary
+    direction: W
+    timeout: 30s
+    binary:
+      command:
+        - sh
+        - -c
+        - |
+          cat >/dev/null
+          test -f codex-factory-stub-output.md
+      pass_reason: stub output file exists
+      fail_reason: stub output file is missing
+  - name: diff-check
+    type: binary
+    direction: E
+    timeout: 30s
+    binary:
+      command:
+        - sh
+        - -c
+        - |
+          cat >/dev/null
+          git diff --check
+      pass_reason: git diff --check passed
+      fail_reason: git diff --check failed
