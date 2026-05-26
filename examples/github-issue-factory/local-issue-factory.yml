@@ -1,0 +1,27 @@
+name: Local Sidekick issue factory
+
+on:
+  issues:
+    types: [opened, reopened]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  factory:
+    uses: ./.github/workflows/codex-issue-factory.yml
+    with:
+      issue-number: ${{ github.event.issue.number || '42' }}
+      issue-title: ${{ github.event.issue.title || 'Exercise the local Sidekick issue factory' }}
+      issue-body: ${{ github.event.issue.body || 'Stub event for local act runs.' }}
+      issue-url: ${{ github.event.issue.html_url || 'https://github.com/meloniteai/sidekick/issues/42' }}
+      issue-author-association: ${{ github.event.issue.author_association || 'OWNER' }}
+      allowed-author-associations: OWNER,MEMBER,COLLABORATOR
+      project-setup-command: echo "local factory example setup complete"
+      sidekick-config-path: examples/github-issue-factory/sidekick.yaml
+      codex-mode: stub
+      codex-sandbox: workspace-write
+      telemetry-mode: local
+      publish-mode: dry-run
+      sidekick-assets-mode: workspace
+    secrets: inherit
