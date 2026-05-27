@@ -46,6 +46,9 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 	if strings.Contains(action, "--add-dir \"$HOME/.sidekick\"") {
 		t.Fatal("issue factory must not expose the full Sidekick home directory to Codex")
 	}
+	if strings.Contains(action, "--goal") || strings.Contains(action, "sidekick-goal.txt") {
+		t.Fatal("issue factory must let Codex set the Sidekick goal inside the session")
+	}
 	if strings.Contains(factoryAct, "security-opt seccomp=unconfined") {
 		t.Fatal("factory-act live mode should not require disabling the Docker seccomp profile")
 	}
