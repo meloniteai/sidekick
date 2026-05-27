@@ -20,7 +20,7 @@ jobs:
       issue-body: ${{ github.event.issue.body || '' }}
       issue-url: ${{ github.event.issue.html_url }}
       issue-author-association: ${{ github.event.issue.author_association }}
-      allowed-author-associations: OWNER,MEMBER,COLLABORATOR,CONTRIBUTOR
+      allowed-author-associations: OWNER,MEMBER,COLLABORATOR
       project-setup-command: go mod download
       sidekick-config-path: .sidekick/sidekick.yaml
       sidekick-backend-url: https://sidekick.melonite.ai/api

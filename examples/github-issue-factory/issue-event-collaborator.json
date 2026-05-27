@@ -1,0 +1,21 @@
+{
+  "action": "opened",
+  "issue": {
+    "number": 43,
+    "title": "Exercise the local Sidekick issue factory as a collaborator",
+    "body": "Create codex-factory-stub-output.md with deterministic Sidekick issue factory stub content, then stop.",
+    "html_url": "https://github.com/meloniteai/sidekick/issues/43",
+    "author_association": "COLLABORATOR",
+    "user": {
+      "login": "trusted-collaborator"
+    }
+  },
+  "repository": {
+    "name": "sidekick",
+    "full_name": "meloniteai/sidekick",
+    "default_branch": "main",
+    "owner": {
+      "login": "meloniteai"
+    }
+  }
+}

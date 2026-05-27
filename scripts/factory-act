@@ -3,21 +3,31 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/factory-act [--live]
+Usage: scripts/factory-act [--live] [--event PATH]
 
 Run the GitHub issue factory workflow locally with nektos/act in an isolated
 copy of this repository. Stub mode is the default. --live injects local
 ~/.codex/auth.json and ~/.sidekick/auth.json and runs an act-only workflow copy
-with live Codex inputs.
+with live Codex inputs. --event chooses the issue event fixture used by act.
 EOF
 }
 
 mode="stub"
+event="examples/github-issue-factory/issue-event.json"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --live)
       mode="live"
       shift
+      ;;
+    --event)
+      if [ "$#" -lt 2 ]; then
+        echo "--event requires a path" >&2
+        usage >&2
+        exit 2
+      fi
+      event="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -51,6 +61,15 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 source_root="$(git rev-parse --show-toplevel)"
+event_path="$event"
+if [[ "$event_path" != /* ]]; then
+  event_path="$source_root/$event_path"
+fi
+if [ ! -f "$event_path" ]; then
+  echo "event fixture not found: $event" >&2
+  exit 1
+fi
+artifact_server_port="${ACT_ARTIFACT_SERVER_PORT:-$((30000 + RANDOM % 20000))}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_root="$source_root/.factory-act/$stamp-$mode"
 work_root="$run_root/work"
@@ -59,6 +78,8 @@ artifact_root="$run_root/artifacts"
 mkdir -p "$work_root" "$artifact_root"
 
 echo "factory-act run: $run_root"
+echo "event fixture: $event_path"
+echo "artifact server port: $artifact_server_port"
 
 git clone --local --no-hardlinks "$source_root" "$repo_copy" >/dev/null
 rsync -a \
@@ -76,7 +97,6 @@ if ! git -C "$repo_copy" diff --cached --quiet; then
 fi
 
 workflow="examples/github-issue-factory/local-issue-factory.yml"
-event="examples/github-issue-factory/issue-event.json"
 secret_file=""
 
 if [ "$mode" = "live" ]; then
@@ -120,9 +140,11 @@ fi
 act_args=(
   issues
   -W "$workflow"
-  -e "$event"
+  -e "$event_path"
   --artifact-server-path "$artifact_root"
+  --artifact-server-port "$artifact_server_port"
   --container-architecture "${ACT_CONTAINER_ARCHITECTURE:-linux/amd64}"
+  --rm
   -P "ubuntu-latest=${ACT_IMAGE:-ghcr.io/catthehacker/ubuntu:act-latest}"
 )
 

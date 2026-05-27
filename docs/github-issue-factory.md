@@ -24,6 +24,13 @@ Run the stub smoke:
 make factory-act
 ```
 
+Run the author-association gate fixtures:
+
+```bash
+make factory-act-contributor
+make factory-act-collaborator
+```
+
 The script copies the current Sidekick checkout into an isolated temp clone
 under `.factory-act/`, commits that snapshot inside the temp clone, runs `act` against
 `examples/github-issue-factory/local-issue-factory.yml`, and enables the local
@@ -32,6 +39,8 @@ clean except for ignored `.factory-act/` output.
 
 Stub mode writes a deterministic `codex-factory-stub-output.md`, triggers the
 Sidekick write hook, uploads implementation artifacts, and dry-runs publishing.
+The contributor fixture should stop after the gate with `allowed=false`; the
+collaborator fixture should pass the gate and continue through dry-run publish.
 Expected artifacts include:
 
 - `codex.patch`
