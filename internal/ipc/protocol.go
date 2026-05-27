@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	defaultSockRel = ".sidekick/sock"
-	envSock        = "SIDEKICK_SOCK"
-	envTelemetryDB = "SIDEKICK_TELEMETRY_DB"
+	defaultSockRel      = ".sidekick/sock"
+	envSock             = "SIDEKICK_SOCK"
+	envTelemetryDB      = "SIDEKICK_TELEMETRY_DB"
+	envGitHubRepository = "GITHUB_REPOSITORY"
 )
 
 // SocketPath returns the daemon socket path for the process cwd. See
@@ -90,12 +91,127 @@ func TelemetryDBPath(cwd string) (string, error) {
 	return filepath.Join(home, ".sidekick", "telemetry", fp+".db"), nil
 }
 
-// RepoFingerprint returns the stable short hash identifying the git repo
-// resolved from cwd, the same value the per-repo socket and telemetry DB paths
-// are keyed on. Used to resolve a repo to its backend project so every worktree
-// of a repo maps to one project. Returns "" when cwd is not in a git repo.
+// ProjectIdentity is the stable repository identity used for backend projects.
+// Name is human-readable (preferably "owner/repo"); Fingerprint is the stable
+// short key sent to the backend resolver.
+type ProjectIdentity struct {
+	Name        string
+	Fingerprint string
+}
+
+// RepoProjectIdentity returns the repository identity Sidekick should use for
+// backend project resolution. It prefers CI's explicit GITHUB_REPOSITORY, then
+// the origin remote's owner/repo path, and falls back to the local git-common-dir
+// path only when no portable repository identity is available.
+func RepoProjectIdentity(cwd string) ProjectIdentity {
+	if name := githubRepository(); name != "" {
+		return ProjectIdentity{Name: name, Fingerprint: projectFingerprint(name)}
+	}
+	if name := repoSlugFromRemote(cwd); name != "" {
+		return ProjectIdentity{Name: name, Fingerprint: projectFingerprint(name)}
+	}
+	return ProjectIdentity{Name: localProjectName(cwd), Fingerprint: repoFingerprintFor(cwd)}
+}
+
+// RepoFingerprint returns the stable short hash identifying the repository
+// project resolved from cwd. In CI and normal GitHub clones this is keyed by
+// owner/repo rather than by the checkout directory, so backend projects stay
+// sticky across factory builds and independent clones.
 func RepoFingerprint(cwd string) string {
-	return repoFingerprintFor(cwd)
+	return RepoProjectIdentity(cwd).Fingerprint
+}
+
+func githubRepository() string {
+	return cleanRepoSlug(os.Getenv(envGitHubRepository))
+}
+
+func repoSlugFromRemote(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return repoSlugFromRemoteURL(string(out))
+}
+
+func repoSlugFromRemoteURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if u, err := url.Parse(raw); err == nil && u.Scheme != "" {
+		return cleanRepoSlug(u.Path)
+	}
+	if at := strings.LastIndex(raw, "@"); at >= 0 {
+		if colon := strings.Index(raw[at+1:], ":"); colon >= 0 {
+			return cleanRepoSlug(raw[at+1+colon+1:])
+		}
+	}
+	if filepath.IsAbs(raw) || strings.HasPrefix(raw, ".") {
+		return ""
+	}
+	return cleanRepoSlug(raw)
+}
+
+func cleanRepoSlug(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(strings.TrimSuffix(raw, ".git"), "/")
+	if raw == "" {
+		return ""
+	}
+	parts := strings.Split(raw, "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	owner := strings.TrimSpace(parts[len(parts)-2])
+	repo := strings.TrimSpace(strings.TrimSuffix(parts[len(parts)-1], ".git"))
+	if !validRepoSlugPart(owner) || !validRepoSlugPart(repo) {
+		return ""
+	}
+	return owner + "/" + repo
+}
+
+func validRepoSlugPart(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	return !strings.ContainsAny(s, " \t\r\n")
+}
+
+func projectFingerprint(name string) string {
+	return shortHash("repo:" + strings.ToLower(strings.TrimSpace(name)))
+}
+
+func localProjectName(cwd string) string {
+	top := gitTopLevel(cwd)
+	if top == "" {
+		top = strings.TrimSpace(cwd)
+	}
+	if top == "" {
+		top, _ = os.Getwd()
+	}
+	base := filepath.Base(filepath.Clean(top))
+	if base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return base
+}
+
+func gitTopLevel(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // repoFingerprintFor returns a stable short hash identifying the git repo
@@ -147,7 +263,11 @@ func repoFingerprintFor(cwd string) string {
 		abs = resolved
 	}
 	abs = filepath.Clean(abs)
-	sum := sha256.Sum256([]byte(abs))
+	return shortHash(abs)
+}
+
+func shortHash(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
 	return hex.EncodeToString(sum[:])[:12]
 }
 

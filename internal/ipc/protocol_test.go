@@ -116,6 +116,69 @@ func TestSocketPathFor_CloneFallsBackToLiveSocketWithSameOrigin(t *testing.T) {
 	}
 }
 
+func TestRepoProjectIdentityPrefersGitHubRepositoryEnv(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "meloniteai/sidekick-ui")
+
+	a := RepoProjectIdentity(filepath.Join(t.TempDir(), "work"))
+	b := RepoProjectIdentity(filepath.Join(t.TempDir(), "checkout"))
+
+	if a.Name != "meloniteai/sidekick-ui" {
+		t.Fatalf("project name = %q, want repository fqn", a.Name)
+	}
+	if a.Fingerprint == "" {
+		t.Fatal("project fingerprint is empty")
+	}
+	if a.Fingerprint != b.Fingerprint {
+		t.Fatalf("same GITHUB_REPOSITORY must be sticky across checkout dirs: %q vs %q", a.Fingerprint, b.Fingerprint)
+	}
+}
+
+func TestRepoProjectIdentityUsesOriginSlugAcrossClones(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	t.Setenv("GITHUB_REPOSITORY", "")
+
+	const remote = "git@github.com:meloniteai/sidekick-ui.git"
+	a := filepath.Join(t.TempDir(), "work")
+	if err := os.MkdirAll(a, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, a, "init", "-q", "-b", "main")
+	mustGit(t, a, "remote", "add", "origin", remote)
+
+	b := filepath.Join(t.TempDir(), "factory-checkout")
+	if err := os.MkdirAll(b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, b, "init", "-q", "-b", "main")
+	mustGit(t, b, "remote", "add", "origin", remote)
+
+	ai := RepoProjectIdentity(a)
+	bi := RepoProjectIdentity(b)
+	if ai.Name != "meloniteai/sidekick-ui" || bi.Name != "meloniteai/sidekick-ui" {
+		t.Fatalf("project names = %q/%q, want repository fqn", ai.Name, bi.Name)
+	}
+	if ai.Fingerprint == "" || ai.Fingerprint != bi.Fingerprint {
+		t.Fatalf("same origin must be sticky across clones: %q vs %q", ai.Fingerprint, bi.Fingerprint)
+	}
+}
+
+func TestRepoSlugFromRemoteURL(t *testing.T) {
+	cases := map[string]string{
+		"https://github.com/meloniteai/sidekick-ui.git":    "meloniteai/sidekick-ui",
+		"git@github-melonite:meloniteai/sidekick-ui.git":   "meloniteai/sidekick-ui",
+		"ssh://git@github.example.com/meloniteai/Sidekick": "meloniteai/Sidekick",
+		"/tmp/local/sidekick-ui.git":                       "",
+		"../local/sidekick-ui.git":                         "",
+	}
+	for raw, want := range cases {
+		if got := repoSlugFromRemoteURL(raw); got != want {
+			t.Fatalf("repoSlugFromRemoteURL(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
 func serveStatusOnce(l net.Listener, worktree string, errCh chan<- error) {
 	conn, err := l.Accept()
 	if err != nil {

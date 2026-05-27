@@ -140,6 +140,9 @@ uses the stored org and token, resolves the repo through
 `/api/orgs/{org}/projects/resolve`, and sends each telemetry event with the CLI
 bearer token. If backend auth is missing or invalid, auto mode falls back to the
 local store and prints the login command to run.
+Backend project identity prefers `GITHUB_REPOSITORY` in CI, then the
+`remote.origin.url` owner/repo slug, so a factory checkout directory like
+`work/` does not become the project name.
 
 ## Verifiers
 
