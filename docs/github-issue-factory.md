@@ -81,6 +81,7 @@ jobs:
     secrets:
       CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
       SIDEKICK_AUTH_JSON: ${{ secrets.SIDEKICK_AUTH_JSON }}
+      MELONITE_GITHUB_TOKEN: ${{ secrets.MELONITE_GITHUB_TOKEN }}
 ```
 
 By default the gate allows `OWNER,MEMBER,COLLABORATOR`. Override
@@ -90,8 +91,17 @@ By default the gate allows `OWNER,MEMBER,COLLABORATOR`. Override
 
 `CODEX_AUTH_JSON` should contain the full contents of `~/.codex/auth.json`.
 `SIDEKICK_AUTH_JSON` should contain the full contents of
-`~/.sidekick/auth.json` when using backend telemetry. `CODEX_FACTORY_GH_TOKEN`
-is optional; the workflow falls back to `github.token` for live publishing.
+`~/.sidekick/auth.json` when using backend telemetry.
+
+`MELONITE_GITHUB_TOKEN` is an optional consumer-owned publish credential.
+The workflow falls back to `github.token`, which is enough for ordinary branch
+pushes, PR creation, and issue comments when the caller grants the job
+`contents`, `pull-requests`, and `issues` permissions. Pass
+`MELONITE_GITHUB_TOKEN` when the factory may change files under
+`.github/workflows` or when PR-triggered workflows should run without manual
+approval. Prefer a short-lived GitHub App installation token scoped to the
+consuming repository. A classic or fine-grained PAT also works if it is stored as
+a repository or organization secret with the minimum required permissions.
 
 ## Known act Differences
 
