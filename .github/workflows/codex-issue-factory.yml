@@ -62,7 +62,7 @@ on:
         type: string
         default: live
       codex-sandbox:
-        description: Sandbox passed to codex exec.
+        description: Sandbox passed to codex exec. Issue-factory runs reject danger-full-access.
         required: false
         type: string
         default: workspace-write
