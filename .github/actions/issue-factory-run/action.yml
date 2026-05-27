@@ -36,6 +36,14 @@ inputs:
     description: Contents of ~/.codex/auth.json for live Codex mode.
     required: false
     default: ""
+  codex-auth-secret-name:
+    description: Repository secret name to update when Codex rotates ~/.codex/auth.json. Leave empty to skip persistence.
+    required: false
+    default: ""
+  codex-auth-update-token:
+    description: GitHub token with permission to update codex-auth-secret-name in the consuming repository.
+    required: false
+    default: ""
   sidekick-auth-json:
     description: Contents of ~/.sidekick/auth.json for backend telemetry.
     required: false
@@ -606,6 +614,40 @@ runs:
         echo "exit_code=$status" >> "$GITHUB_OUTPUT"
         exit 0
 
+    - name: Persist refreshed Codex auth
+      if: ${{ always() && inputs.codex-mode == 'live' && inputs.codex-auth-secret-name != '' }}
+      shell: bash
+      env:
+        HOME: ${{ steps.paths.outputs.home }}
+        GH_TOKEN: ${{ inputs.codex-auth-update-token }}
+        ORIGINAL_CODEX_AUTH_JSON: ${{ inputs.codex-auth-json }}
+        CODEX_AUTH_SECRET_NAME: ${{ inputs.codex-auth-secret-name }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+
+        auth_file="$HOME/.codex/auth.json"
+        if [ ! -s "$auth_file" ]; then
+          echo "::warning::Codex auth persistence skipped because auth.json is missing."
+          exit 0
+        fi
+        node -e 'const fs=require("fs"); JSON.parse(fs.readFileSync(process.argv[1],"utf8"));' "$auth_file"
+
+        original_auth_file="$(mktemp)"
+        printf '%s' "$ORIGINAL_CODEX_AUTH_JSON" > "$original_auth_file"
+        if cmp -s "$original_auth_file" "$auth_file"; then
+          echo "Codex auth.json did not change; secret update skipped."
+          exit 0
+        fi
+
+        if [ -z "$GH_TOKEN" ]; then
+          echo "::error::Codex refreshed auth.json, but no GitHub token was provided to update $CODEX_AUTH_SECRET_NAME."
+          exit 1
+        fi
+
+        gh secret set "$CODEX_AUTH_SECRET_NAME" --repo "$REPOSITORY" < "$auth_file"
+        echo "Persisted refreshed Codex auth JSON to GitHub secret $CODEX_AUTH_SECRET_NAME."
+
     - id: codex_hook_status
       name: Capture Sidekick status after Codex hooks
       if: always()
@@ -771,6 +813,9 @@ runs:
         echo "::error::codex exec failed with exit code ${{ steps.codex.outputs.exit_code }}."
         log_file="$ARTIFACT_DIR/codex.log"
         if [ -s "$log_file" ]; then
+          if grep -q 'refresh_token_reused' "$log_file"; then
+            echo "::error::CODEX_AUTH_JSON contains a spent refresh token. Re-run Codex login locally and replace the GitHub secret once."
+          fi
           echo "::group::codex.log"
           tail -n 200 "$log_file"
           echo "::endgroup::"

@@ -106,6 +106,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: sidekick-codex-issue-factory-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   implement:
     name: Implement issue with Codex
@@ -164,6 +168,8 @@ jobs:
           sidekick-config: ${{ inputs.sidekick-config }}
           project-setup-command: ${{ inputs.project-setup-command }}
           codex-auth-json: ${{ secrets.CODEX_AUTH_JSON }}
+          codex-auth-secret-name: ${{ secrets.MELONITE_GITHUB_TOKEN != '' && 'CODEX_AUTH_JSON' || '' }}
+          codex-auth-update-token: ${{ secrets.MELONITE_GITHUB_TOKEN }}
           sidekick-auth-json: ${{ secrets.SIDEKICK_AUTH_JSON }}
           sidekick-backend-url: ${{ inputs.sidekick-backend-url }}
           telemetry-mode: ${{ inputs.telemetry-mode }}

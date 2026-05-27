@@ -22,6 +22,7 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 		"--add-dir \"$HOME/.sidekick/sockets\"",
 		"$ARTIFACT_DIR/codex.log",
 		"tail -n 200 \"$log_file\"",
+		"refresh_token_reused",
 		"trust-codex-sidekick-hooks.js",
 		"trusted_hash",
 		"sidekick-status-after-codex-hooks.json",
@@ -47,6 +48,24 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 	}
 	if strings.Contains(factoryAct, "security-opt seccomp=unconfined") {
 		t.Fatal("factory-act live mode should not require disabling the Docker seccomp profile")
+	}
+}
+
+func TestIssueFactoryPersistsRotatedCodexAuth(t *testing.T) {
+	action := readText(t, ".github/actions/issue-factory-run/action.yml")
+	workflow := readText(t, ".github/workflows/codex-issue-factory.yml")
+
+	for _, snippet := range []string{
+		"sidekick-codex-issue-factory-${{ github.repository }}",
+		"codex-auth-secret-name",
+		"codex-auth-update-token",
+		"cmp -s \"$original_auth_file\" \"$auth_file\"",
+		"gh secret set \"$CODEX_AUTH_SECRET_NAME\" --repo \"$REPOSITORY\" < \"$auth_file\"",
+		"secrets.MELONITE_GITHUB_TOKEN != '' && 'CODEX_AUTH_JSON' || ''",
+	} {
+		if !strings.Contains(action+"\n"+workflow, snippet) {
+			t.Fatalf("issue factory must persist rotated Codex auth, missing %q", snippet)
+		}
 	}
 }
 
