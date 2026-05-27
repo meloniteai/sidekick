@@ -89,6 +89,8 @@ jobs:
 
 By default the gate allows `OWNER,MEMBER,COLLABORATOR`. Override
 `allowed-author-associations` when a repo wants a broader or narrower policy.
+When workflow assets are checked out, they always come from
+`meloniteai/sidekick`; overriding the asset repository is not supported.
 
 ## Secrets
 
