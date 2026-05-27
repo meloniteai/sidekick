@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$script_dir/versions.env"
+
+package="@openai/codex@$CODEX_CLI_VERSION"
+actual_integrity="$(npm view "$package" dist.integrity)"
+
+if [ "$actual_integrity" != "$CODEX_CLI_INTEGRITY" ]; then
+  {
+    echo "Codex CLI integrity mismatch for $package"
+    echo "expected: $CODEX_CLI_INTEGRITY"
+    echo "actual:   $actual_integrity"
+  } >&2
+  exit 1
+fi
+
+npm install -g "$package"

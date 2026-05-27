@@ -133,15 +133,14 @@ runs:
       shell: bash
       env:
         TOOL_DIR: ${{ steps.paths.outputs.tool_dir }}
+        SIDEKICK_REPO: ${{ steps.paths.outputs.sidekick_repo }}
         CODEX_MODE: ${{ inputs.codex-mode }}
       run: |
         set -euo pipefail
 
         case "$CODEX_MODE" in
           live)
-            if ! command -v codex >/dev/null 2>&1; then
-              npm install -g @openai/codex
-            fi
+            bash "$SIDEKICK_REPO/scripts/install-codex-cli"
             ;;
           stub)
             cat > "$TOOL_DIR/codex" <<'BASH'
