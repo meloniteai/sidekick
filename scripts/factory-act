@@ -9,9 +9,9 @@ Run the GitHub issue factory workflow locally with nektos/act in an isolated
 copy of this repository. Stub mode is the default. --live injects local
 ~/.codex/auth.json and ~/.sidekick/auth.json and runs an act-only workflow copy
 with live Codex inputs. Live mode runs the act job container with --privileged
-through --container-options unless ACT_LIVE_CONTAINER_OPTIONS=0 is set, so
-Codex's workspace-write sandbox can create its nested Linux namespace. --event
-uses an alternate issue event fixture.
+unless ACT_LIVE_CONTAINER_OPTIONS=0 is set, so Codex's workspace-write sandbox
+can create its nested Linux namespace. --event uses an alternate issue event
+fixture.
 EOF
 }
 
@@ -133,9 +133,18 @@ act_args=(
   -W "$workflow"
   -e "$event"
   --artifact-server-path "$artifact_root"
-  --container-architecture "${ACT_CONTAINER_ARCHITECTURE:-linux/amd64}"
   -P "ubuntu-latest=${ACT_IMAGE:-ghcr.io/catthehacker/ubuntu:act-latest}"
 )
+
+if [ -n "${ACT_CONTAINER_ARCHITECTURE:-}" ]; then
+  act_arch="$ACT_CONTAINER_ARCHITECTURE"
+else
+  case "$(uname -m)" in
+    arm64|aarch64) act_arch="linux/arm64" ;;
+    *) act_arch="linux/amd64" ;;
+  esac
+fi
+act_args+=(--container-architecture "$act_arch")
 
 if [ "$mode" = "live" ]; then
   act_args+=(

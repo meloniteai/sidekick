@@ -15,8 +15,12 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 		"codex-sandbox=danger-full-access is not allowed",
 		"<untrusted-issue-body format=\"json-string\">",
 		"-c approval_policy=never",
+		"-c sandbox_workspace_write.network_access=false",
 		"--dangerously-bypass-hook-trust",
 		"command !== \"sidekick hook write\"",
+		"--add-dir \"$HOME/.sidekick/sockets\"",
+		"sidekick-status-after-codex-hooks.json",
+		"require-sidekick-hook-verifiers",
 	}
 	for _, snippet := range requiredActionSnippets {
 		if !strings.Contains(action, snippet) {
@@ -26,6 +30,15 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 
 	if strings.Contains(factoryAct, "codex-sandbox: danger-full-access") {
 		t.Fatal("factory-act must not rewrite live runs back to danger-full-access")
+	}
+	if strings.Contains(action, "sandbox_workspace_write.network_access=true") {
+		t.Fatal("issue factory must not enable outbound network access inside Codex workspace-write")
+	}
+	if strings.Contains(action, "--add-dir \"$HOME/.sidekick\"") {
+		t.Fatal("issue factory must not expose the full Sidekick home directory to Codex")
+	}
+	if strings.Contains(factoryAct, "security-opt seccomp=unconfined") {
+		t.Fatal("factory-act live mode should not require disabling the Docker seccomp profile")
 	}
 }
 

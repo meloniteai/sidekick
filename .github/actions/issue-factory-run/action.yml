@@ -64,6 +64,10 @@ inputs:
     description: Seconds to wait before collecting final Sidekick status.
     required: false
     default: "4"
+  require-sidekick-hook-verifiers:
+    description: Fail when Codex changed files but no Sidekick verifier started before the fallback notifier.
+    required: false
+    default: "true"
   stub-output-path:
     description: Workspace-relative file written by codex-mode=stub.
     required: false
@@ -183,7 +187,7 @@ runs:
               final_message="$2"
               shift 2
               ;;
-            --sandbox|--model|-c|--enable)
+            --sandbox|--model|-c|--enable|--add-dir)
               shift 2
               ;;
             --*)
@@ -568,10 +572,14 @@ runs:
           --cd "$WORKSPACE"
           --sandbox "$CODEX_SANDBOX"
           -c approval_policy=never
+          -c sandbox_workspace_write.network_access=false
           --enable hooks
           --dangerously-bypass-hook-trust
           --output-last-message "$ARTIFACT_DIR/codex-final-message.md"
         )
+        if [ "$CODEX_SANDBOX" = "workspace-write" ]; then
+          args+=(--add-dir "$HOME/.sidekick/sockets")
+        fi
         if [ -n "$CODEX_MODEL" ]; then
           args+=(--model "$CODEX_MODEL")
         fi
@@ -583,6 +591,55 @@ runs:
         set -e
         echo "exit_code=$status" >> "$GITHUB_OUTPUT"
         exit 0
+
+    - id: codex_hook_status
+      name: Capture Sidekick status after Codex hooks
+      if: always()
+      shell: bash
+      env:
+        HOME: ${{ steps.paths.outputs.home }}
+        WORKSPACE: ${{ steps.paths.outputs.workspace }}
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        SETTLE_SECONDS: ${{ inputs.sidekick-settle-seconds }}
+        REQUIRE_SIDEKICK_HOOK_VERIFIERS: ${{ inputs.require-sidekick-hook-verifiers }}
+      run: |
+        set -euo pipefail
+
+        cd "$WORKSPACE"
+        changed_files="$ARTIFACT_DIR/changed-files-after-codex.txt"
+        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          {
+            git diff --name-only --diff-filter=ACMRTUXB HEAD --
+            git ls-files --others --exclude-standard
+          } | sort -u > "$changed_files"
+        else
+          : > "$changed_files"
+        fi
+
+        if [ -s "$changed_files" ]; then
+          sleep "$SETTLE_SECONDS"
+        fi
+
+        status_file="$ARTIFACT_DIR/sidekick-status-after-codex-hooks.json"
+        if sidekick status > "$status_file" 2>"$ARTIFACT_DIR/sidekick-status-after-codex-hooks.err"; then
+          :
+        else
+          printf '{"error":"sidekick status unavailable"}\n' > "$status_file"
+        fi
+
+        case "$REQUIRE_SIDEKICK_HOOK_VERIFIERS" in
+          true|false) ;;
+          *)
+            echo "::error::require-sidekick-hook-verifiers must be true or false, got '$REQUIRE_SIDEKICK_HOOK_VERIFIERS'."
+            exit 1
+            ;;
+        esac
+
+        if [ "$REQUIRE_SIDEKICK_HOOK_VERIFIERS" != "true" ] || [ ! -s "$changed_files" ]; then
+          exit 0
+        fi
+
+        node "$GITHUB_ACTION_PATH/check-sidekick-hook-status.js" "$status_file"
 
     - name: Notify Sidekick about changed files
       if: always()
