@@ -74,7 +74,7 @@ outputs:
     description: Whether Codex produced a repository diff.
     value: ${{ steps.diff.outputs.changed }}
   artifact-path:
-    description: Directory containing Codex and Sidekick artifacts.
+    description: Directory containing public Codex and Sidekick handoff artifacts.
     value: ${{ steps.paths.outputs.artifact_dir }}
   sidekick-status-path:
     description: Final Sidekick status JSON path.
@@ -100,9 +100,12 @@ runs:
         home="$root/home"
         tool_dir="$root/bin"
         artifact_dir="$root/artifacts"
+        private_dir="$root/private"
+        log_dir="$private_dir/logs"
+        runtime_dir="$private_dir/runtime"
 
         rm -rf "$root"
-        mkdir -p "$home/.codex" "$home/.sidekick" "$tool_dir" "$artifact_dir"
+        mkdir -p "$home/.codex" "$home/.sidekick" "$tool_dir" "$artifact_dir" "$log_dir" "$runtime_dir"
 
         {
           echo "workspace=$workspace"
@@ -110,6 +113,8 @@ runs:
           echo "home=$home"
           echo "tool_dir=$tool_dir"
           echo "artifact_dir=$artifact_dir"
+          echo "log_dir=$log_dir"
+          echo "runtime_dir=$runtime_dir"
         } >> "$GITHUB_OUTPUT"
         echo "$tool_dir" >> "$GITHUB_PATH"
 
@@ -280,14 +285,14 @@ runs:
       shell: bash
       env:
         WORKSPACE: ${{ steps.paths.outputs.workspace }}
-        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
         INLINE_CONFIG: ${{ inputs.sidekick-config }}
         CONFIG_PATH: ${{ inputs.sidekick-config-path }}
+        RUNTIME_DIR: ${{ steps.paths.outputs.runtime_dir }}
       run: |
         set -euo pipefail
 
         if [ -n "$INLINE_CONFIG" ]; then
-          resolved="$ARTIFACT_DIR/sidekick-inline.yaml"
+          resolved="$RUNTIME_DIR/sidekick-inline.yaml"
           printf '%s\n' "$INLINE_CONFIG" > "$resolved"
         elif [ -n "$CONFIG_PATH" ]; then
           case "$CONFIG_PATH" in
@@ -295,7 +300,7 @@ runs:
             *) resolved="$WORKSPACE/$CONFIG_PATH" ;;
           esac
         else
-          resolved="$ARTIFACT_DIR/sidekick-default.yaml"
+          resolved="$RUNTIME_DIR/sidekick-default.yaml"
           cat > "$resolved" <<'YAML'
         quiet_period: 2s
         verifiers:
@@ -340,12 +345,12 @@ runs:
       shell: bash
       env:
         WORKSPACE: ${{ steps.paths.outputs.workspace }}
-        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        LOG_DIR: ${{ steps.paths.outputs.log_dir }}
         PROJECT_SETUP_COMMAND: ${{ inputs.project-setup-command }}
       run: |
         set -euo pipefail
         cd "$WORKSPACE"
-        bash -lc "$PROJECT_SETUP_COMMAND" 2>&1 | tee "$ARTIFACT_DIR/project-setup.log"
+        bash -lc "$PROJECT_SETUP_COMMAND" > "$LOG_DIR/project-setup.log" 2>&1
 
     - id: sidekick
       name: Start Sidekick headless
@@ -353,7 +358,8 @@ runs:
       env:
         HOME: ${{ steps.paths.outputs.home }}
         WORKSPACE: ${{ steps.paths.outputs.workspace }}
-        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        LOG_DIR: ${{ steps.paths.outputs.log_dir }}
+        RUNTIME_DIR: ${{ steps.paths.outputs.runtime_dir }}
         SIDEKICK_CONFIG: ${{ steps.config.outputs.path }}
         SIDEKICK_BACKEND_URL: ${{ inputs.sidekick-backend-url }}
         TELEMETRY_MODE: ${{ inputs.telemetry-mode }}
@@ -372,8 +378,8 @@ runs:
             ;;
         esac
 
-        goal_file="$ARTIFACT_DIR/sidekick-goal.txt"
-        log_file="$ARTIFACT_DIR/sidekick.log"
+        goal_file="$RUNTIME_DIR/sidekick-goal.txt"
+        log_file="$LOG_DIR/sidekick.log"
         {
           printf 'Implement GitHub issue #%s: %s\n\n' "$ISSUE_NUMBER" "$ISSUE_TITLE"
           if [ -n "$ISSUE_URL" ]; then
@@ -390,12 +396,11 @@ runs:
           > "$log_file" 2>&1 &
 
         sidekick_pid="$!"
-        echo "$sidekick_pid" > "$ARTIFACT_DIR/sidekick.pid"
+        echo "$sidekick_pid" > "$RUNTIME_DIR/sidekick.pid"
         echo "pid=$sidekick_pid" >> "$GITHUB_OUTPUT"
 
         for _ in $(seq 1 30); do
           if ! kill -0 "$sidekick_pid" 2>/dev/null; then
-            cat "$log_file"
             echo "::error::sidekick exited before it became ready."
             exit 1
           fi
@@ -405,7 +410,6 @@ runs:
           sleep 1
         done
 
-        cat "$log_file"
         echo "::error::sidekick did not become ready."
         exit 1
 
@@ -416,6 +420,8 @@ runs:
         HOME: ${{ steps.paths.outputs.home }}
         WORKSPACE: ${{ steps.paths.outputs.workspace }}
         ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        LOG_DIR: ${{ steps.paths.outputs.log_dir }}
+        RUNTIME_DIR: ${{ steps.paths.outputs.runtime_dir }}
         ISSUE_NUMBER: ${{ inputs.issue-number }}
         ISSUE_TITLE: ${{ inputs.issue-title }}
         ISSUE_BODY: ${{ inputs.issue-body }}
@@ -427,7 +433,7 @@ runs:
       run: |
         set -euo pipefail
 
-        prompt_file="$ARTIFACT_DIR/codex-prompt.md"
+        prompt_file="$RUNTIME_DIR/codex-prompt.md"
         {
           printf 'Implement GitHub issue #%s in %s.\n\n' "$ISSUE_NUMBER" "$REPOSITORY"
           if [ -n "$ISSUE_URL" ]; then
@@ -461,8 +467,8 @@ runs:
         args+=(-)
 
         set +e
-        codex "${args[@]}" < "$prompt_file" 2>&1 | tee "$ARTIFACT_DIR/codex.log"
-        status=${PIPESTATUS[0]}
+        codex "${args[@]}" < "$prompt_file" > "$LOG_DIR/codex.log" 2>&1
+        status=$?
         set -e
         echo "exit_code=$status" >> "$GITHUB_OUTPUT"
         exit 0
@@ -511,13 +517,14 @@ runs:
         HOME: ${{ steps.paths.outputs.home }}
         WORKSPACE: ${{ steps.paths.outputs.workspace }}
         ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        LOG_DIR: ${{ steps.paths.outputs.log_dir }}
         SETTLE_SECONDS: ${{ inputs.sidekick-settle-seconds }}
       run: |
         set -euo pipefail
 
         cd "$WORKSPACE"
         sleep "$SETTLE_SECONDS"
-        if sidekick status > "$ARTIFACT_DIR/sidekick-status.json" 2>"$ARTIFACT_DIR/sidekick-status.err"; then
+        if sidekick status > "$ARTIFACT_DIR/sidekick-status.json" 2>"$LOG_DIR/sidekick-status.err"; then
           :
         else
           printf '{"error":"sidekick status unavailable"}\n' > "$ARTIFACT_DIR/sidekick-status.json"
@@ -533,11 +540,11 @@ runs:
       if: always()
       shell: bash
       env:
-        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+        RUNTIME_DIR: ${{ steps.paths.outputs.runtime_dir }}
       run: |
         set -euo pipefail
-        if [ -f "$ARTIFACT_DIR/sidekick.pid" ]; then
-          sidekick_pid="$(cat "$ARTIFACT_DIR/sidekick.pid")"
+        if [ -f "$RUNTIME_DIR/sidekick.pid" ]; then
+          sidekick_pid="$(cat "$RUNTIME_DIR/sidekick.pid")"
           if kill -0 "$sidekick_pid" 2>/dev/null; then
             kill "$sidekick_pid"
             wait "$sidekick_pid" 2>/dev/null || true

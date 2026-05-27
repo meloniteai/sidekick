@@ -40,6 +40,9 @@ Expected artifacts include:
 - `pr-body.md`
 - `issue-comment.md`
 
+Diagnostic logs and prompt scratch files stay in runner-private temp paths and
+are not uploaded as artifacts.
+
 For a real local run:
 
 ```bash

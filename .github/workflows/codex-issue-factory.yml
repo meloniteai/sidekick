@@ -223,8 +223,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: codex-issue-factory-${{ inputs.issue-number }}
-          path: ${{ steps.factory.outputs.artifact-path }}/
+          path: |
+            ${{ steps.factory.outputs.artifact-path }}/codex.patch
+            ${{ steps.factory.outputs.artifact-path }}/codex-final-message.md
+            ${{ steps.factory.outputs.artifact-path }}/sidekick-status.json
           if-no-files-found: error
+          retention-days: 1
 
   publish:
     name: Publish Codex pull request
@@ -309,7 +313,7 @@ jobs:
           write_no_diff_comment() {
             {
               printf 'Codex finished the issue factory run, but it did not produce a repository diff.\n\n'
-              printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex logs.\n'
+              printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex summary.\n'
             } > "$publish_dir/issue-comment.md"
           }
 
@@ -354,7 +358,7 @@ jobs:
           if git diff --cached --quiet; then
             {
               printf 'Codex produced a patch artifact, but applying it resulted in no staged changes.\n\n'
-              printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex logs.\n'
+              printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex summary.\n'
             } > "$publish_dir/issue-comment.md"
             gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"
             exit 0
@@ -378,7 +382,7 @@ jobs:
           {
             printf 'Codex finished implementing this issue and opened or updated a PR:\n\n'
             printf '%s\n\n' "$pr_url"
-            printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex logs.\n'
+            printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex summary.\n'
           } > "$publish_dir/issue-comment.md"
 
           gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"
@@ -388,5 +392,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: codex-issue-factory-publish-${{ inputs.issue-number }}
-          path: publish-output/
+          path: |
+            publish-output/pr-body.md
+            publish-output/issue-comment.md
+            publish-output/pr-url.txt
           if-no-files-found: warn
+          retention-days: 1
