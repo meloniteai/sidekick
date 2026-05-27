@@ -76,7 +76,7 @@ jobs:
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
       - name: Install Codex CLI
-        run: npm install -g @openai/codex
+        run: bash scripts/install-codex-cli
       - name: Configure git identity for tests
         run: |
           git config --global user.email "ci@sidekick.local"
