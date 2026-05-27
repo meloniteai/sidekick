@@ -122,15 +122,16 @@ runs:
         } >> "$GITHUB_OUTPUT"
         echo "$tool_dir" >> "$GITHUB_PATH"
 
-    - name: Build Sidekick
+    - name: Install Sidekick
       shell: bash
       env:
-        SIDEKICK_REPO: ${{ steps.paths.outputs.sidekick_repo }}
+        SIDEKICK_ASSETS_DIR: ${{ steps.paths.outputs.sidekick_repo }}
         TOOL_DIR: ${{ steps.paths.outputs.tool_dir }}
       run: |
         set -euo pipefail
-        cd "$SIDEKICK_REPO"
-        go build -o "$TOOL_DIR/sidekick" .
+        SIDEKICK_INSTALL_DIR="$TOOL_DIR" \
+          SIDEKICK_SKIP_AGENTS=1 \
+          bash "$SIDEKICK_ASSETS_DIR/install.sh"
         "$TOOL_DIR/sidekick" --help >/dev/null
 
     - name: Install or stub Codex

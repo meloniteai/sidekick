@@ -50,6 +50,28 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 	}
 }
 
+func TestIssueFactoryInstallsReleasedSidekick(t *testing.T) {
+	action := readText(t, ".github/actions/issue-factory-run/action.yml")
+	workflow := readText(t, ".github/workflows/codex-issue-factory.yml")
+
+	for _, snippet := range []string{
+		"SIDEKICK_INSTALL_DIR=\"$TOOL_DIR\"",
+		"SIDEKICK_SKIP_AGENTS=1",
+		"bash \"$SIDEKICK_ASSETS_DIR/install.sh\"",
+	} {
+		if !strings.Contains(action, snippet) {
+			t.Fatalf("issue factory action must install released Sidekick binary, missing %q", snippet)
+		}
+	}
+
+	if strings.Contains(action, "go build") {
+		t.Fatal("issue factory action must not build Sidekick from source")
+	}
+	if strings.Contains(workflow, "actions/setup-go") {
+		t.Fatal("issue factory workflow must not set up Go just to run Sidekick")
+	}
+}
+
 func TestAdversarialIssueFactoryFixture(t *testing.T) {
 	var event struct {
 		Issue struct {
