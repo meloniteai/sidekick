@@ -20,6 +20,8 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 		"-c sandbox_workspace_write.network_access=false",
 		"command !== \"sidekick hook write\"",
 		"--add-dir \"$HOME/.sidekick/sockets\"",
+		"$ARTIFACT_DIR/codex.log",
+		"tail -n 200 \"$log_file\"",
 		"trust-codex-sidekick-hooks.js",
 		"trusted_hash",
 		"sidekick-status-after-codex-hooks.json",

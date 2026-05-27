@@ -185,6 +185,7 @@ jobs:
           path: |
             ${{ steps.factory.outputs.artifact-path }}/codex.patch
             ${{ steps.factory.outputs.artifact-path }}/codex-final-message.md
+            ${{ steps.factory.outputs.artifact-path }}/codex.log
             ${{ steps.factory.outputs.artifact-path }}/sidekick-status.json
           if-no-files-found: error
           retention-days: 1
@@ -197,6 +198,7 @@ jobs:
           path: |
             ${{ steps.factory.outputs.artifact-path }}/codex.patch
             ${{ steps.factory.outputs.artifact-path }}/codex-final-message.md
+            ${{ steps.factory.outputs.artifact-path }}/codex.log
             ${{ steps.factory.outputs.artifact-path }}/sidekick-status.json
           if-no-files-found: error
           retention-days: 1
@@ -275,6 +277,15 @@ jobs:
                 printf 'Codex did not return a final message.\n'
               fi
 
+              printf '\n<details><summary>Codex log</summary>\n\n'
+              printf '```text\n'
+              if [ -s "$artifact_dir/codex.log" ]; then
+                cat "$artifact_dir/codex.log"
+              else
+                printf 'Codex log artifact missing.\n'
+              fi
+              printf '\n```\n\n</details>\n'
+
               printf '\n## Sidekick\n\n'
               printf 'Sidekick ran headless for this issue factory session.\n\n'
 
@@ -292,7 +303,7 @@ jobs:
           write_no_diff_comment() {
             {
               printf 'Codex finished the issue factory run, but it did not produce a repository diff.\n\n'
-              printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex summary.\n'
+              printf 'Sidekick ran headless for the run. Artifacts include the Codex log, final Sidekick status, and Codex summary.\n'
             } > "$publish_dir/issue-comment.md"
           }
 
@@ -315,7 +326,7 @@ jobs:
               if [ -n "$ISSUE_URL" ]; then
                 printf 'Issue: %s\n\n' "$ISSUE_URL"
               fi
-              printf 'Artifacts include `codex.patch`, `sidekick-status.json`, and the draft PR body.\n'
+              printf 'Artifacts include `codex.patch`, `codex.log`, `sidekick-status.json`, and the draft PR body.\n'
             } > "$publish_dir/issue-comment.md"
             printf 'dry-run://%s\n' "$branch_name" > "$publish_dir/pr-url.txt"
             exit 0
@@ -377,7 +388,7 @@ jobs:
           if git diff --cached --quiet; then
             {
               printf 'Codex produced a patch artifact, but applying it resulted in no staged changes.\n\n'
-              printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex summary.\n'
+              printf 'Sidekick ran headless for the run. Artifacts include the Codex log, final Sidekick status, and Codex summary.\n'
             } > "$publish_dir/issue-comment.md"
             gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"
             exit 0
@@ -401,7 +412,7 @@ jobs:
           {
             printf 'Codex finished implementing this issue and opened or updated a PR:\n\n'
             printf '%s\n\n' "$pr_url"
-            printf 'Sidekick ran headless for the run. Artifacts include the final Sidekick status and Codex summary.\n'
+            printf 'Sidekick ran headless for the run. Artifacts include the Codex log, final Sidekick status, and Codex summary.\n'
           } > "$publish_dir/issue-comment.md"
 
           gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"

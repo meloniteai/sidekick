@@ -536,7 +536,6 @@ runs:
         HOME: ${{ steps.paths.outputs.home }}
         WORKSPACE: ${{ steps.paths.outputs.workspace }}
         ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
-        LOG_DIR: ${{ steps.paths.outputs.log_dir }}
         RUNTIME_DIR: ${{ steps.paths.outputs.runtime_dir }}
         ISSUE_NUMBER: ${{ inputs.issue-number }}
         ISSUE_TITLE: ${{ inputs.issue-title }}
@@ -600,7 +599,7 @@ runs:
         args+=(-)
 
         set +e
-        codex "${args[@]}" < "$prompt_file" > "$LOG_DIR/codex.log" 2>&1
+        codex "${args[@]}" < "$prompt_file" > "$ARTIFACT_DIR/codex.log" 2>&1
         status=$?
         set -e
         echo "exit_code=$status" >> "$GITHUB_OUTPUT"
@@ -715,6 +714,9 @@ runs:
         if [ ! -f "$ARTIFACT_DIR/codex-final-message.md" ]; then
           printf 'Codex did not return a final message.\n' > "$ARTIFACT_DIR/codex-final-message.md"
         fi
+        if [ ! -f "$ARTIFACT_DIR/codex.log" ]; then
+          printf 'Codex log was not created.\n' > "$ARTIFACT_DIR/codex.log"
+        fi
 
         echo "sidekick_status_path=$ARTIFACT_DIR/sidekick-status.json" >> "$GITHUB_OUTPUT"
 
@@ -762,6 +764,14 @@ runs:
     - name: Fail when Codex fails
       if: ${{ steps.codex.outputs.exit_code != '0' }}
       shell: bash
+      env:
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
       run: |
         echo "::error::codex exec failed with exit code ${{ steps.codex.outputs.exit_code }}."
+        log_file="$ARTIFACT_DIR/codex.log"
+        if [ -s "$log_file" ]; then
+          echo "::group::codex.log"
+          tail -n 200 "$log_file"
+          echo "::endgroup::"
+        fi
         exit 1
