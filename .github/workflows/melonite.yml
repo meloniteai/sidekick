@@ -30,7 +30,7 @@ jobs:
       sidekick-backend-url: https://sidekick.melonite.ai/api
       telemetry-mode: backend
       codex-mode: live
-      codex-sandbox: danger-full-access
+      codex-sandbox: workspace-write
       publish-mode: live
       sidekick-ref: ${{ github.sha }}
       node-version: "24"
