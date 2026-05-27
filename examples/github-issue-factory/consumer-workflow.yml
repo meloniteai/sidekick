@@ -28,4 +28,4 @@ jobs:
     secrets:
       CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
       SIDEKICK_AUTH_JSON: ${{ secrets.SIDEKICK_AUTH_JSON }}
-      CODEX_FACTORY_GH_TOKEN: ${{ secrets.CODEX_FACTORY_GH_TOKEN }}
+      MELONITE_GITHUB_TOKEN: ${{ secrets.MELONITE_GITHUB_TOKEN }}
