@@ -159,7 +159,7 @@ jobs:
     steps:
       - name: Checkout Sidekick workflow assets
         if: ${{ inputs.sidekick-assets-mode == 'checkout' }}
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: meloniteai/sidekick
           ref: ${{ inputs.sidekick-ref || github.workflow_sha }}
@@ -167,7 +167,7 @@ jobs:
 
       - name: Checkout workspace Sidekick assets
         if: ${{ inputs.sidekick-assets-mode == 'workspace' }}
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           path: .
@@ -178,7 +178,7 @@ jobs:
         run: test -f "$GITHUB_WORKSPACE/.github/actions/issue-factory-run/action.yml"
 
       - name: Checkout consuming repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -255,7 +255,7 @@ jobs:
 
       - name: Checkout consuming repository for publish
         if: ${{ inputs.publish-mode == 'live' }}
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           path: publish-work
