@@ -21,16 +21,6 @@ on:
         required: false
         type: string
         default: ""
-      issue-author-association:
-        description: Source issue author association.
-        required: false
-        type: string
-        default: ""
-      allowed-author-associations:
-        description: Comma-separated author associations allowed to trigger implementation.
-        required: false
-        type: string
-        default: OWNER,MEMBER,COLLABORATOR
       project-setup-command:
         description: Optional command run in the consuming repo before Codex.
         required: false
@@ -117,42 +107,8 @@ on:
 permissions: {}
 
 jobs:
-  gate:
-    name: Check issue author
-    runs-on: ubuntu-latest
-    outputs:
-      allowed: ${{ steps.author.outputs.allowed }}
-      association: ${{ steps.author.outputs.association }}
-    steps:
-      - id: author
-        name: Author association gate
-        shell: bash
-        env:
-          ASSOCIATION: ${{ inputs.issue-author-association }}
-          ALLOWED_AUTHOR_ASSOCIATIONS: ${{ inputs.allowed-author-associations }}
-        run: |
-          set -euo pipefail
-          association="$(printf '%s' "$ASSOCIATION" | tr '[:lower:]' '[:upper:]' | xargs)"
-          allowed=false
-
-          IFS=',' read -ra allowed_values <<< "$ALLOWED_AUTHOR_ASSOCIATIONS"
-          for value in "${allowed_values[@]}"; do
-            candidate="$(printf '%s' "$value" | tr '[:lower:]' '[:upper:]' | xargs)"
-            if [ -n "$candidate" ] && [ "$association" = "$candidate" ]; then
-              allowed=true
-              break
-            fi
-          done
-
-          echo "association=$association" >> "$GITHUB_OUTPUT"
-          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
-          echo "issue author association: ${association:-<empty>}"
-          echo "allowed: $allowed"
-
   implement:
     name: Implement issue with Codex
-    needs: gate
-    if: ${{ needs.gate.outputs.allowed == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -247,8 +203,7 @@ jobs:
 
   publish:
     name: Publish Codex pull request
-    needs: [gate, implement]
-    if: ${{ needs.gate.outputs.allowed == 'true' && needs.implement.result == 'success' }}
+    needs: implement
     runs-on: ubuntu-latest
     permissions:
       contents: write

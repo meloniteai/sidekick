@@ -8,6 +8,7 @@ permissions: {}
 
 jobs:
   factory:
+    if: ${{ contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) }}
     permissions:
       contents: write
       issues: write
@@ -18,7 +19,6 @@ jobs:
       issue-title: ${{ github.event.issue.title }}
       issue-body: ${{ github.event.issue.body }}
       issue-url: ${{ github.event.issue.html_url }}
-      issue-author-association: ${{ github.event.issue.author_association }}
       project-setup-command: npm ci
       sidekick-config-path: .sidekick/sidekick.yaml
       sidekick-backend-url: https://sidekick.melonite.ai/api
