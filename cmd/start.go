@@ -639,7 +639,8 @@ func openRemoteTelemetry(worktree, backendURL string) *telemetry.RemoteEmitter {
 	if !ok || target.Token == "" {
 		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry: missing CLI auth; run sidekick login --org <slug> --api-base %s\n", skauth.RootAPIBase(target.APIBase))
 	}
-	e, err := telemetry.OpenRemote(target.APIBase, ipc.RepoFingerprint(worktree), filepath.Base(worktree), worktree, telemetry.WithAuthTokenProvider(backendAuthTokenProvider(backendURL)))
+	project := ipc.RepoProjectIdentity(worktree)
+	e, err := telemetry.OpenRemote(target.APIBase, project.Fingerprint, project.Name, worktree, telemetry.WithAuthTokenProvider(backendAuthTokenProvider(backendURL)))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[sidekick] backend telemetry: %v\n", err)
 		return nil
