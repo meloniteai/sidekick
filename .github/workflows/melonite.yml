@@ -2,7 +2,7 @@ name: melonite
 
 on:
   issues:
-    types: [opened, reopened]
+    types: [opened, reopened, labeled]
 
 permissions: {}
 
@@ -15,8 +15,14 @@ jobs:
     name: Run Sidekick issue factory
     if: >-
       ${{
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
-        || github.actor == 'uriah-melonite'
+        (
+          contains(fromJSON('["opened","reopened"]'), github.event.action)
+          && contains(github.event.issue.labels.*.name, 'melonite-gha')
+        )
+        || (
+          github.event.action == 'labeled'
+          && github.event.label.name == 'melonite-gha'
+        )
       }}
     permissions:
       contents: write

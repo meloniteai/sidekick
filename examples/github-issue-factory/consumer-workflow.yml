@@ -2,13 +2,23 @@ name: Sidekick Codex issue factory
 
 on:
   issues:
-    types: [opened, reopened]
+    types: [opened, reopened, labeled]
 
 permissions: {}
 
 jobs:
   factory:
-    if: ${{ contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) }}
+    if: >-
+      ${{
+        (
+          contains(fromJSON('["opened","reopened"]'), github.event.action)
+          && contains(github.event.issue.labels.*.name, 'melonite-gha')
+        )
+        || (
+          github.event.action == 'labeled'
+          && github.event.label.name == 'melonite-gha'
+        )
+      }}
     permissions:
       contents: write
       issues: write
