@@ -13,7 +13,11 @@ concurrency:
 jobs:
   factory:
     name: Run Sidekick issue factory
-    if: ${{ contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association) }}
+    if: >-
+      ${{
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+        || github.actor == 'uriah-melonite'
+      }}
     permissions:
       contents: write
       issues: write
