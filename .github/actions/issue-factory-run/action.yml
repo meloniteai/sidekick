@@ -153,9 +153,8 @@ runs:
         fi
 
         if [ "$subcommand" = "app-server" ]; then
-          # Enough of a JSON-RPC loop for older hook-trust probes. The current
-          # action bypasses hook trust, but keeping this makes the stub useful
-          # for local experiments.
+          # Enough of a JSON-RPC loop for hook-trust probes. Live Codex returns
+          # a real currentHash; the stub returns a deterministic placeholder.
           while IFS= read -r line; do
             case "$line" in
               *'"method":"initialize"'*)
@@ -364,12 +363,23 @@ runs:
 
         const unexpected = commands.filter((command) => command !== "sidekick hook write");
         if (unexpected.length > 0) {
-          console.error(`::error::Refusing to bypass hook trust for unexpected Codex hooks: ${unexpected.join(", ")}`);
+          console.error(`::error::Refusing to trust unexpected Codex hooks: ${unexpected.join(", ")}`);
           process.exit(1);
         }
 
         console.log(`Validated ${commands.length} Sidekick Codex hook command(s).`);
         NODE
+
+    - name: Trust installed Codex Sidekick hook
+      if: ${{ inputs.codex-mode == 'live' }}
+      shell: bash
+      env:
+        HOME: ${{ steps.paths.outputs.home }}
+        WORKSPACE: ${{ steps.paths.outputs.workspace }}
+        ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
+      run: |
+        set -euo pipefail
+        node "$GITHUB_ACTION_PATH/trust-codex-sidekick-hooks.js"
 
     - id: config
       name: Resolve Sidekick config
@@ -574,7 +584,6 @@ runs:
           -c approval_policy=never
           -c sandbox_workspace_write.network_access=false
           --enable hooks
-          --dangerously-bypass-hook-trust
           --output-last-message "$ARTIFACT_DIR/codex-final-message.md"
         )
         if [ "$CODEX_SANDBOX" = "workspace-write" ]; then

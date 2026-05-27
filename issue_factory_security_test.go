@@ -9,21 +9,24 @@ import (
 
 func TestIssueFactorySecurityControls(t *testing.T) {
 	action := readText(t, ".github/actions/issue-factory-run/action.yml")
+	hookTrust := readText(t, ".github/actions/issue-factory-run/trust-codex-sidekick-hooks.js")
 	factoryAct := readText(t, "scripts/factory-act")
+	issueFactory := action + "\n" + hookTrust
 
 	requiredActionSnippets := []string{
 		"codex-sandbox=danger-full-access is not allowed",
 		"<untrusted-issue-body format=\"json-string\">",
 		"-c approval_policy=never",
 		"-c sandbox_workspace_write.network_access=false",
-		"--dangerously-bypass-hook-trust",
 		"command !== \"sidekick hook write\"",
 		"--add-dir \"$HOME/.sidekick/sockets\"",
+		"trust-codex-sidekick-hooks.js",
+		"trusted_hash",
 		"sidekick-status-after-codex-hooks.json",
 		"require-sidekick-hook-verifiers",
 	}
 	for _, snippet := range requiredActionSnippets {
-		if !strings.Contains(action, snippet) {
+		if !strings.Contains(issueFactory, snippet) {
 			t.Fatalf("issue factory action missing security control %q", snippet)
 		}
 	}
@@ -33,6 +36,9 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 	}
 	if strings.Contains(action, "sandbox_workspace_write.network_access=true") {
 		t.Fatal("issue factory must not enable outbound network access inside Codex workspace-write")
+	}
+	if strings.Contains(action, "--dangerously-bypass-hook-trust") {
+		t.Fatal("issue factory must persist Codex hook trust instead of bypassing hook trust")
 	}
 	if strings.Contains(action, "--add-dir \"$HOME/.sidekick\"") {
 		t.Fatal("issue factory must not expose the full Sidekick home directory to Codex")
