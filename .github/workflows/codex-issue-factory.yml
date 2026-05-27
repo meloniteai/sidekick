@@ -52,7 +52,7 @@ on:
         type: string
         default: live
       codex-sandbox:
-        description: Sandbox passed to codex exec. Issue-factory runs reject danger-full-access.
+        description: Sandbox passed to codex exec. danger-full-access uses Codex's dangerous no-sandbox mode.
         required: false
         type: string
         default: workspace-write
@@ -313,7 +313,7 @@ jobs:
           if [ "$CODEX_CHANGED" != "true" ]; then
             write_no_diff_comment
             if [ "$PUBLISH_MODE" = "live" ]; then
-              gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"
+              gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body-file "$publish_dir/issue-comment.md"
             fi
             exit 0
           fi
@@ -391,7 +391,7 @@ jobs:
               printf 'Codex produced a patch artifact, but applying it resulted in no staged changes.\n\n'
               printf 'Sidekick ran headless for the run. Artifacts include the Codex log, final Sidekick status, and Codex summary.\n'
             } > "$publish_dir/issue-comment.md"
-            gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"
+            gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body-file "$publish_dir/issue-comment.md"
             exit 0
           fi
 
@@ -416,7 +416,7 @@ jobs:
             printf 'Sidekick ran headless for the run. Artifacts include the Codex log, final Sidekick status, and Codex summary.\n'
           } > "$publish_dir/issue-comment.md"
 
-          gh issue comment "$ISSUE_NUMBER" --body-file "$publish_dir/issue-comment.md"
+          gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY" --body-file "$publish_dir/issue-comment.md"
 
       - name: Upload publish artifacts for act
         if: ${{ always() && env.ACT == 'true' }}

@@ -14,9 +14,9 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 	issueFactory := action + "\n" + hookTrust
 
 	requiredActionSnippets := []string{
-		"codex-sandbox=danger-full-access is not allowed",
 		"<untrusted-issue-body format=\"json-string\">",
-		"-c approval_policy=never",
+		"read-only|workspace-write|danger-full-access",
+		"--dangerously-bypass-approvals-and-sandbox",
 		"-c sandbox_workspace_write.network_access=false",
 		"command !== \"sidekick hook write\"",
 		"--add-dir \"$HOME/.sidekick/sockets\"",
@@ -51,6 +51,14 @@ func TestIssueFactorySecurityControls(t *testing.T) {
 	}
 }
 
+func TestMeloniteUsesDangerousCodexSandbox(t *testing.T) {
+	workflow := readText(t, ".github/workflows/melonite.yml")
+
+	if !strings.Contains(workflow, "codex-sandbox: danger-full-access") {
+		t.Fatal("melonite workflow should bypass Codex sandbox on GitHub runners")
+	}
+}
+
 func TestIssueFactoryPersistsRotatedCodexAuth(t *testing.T) {
 	action := readText(t, ".github/actions/issue-factory-run/action.yml")
 	workflow := readText(t, ".github/workflows/codex-issue-factory.yml")
@@ -66,6 +74,14 @@ func TestIssueFactoryPersistsRotatedCodexAuth(t *testing.T) {
 		if !strings.Contains(action+"\n"+workflow, snippet) {
 			t.Fatalf("issue factory must persist rotated Codex auth, missing %q", snippet)
 		}
+	}
+}
+
+func TestIssueFactoryCommentsUseExplicitRepository(t *testing.T) {
+	workflow := readText(t, ".github/workflows/codex-issue-factory.yml")
+
+	if strings.Count(workflow, `gh issue comment "$ISSUE_NUMBER" -R "$GITHUB_REPOSITORY"`) != 3 {
+		t.Fatal("issue factory publish comments must pass -R because not every branch runs inside a checkout")
 	}
 }
 
