@@ -1,0 +1,40 @@
+name: melonite
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions: {}
+
+concurrency:
+  group: melonite-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  factory:
+    name: Run Sidekick issue factory
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    uses: meloniteai/sidekick/.github/workflows/codex-issue-factory.yml@main
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      issue-title: ${{ github.event.issue.title }}
+      issue-body: ${{ github.event.issue.body || '' }}
+      issue-url: ${{ github.event.issue.html_url }}
+      issue-author-association: ${{ github.event.issue.author_association }}
+      allowed-author-associations: OWNER,MEMBER,COLLABORATOR
+      project-setup-command: go mod download
+      sidekick-config-path: .sidekick/sidekick.yaml
+      sidekick-backend-url: https://sidekick.melonite.ai/api
+      telemetry-mode: backend
+      codex-mode: live
+      codex-sandbox: danger-full-access
+      publish-mode: live
+      sidekick-ref: ${{ github.sha }}
+      node-version: "24"
+    secrets:
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+      SIDEKICK_AUTH_JSON: ${{ secrets.SIDEKICK_AUTH_JSON }}
+      MELONITE_GITHUB_TOKEN: ${{ secrets.MELONITE_GITHUB_TOKEN }}

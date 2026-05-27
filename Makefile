@@ -1,4 +1,4 @@
-.PHONY: test e2e e2e-agents factory-act factory-act-live
+.PHONY: test e2e e2e-agents factory-act factory-act-collaborator factory-act-contributor factory-act-live
 
 test:
 	go test ./...
@@ -16,6 +16,12 @@ e2e-agents:
 
 factory-act:
 	scripts/factory-act
+
+factory-act-collaborator:
+	scripts/factory-act --event examples/github-issue-factory/issue-event-collaborator.json
+
+factory-act-contributor:
+	scripts/factory-act --event examples/github-issue-factory/issue-event-contributor.json
 
 factory-act-live:
 	scripts/factory-act --live
