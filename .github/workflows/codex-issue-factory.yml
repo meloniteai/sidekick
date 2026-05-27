@@ -81,11 +81,6 @@ on:
         required: false
         type: string
         default: checkout
-      sidekick-repository:
-        description: Repository containing the Sidekick workflow assets.
-        required: false
-        type: string
-        default: meloniteai/sidekick
       sidekick-ref:
         description: Optional Sidekick ref to check out. Defaults to the workflow SHA.
         required: false
@@ -166,7 +161,7 @@ jobs:
         if: ${{ inputs.sidekick-assets-mode == 'checkout' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.sidekick-repository }}
+          repository: meloniteai/sidekick
           ref: ${{ inputs.sidekick-ref || github.workflow_sha }}
           path: .
 
