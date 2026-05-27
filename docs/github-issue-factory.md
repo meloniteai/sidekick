@@ -24,11 +24,20 @@ Run the stub smoke:
 make factory-act
 ```
 
+The default fixture uses an `OWNER` issue event. The contributor gate can be
+checked with:
+
+```bash
+make factory-act-collaborator
+make factory-act-contributor
+```
+
 The script copies the current Sidekick checkout into an isolated temp clone
 under `.factory-act/`, commits that snapshot inside the temp clone, runs `act` against
 `examples/github-issue-factory/local-issue-factory.yml`, and enables the local
-artifact server with `--artifact-server-path`. The source checkout should remain
-clean except for ignored `.factory-act/` output.
+artifact server with `--artifact-server-path` on a random local port. Override
+the port with `ACT_ARTIFACT_SERVER_PORT` when debugging. The source checkout
+should remain clean except for ignored `.factory-act/` output.
 
 Stub mode writes a deterministic `codex-factory-stub-output.md`, triggers the
 Sidekick write hook, uploads implementation artifacts, and dry-runs publishing.
@@ -175,6 +184,8 @@ Differences to expect:
 
 - hosted runner images are approximated by the act image you choose;
 - artifact upload/download requires `--artifact-server-path`;
+- local act runs use pinned v4 artifact actions because act 0.2.88 does not
+  yet emulate the v7/v8 artifact protocol;
 - secret handling comes from local files or `--secret` flags;
 - dry-run publish writes markdown artifacts instead of calling GitHub APIs.
 

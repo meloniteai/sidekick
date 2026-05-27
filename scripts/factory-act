@@ -64,6 +64,15 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 
 source_root="$(git rev-parse --show-toplevel)"
+event_path="$event"
+if [[ "$event_path" != /* ]]; then
+  event_path="$source_root/$event_path"
+fi
+if [ ! -f "$event_path" ]; then
+  echo "event fixture not found: $event" >&2
+  exit 1
+fi
+artifact_server_port="${ACT_ARTIFACT_SERVER_PORT:-$((30000 + RANDOM % 20000))}"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 run_root="$source_root/.factory-act/$stamp-$mode"
 work_root="$run_root/work"
@@ -72,6 +81,8 @@ artifact_root="$run_root/artifacts"
 mkdir -p "$work_root" "$artifact_root"
 
 echo "factory-act run: $run_root"
+echo "event fixture: $event_path"
+echo "artifact server port: $artifact_server_port"
 
 git clone --local --no-hardlinks "$source_root" "$repo_copy" >/dev/null
 rsync -a \
@@ -131,8 +142,10 @@ fi
 act_args=(
   issues
   -W "$workflow"
-  -e "$event"
+  -e "$event_path"
   --artifact-server-path "$artifact_root"
+  --artifact-server-port "$artifact_server_port"
+  --rm
   -P "ubuntu-latest=${ACT_IMAGE:-ghcr.io/catthehacker/ubuntu:act-latest}"
 )
 
