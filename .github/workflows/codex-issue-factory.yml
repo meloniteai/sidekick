@@ -159,7 +159,7 @@ jobs:
     steps:
       - name: Checkout Sidekick workflow assets
         if: ${{ inputs.sidekick-assets-mode == 'checkout' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: meloniteai/sidekick
           ref: ${{ inputs.sidekick-ref || github.workflow_sha }}
@@ -167,7 +167,7 @@ jobs:
 
       - name: Checkout workspace Sidekick assets
         if: ${{ inputs.sidekick-assets-mode == 'workspace' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
           path: .
@@ -178,17 +178,17 @@ jobs:
         run: test -f "$GITHUB_WORKSPACE/.github/actions/issue-factory-run/action.yml"
 
       - name: Checkout consuming repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
           persist-credentials: false
           path: work
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ inputs.node-version }}
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -215,7 +215,7 @@ jobs:
 
       - name: Upload implementation artifacts
         if: ${{ always() && steps.factory.outputs.artifact-path != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: codex-issue-factory-${{ inputs.issue-number }}
           path: |
@@ -255,13 +255,13 @@ jobs:
 
       - name: Checkout consuming repository for publish
         if: ${{ inputs.publish-mode == 'live' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
           path: publish-work
           token: ${{ secrets.MELONITE_GITHUB_TOKEN || github.token }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: codex-issue-factory-${{ inputs.issue-number }}
           path: codex-artifacts
@@ -384,7 +384,7 @@ jobs:
 
       - name: Upload publish artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: codex-issue-factory-publish-${{ inputs.issue-number }}
           path: |
