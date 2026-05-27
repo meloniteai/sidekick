@@ -21,6 +21,7 @@ jobs:
       sidekick-config-path: examples/github-issue-factory/sidekick.yaml
       codex-mode: stub
       codex-sandbox: workspace-write
+      require-sidekick-hook-verifiers: true
       telemetry-mode: local
       publish-mode: dry-run
       sidekick-assets-mode: workspace

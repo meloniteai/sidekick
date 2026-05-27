@@ -3,21 +3,34 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/factory-act [--live]
+Usage: scripts/factory-act [--live] [--event PATH]
 
 Run the GitHub issue factory workflow locally with nektos/act in an isolated
 copy of this repository. Stub mode is the default. --live injects local
 ~/.codex/auth.json and ~/.sidekick/auth.json and runs an act-only workflow copy
-with live Codex inputs.
+with live Codex inputs. Live mode runs the act job container with --privileged
+unless ACT_LIVE_CONTAINER_OPTIONS=0 is set, so Codex's workspace-write sandbox
+can create its nested Linux namespace. --event uses an alternate issue event
+fixture.
 EOF
 }
 
 mode="stub"
+event="examples/github-issue-factory/issue-event.json"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --live)
       mode="live"
       shift
+      ;;
+    --event)
+      if [ "$#" -lt 2 ]; then
+        echo "--event requires a path" >&2
+        usage >&2
+        exit 2
+      fi
+      event="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -76,7 +89,6 @@ if ! git -C "$repo_copy" diff --cached --quiet; then
 fi
 
 workflow="examples/github-issue-factory/local-issue-factory.yml"
-event="examples/github-issue-factory/issue-event.json"
 secret_file=""
 
 if [ "$mode" = "live" ]; then
@@ -84,7 +96,6 @@ if [ "$mode" = "live" ]; then
   sed \
     -e 's/codex-mode: stub/codex-mode: live/' \
     -e 's/telemetry-mode: local/telemetry-mode: backend/' \
-    -e 's/codex-sandbox: workspace-write/codex-sandbox: danger-full-access/' \
     "$repo_copy/$workflow" > "$live_workflow"
   workflow="$live_workflow"
 
@@ -122,14 +133,27 @@ act_args=(
   -W "$workflow"
   -e "$event"
   --artifact-server-path "$artifact_root"
-  --container-architecture "${ACT_CONTAINER_ARCHITECTURE:-linux/amd64}"
   -P "ubuntu-latest=${ACT_IMAGE:-ghcr.io/catthehacker/ubuntu:act-latest}"
 )
+
+if [ -n "${ACT_CONTAINER_ARCHITECTURE:-}" ]; then
+  act_arch="$ACT_CONTAINER_ARCHITECTURE"
+else
+  case "$(uname -m)" in
+    arm64|aarch64) act_arch="linux/arm64" ;;
+    *) act_arch="linux/amd64" ;;
+  esac
+fi
+act_args+=(--container-architecture "$act_arch")
 
 if [ "$mode" = "live" ]; then
   act_args+=(
     --secret-file "$secret_file"
   )
+  live_container_options="${ACT_LIVE_CONTAINER_OPTIONS:---privileged}"
+  if [ "$live_container_options" != "0" ]; then
+    act_args+=(--container-options "$live_container_options")
+  fi
 fi
 
 (

@@ -62,7 +62,7 @@ on:
         type: string
         default: live
       codex-sandbox:
-        description: Sandbox passed to codex exec.
+        description: Sandbox passed to codex exec. Issue-factory runs reject danger-full-access.
         required: false
         type: string
         default: workspace-write
@@ -71,6 +71,11 @@ on:
         required: false
         type: string
         default: ""
+      require-sidekick-hook-verifiers:
+        description: Fail when Codex changed files but no Sidekick verifier started before the fallback notifier.
+        required: false
+        type: boolean
+        default: true
       publish-mode:
         description: "Publish mode: live or dry-run."
         required: false
@@ -212,6 +217,7 @@ jobs:
           codex-mode: ${{ inputs.codex-mode }}
           codex-sandbox: ${{ inputs.codex-sandbox }}
           codex-model: ${{ inputs.codex-model }}
+          require-sidekick-hook-verifiers: ${{ inputs.require-sidekick-hook-verifiers }}
 
       - name: Upload implementation artifacts
         if: ${{ always() && steps.factory.outputs.artifact-path != '' }}
