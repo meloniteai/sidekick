@@ -2,5 +2,11 @@
 /sidekick.yaml
 assets/*.mov
 
+docs
+.env
+.env.local
+
 # Local issue-factory act runs
 .factory-act/
+
+.DS_Store
