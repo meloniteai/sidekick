@@ -34,7 +34,6 @@ jobs:
       issue-title: ${{ github.event.issue.title }}
       issue-body: ${{ github.event.issue.body || '' }}
       issue-url: ${{ github.event.issue.html_url }}
-      project-setup-command: go mod download
       sidekick-config-path: .sidekick/sidekick.yaml
       sidekick-backend-url: https://sidekick.melonite.ai/api
       telemetry-mode: backend

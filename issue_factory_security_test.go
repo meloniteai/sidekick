@@ -60,6 +60,9 @@ func TestMeloniteUsesDangerousCodexSandbox(t *testing.T) {
 	if !strings.Contains(workflow, "codex-sandbox: danger-full-access") {
 		t.Fatal("melonite workflow should bypass Codex sandbox on GitHub runners")
 	}
+	if strings.Contains(workflow, "project-setup-command") || strings.Contains(workflow, "go mod download") {
+		t.Fatal("melonite workflow should not run stale project setup for Sidekick installation")
+	}
 }
 
 func TestIssueFactoryPersistsRotatedCodexAuth(t *testing.T) {
