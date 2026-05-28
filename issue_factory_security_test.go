@@ -88,6 +88,28 @@ func TestIssueFactoryCommentsUseExplicitRepository(t *testing.T) {
 	}
 }
 
+func TestIssueFactoryPRBodyLeavesFullCodexLogInArtifacts(t *testing.T) {
+	workflow := readText(t, ".github/workflows/codex-issue-factory.yml")
+
+	for _, forbidden := range []string{
+		"<details><summary>Codex log</summary>",
+		`cat "$artifact_dir/codex.log"`,
+	} {
+		if strings.Contains(workflow, forbidden) {
+			t.Fatalf("issue factory PR body must not inline the full Codex log, found %q", forbidden)
+		}
+	}
+
+	for _, snippet := range []string{
+		"Full Codex logs and Sidekick status are uploaded with this workflow run",
+		"`codex.patch`, `codex.log`, `codex-final-message.md`, `sidekick-status.json`",
+	} {
+		if !strings.Contains(workflow, snippet) {
+			t.Fatalf("issue factory PR body must point reviewers at uploaded artifacts, missing %q", snippet)
+		}
+	}
+}
+
 func TestIssueFactoryInstallsReleasedSidekick(t *testing.T) {
 	action := readText(t, ".github/actions/issue-factory-run/action.yml")
 	workflow := readText(t, ".github/workflows/codex-issue-factory.yml")

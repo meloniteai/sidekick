@@ -278,14 +278,14 @@ jobs:
                 printf 'Codex did not return a final message.\n'
               fi
 
-              printf '\n<details><summary>Codex log</summary>\n\n'
-              printf '```text\n'
-              if [ -s "$artifact_dir/codex.log" ]; then
-                cat "$artifact_dir/codex.log"
+              printf '\n## Artifacts\n\n'
+              if [ -n "${GITHUB_RUN_ID:-}" ]; then
+                printf 'Full Codex logs and Sidekick status are uploaded with this workflow run: %s/%s/actions/runs/%s\n\n' "${GITHUB_SERVER_URL:-https://github.com}" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
               else
-                printf 'Codex log artifact missing.\n'
+                printf 'Full Codex logs and Sidekick status are uploaded with the workflow run artifacts.\n\n'
               fi
-              printf '\n```\n\n</details>\n'
+              printf -- '- `codex-issue-factory-%s`: `codex.patch`, `codex.log`, `codex-final-message.md`, `sidekick-status.json`\n' "$ISSUE_NUMBER"
+              printf -- '- `codex-issue-factory-publish-%s`: `pr-body.md`, `issue-comment.md`, `pr-url.txt`\n' "$ISSUE_NUMBER"
 
               printf '\n## Sidekick\n\n'
               printf 'Sidekick ran headless for this issue factory session.\n\n'
