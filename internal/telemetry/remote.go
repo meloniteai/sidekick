@@ -138,6 +138,9 @@ func pingHealth(client *http.Client, base, token string) error {
 
 func resolveProject(client *http.Client, base, token, fingerprint, name, rootPath string) (string, error) {
 	body := map[string]any{"name": name, "repo_fingerprint": fingerprint, "root_path": rootPath}
+	if repoFQN := repoFQNFromName(name); repoFQN != "" {
+		body["repo_fqn"] = repoFQN
+	}
 	var resolved struct {
 		ProjectID string `json:"project_id"`
 	}
@@ -145,6 +148,18 @@ func resolveProject(client *http.Client, base, token, fingerprint, name, rootPat
 		return "", err
 	}
 	return resolved.ProjectID, nil
+}
+
+func repoFQNFromName(name string) string {
+	name = strings.TrimSpace(name)
+	parts := strings.Split(name, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	if strings.ContainsAny(name, " \t\r\n") {
+		return ""
+	}
+	return name
 }
 
 func (e *RemoteEmitter) RecordSession(r SessionRecord) error {
