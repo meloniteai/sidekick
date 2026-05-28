@@ -184,6 +184,32 @@ func TestRemoteEmitterCreatesProjectWhenAbsent(t *testing.T) {
 	if created.body["repo_fingerprint"] != "fp-new" || created.body["name"] != "myrepo" {
 		t.Fatalf("create body = %+v, want fingerprint+name carried", created.body)
 	}
+	if _, ok := created.body["repo_fqn"]; ok {
+		t.Fatalf("plain local project name must not be sent as repo_fqn: %+v", created.body)
+	}
+}
+
+func TestRemoteEmitterSendsRepoFQNWhenNameIsRepositorySlug(t *testing.T) {
+	fb := &fakeBackend{}
+	srv := httptest.NewServer(fb.handler())
+	defer srv.Close()
+
+	e, err := OpenRemote(srv.URL+"/api/orgs/acme", "fp-new", "meloniteai/sidekick", "/repos/work")
+	if err != nil {
+		t.Fatalf("OpenRemote: %v", err)
+	}
+	defer e.Close()
+
+	resolve, ok := fb.find(http.MethodPost, "/projects/resolve")
+	if !ok {
+		t.Fatalf("missing project resolve request")
+	}
+	if resolve.body["repo_fqn"] != "meloniteai/sidekick" {
+		t.Fatalf("repo_fqn = %v, want repository fqn in resolve body: %+v", resolve.body["repo_fqn"], resolve.body)
+	}
+	if resolve.body["name"] != "meloniteai/sidekick" || resolve.body["root_path"] != "/repos/work" {
+		t.Fatalf("resolve body lost existing fields: %+v", resolve.body)
+	}
 }
 
 func TestRemoteEmitterSendsBearerToken(t *testing.T) {

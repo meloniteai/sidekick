@@ -473,6 +473,7 @@ runs:
         SIDEKICK_CONFIG: ${{ steps.config.outputs.path }}
         SIDEKICK_BACKEND_URL: ${{ inputs.sidekick-backend-url }}
         TELEMETRY_MODE: ${{ inputs.telemetry-mode }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
       run: |
         set -euo pipefail
 
