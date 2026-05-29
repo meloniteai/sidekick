@@ -182,6 +182,55 @@ func TestRecordFindingsHashes(t *testing.T) {
 	}
 }
 
+// hunk_hashes persists as JSON and round-trips; an empty set is SQL NULL.
+func TestRecordFindingsHunkHashes(t *testing.T) {
+	s := newTestStore(t)
+	sid := NewID()
+	runID, err := s.RecordVerifierRun(VerifierRunRecord{
+		SessionID: sid, VerifierName: "A", Distance: 0.5, Status: "ok", TS: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("RecordVerifierRun: %v", err)
+	}
+	now := time.Now()
+	want := []string{"becae935df3b19d6", "3945ebb26cf1c908"}
+	if err := s.RecordFindings(runID, []FindingRecord{
+		{SessionID: sid, VerifierName: "A", FilePath: "f.go", Distance: 0.5,
+			HunkHashes: want, TS: now},
+		// tree-global finding: empty set -> NULL.
+		{SessionID: sid, VerifierName: "A", Distance: 0.5, TS: now},
+	}); err != nil {
+		t.Fatalf("RecordFindings: %v", err)
+	}
+
+	var raw *string
+	if err := s.DB().QueryRow(
+		`SELECT hunk_hashes FROM finding WHERE file_path = 'f.go'`,
+	).Scan(&raw); err != nil {
+		t.Fatalf("scan file finding: %v", err)
+	}
+	if raw == nil {
+		t.Fatal("hunk_hashes is NULL, want JSON list")
+	}
+	var got []string
+	if err := json.Unmarshal([]byte(*raw), &got); err != nil {
+		t.Fatalf("hunk_hashes not valid JSON: %v", err)
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("hunk_hashes round-trip = %v, want %v", got, want)
+	}
+
+	var gNull *string
+	if err := s.DB().QueryRow(
+		`SELECT hunk_hashes FROM finding WHERE file_path IS NULL`,
+	).Scan(&gNull); err != nil {
+		t.Fatalf("scan tree-global finding: %v", err)
+	}
+	if gNull != nil {
+		t.Fatalf("empty hunk_hashes should store NULL, got %q", *gNull)
+	}
+}
+
 func TestDumpCSV(t *testing.T) {
 	s := newTestStore(t)
 	sid := NewID()

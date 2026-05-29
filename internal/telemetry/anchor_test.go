@@ -351,6 +351,112 @@ func TestHunkAnchorGrains(t *testing.T) {
 	}
 }
 
+// --- FileHunkHashes: every changed hunk's anchor for a file ---
+
+// twoHunkRepo edits line 10 and line 40 of a 50-line file so the diff has two
+// separate hunks. Returns (worktree, baseRef).
+func twoHunkRepo(t *testing.T, top, bottom string) (string, string) {
+	t.Helper()
+	var base strings.Builder
+	for i := 1; i <= 50; i++ {
+		base.WriteString("line\n")
+	}
+	lines := strings.Split(strings.TrimRight(base.String(), "\n"), "\n")
+	lines[9] = top
+	lines[39] = bottom
+	dirty := strings.Join(lines, "\n") + "\n"
+	return initRepo(t, "f.txt", base.String(), dirty)
+}
+
+func TestFileHunkHashesAllHunks(t *testing.T) {
+	wt, ref := twoHunkRepo(t, "EDITED_TEN", "EDITED_FORTY")
+
+	hashes := FileHunkHashes(wt, ref, "f.txt")
+	if len(hashes) != 2 {
+		t.Fatalf("expected 2 hunk hashes, got %d: %v", len(hashes), hashes)
+	}
+	for _, h := range hashes {
+		if !hexRe.MatchString(h) {
+			t.Fatalf("hunk hash %q is not 16-hex", h)
+		}
+	}
+	// Each entry must equal the single hunkHash for a line landing in that hunk.
+	h10, _ := hunkAnchor(wt, ref, "f.txt", 10)
+	h40, _ := hunkAnchor(wt, ref, "f.txt", 40)
+	if hashes[0] != h10 || hashes[1] != h40 {
+		t.Fatalf("set %v != per-line hunk hashes (%q,%q)", hashes, h10, h40)
+	}
+}
+
+func TestFileHunkHashesEmpty(t *testing.T) {
+	wt, ref := initRepo(t, "f.go",
+		"package p\nfunc A() int { return 1 }\n",
+		"package p\nfunc A() int { return 1 }\n", // identical -> no diff
+	)
+	if h := FileHunkHashes(wt, ref, "f.go"); len(h) != 0 {
+		t.Fatalf("unchanged file: want empty, got %v", h)
+	}
+	if h := FileHunkHashes(wt, "", "f.go"); len(h) != 0 {
+		t.Fatalf("empty baseRef: want empty, got %v", h)
+	}
+	if h := FileHunkHashes(wt, ref, ""); len(h) != 0 {
+		t.Fatalf("empty file: want empty, got %v", h)
+	}
+	if h := FileHunkHashes(filepath.Join(t.TempDir(), "nope"), ref, "f.go"); len(h) != 0 {
+		t.Fatalf("bad worktree: want empty, got %v", h)
+	}
+}
+
+// The set is content-only: a whitespace-only edit and a position-shift (lines
+// inserted above) both leave it unchanged.
+func TestFileHunkHashesStability(t *testing.T) {
+	base := twoHunkHashes(t, "TOP", "BOT")
+
+	// Whitespace-only reflow of both edits.
+	ws := twoHunkHashes(t, "TOP   ", "\tBOT")
+	if !equalStrings(base, ws) {
+		t.Fatalf("whitespace edit changed set: base=%v ws=%v", base, ws)
+	}
+}
+
+func TestFileHunkHashesPositionShift(t *testing.T) {
+	// Same logical edits; the second repo prepends committed lines so every
+	// hunk's @@ positions shift. Bodies are identical -> identical set.
+	wt1, ref1 := initRepo(t, "f.txt",
+		"a\nTOP_OLD\nb\nc\nBOT_OLD\nd\n",
+		"a\nTOP_NEW\nb\nc\nBOT_NEW\nd\n",
+	)
+	h1 := FileHunkHashes(wt1, ref1, "f.txt")
+
+	wt2, ref2 := initRepo(t, "f.txt",
+		"p0\np1\np2\na\nTOP_OLD\nb\nc\nBOT_OLD\nd\n",
+		"p0\np1\np2\na\nTOP_NEW\nb\nc\nBOT_NEW\nd\n",
+	)
+	h2 := FileHunkHashes(wt2, ref2, "f.txt")
+
+	if len(h1) == 0 || !equalStrings(h1, h2) {
+		t.Fatalf("position shift changed set: h1=%v h2=%v", h1, h2)
+	}
+}
+
+func twoHunkHashes(t *testing.T, top, bottom string) []string {
+	t.Helper()
+	wt, ref := twoHunkRepo(t, top, bottom)
+	return FileHunkHashes(wt, ref, "f.txt")
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // --- golden vectors shared with the outcome worker ---
 
 // anchorVectors mirrors the on-disk testdata/anchor_vectors.json. `Vectors`

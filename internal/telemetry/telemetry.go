@@ -107,7 +107,11 @@ type FindingRecord struct {
 	// Both are "" when no anchor could be computed (stored as NULL).
 	HunkHash      string
 	DirtyDiffHash string
-	TS            time.Time
+	// HunkHashes is the set of every changed hunk's anchor for FilePath, so a
+	// line-unset / file-level finding can be bound at hunk granularity later.
+	// Empty for tree-global findings.
+	HunkHashes []string `json:"hunk_hashes,omitempty"`
+	TS         time.Time
 }
 
 // HeartbeatRecord is a periodic liveness sample per live session. The end of a

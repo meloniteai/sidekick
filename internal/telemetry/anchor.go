@@ -43,25 +43,7 @@ func HunkAnchor(worktree, baseRef, file string, line int) (hunkHash, dirtyDiffHa
 // a diff timeout) both are "" — never a panic, mirroring gitstats' empty-on-
 // error contract so finalize can record the finding with empty anchors.
 func hunkAnchor(worktree, baseRef, file string, line int) (hunkHash, dirtyDiffHash string) {
-	baseRef = strings.TrimSpace(baseRef)
-	file = strings.TrimSpace(file)
-	if baseRef == "" || file == "" {
-		return "", ""
-	}
-	// `-U0` emits zero context lines so only the actually changed (+/-) lines
-	// form the hunk body. This is what makes the anchor position-invariant: with
-	// default context, lines surrounding the change leak into the hunk body and
-	// a shift in nearby unrelated lines would change the hash. With -U0 the body
-	// is exactly the added content (removed lines are dropped during parsing),
-	// independent of where in the file the hunk sits. `--` disambiguates the
-	// pathspec from a ref of the same name. No-diff and any git failure both
-	// surface as "" from RunGit.
-	out := gitstats.RunGit(context.Background(), worktree, "diff", "-U0", baseRef, "--", file)
-	if out == "" {
-		return "", ""
-	}
-
-	hunks := parseDiffHunks(out)
+	hunks := fileHunks(worktree, baseRef, file)
 	if len(hunks) == 0 {
 		return "", ""
 	}
@@ -85,6 +67,56 @@ func hunkAnchor(worktree, baseRef, file string, line int) (hunkHash, dirtyDiffHa
 		}
 	}
 	return hunkHash, dirtyDiffHash
+}
+
+// FileHunkHashes returns the per-hunk anchor for EVERY changed hunk of file
+// (vs baseRef in worktree), in diff order and de-duplicated. Each value is the
+// same 16-hex hash hunkAnchor computes for a line that lands in that hunk, so a
+// line-unset / file-level finding can be bound at hunk granularity later. Empty
+// slice on any error or no diff, mirroring hunkAnchor's empty-on-error contract.
+func FileHunkHashes(worktree, baseRef, file string) []string {
+	hunks := fileHunks(worktree, baseRef, file)
+	if len(hunks) == 0 {
+		return nil
+	}
+	var out []string
+	seen := make(map[string]struct{}, len(hunks))
+	for _, h := range hunks {
+		hash := hashNormalizedBody(h.body)
+		if hash == "" {
+			continue
+		}
+		if _, ok := seen[hash]; ok {
+			continue
+		}
+		seen[hash] = struct{}{}
+		out = append(out, hash)
+	}
+	return out
+}
+
+// fileHunks runs the documented `-U0` diff and parses it into hunks. Shared by
+// hunkAnchor and FileHunkHashes so both compute per-hunk bodies identically.
+// Empty slice on empty baseRef/file, no diff, or any git failure.
+func fileHunks(worktree, baseRef, file string) []diffHunk {
+	baseRef = strings.TrimSpace(baseRef)
+	file = strings.TrimSpace(file)
+	if baseRef == "" || file == "" {
+		return nil
+	}
+	// `-U0` emits zero context lines so only the actually changed (+/-) lines
+	// form the hunk body. This is what makes the anchor position-invariant: with
+	// default context, lines surrounding the change leak into the hunk body and
+	// a shift in nearby unrelated lines would change the hash. With -U0 the body
+	// is exactly the added content (removed lines are dropped during parsing),
+	// independent of where in the file the hunk sits. `--` disambiguates the
+	// pathspec from a ref of the same name. No-diff and any git failure both
+	// surface as "" from RunGit.
+	out := gitstats.RunGit(context.Background(), worktree, "diff", "-U0", baseRef, "--", file)
+	if out == "" {
+		return nil
+	}
+	return parseDiffHunks(out)
 }
 
 // diffHunk is one `@@ -a,b +c,d @@` section of a unified diff. body holds the

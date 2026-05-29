@@ -568,8 +568,12 @@ func (r *Runner) recordVerifierRun(batchID string, v Verifier, cur ipc.VerifierS
 	frecs := make([]telemetry.FindingRecord, 0, len(findings))
 	for _, f := range findings {
 		var hunkHash, dirtyDiffHash string
+		var hunkHashes []string
 		if f.Path != "" {
 			hunkHash, dirtyDiffHash = telemetry.HunkAnchor(worktree, baseRef, f.Path, f.Line)
+			// Capture every changed hunk of the file so a line-unset finding is
+			// still hunk-anchorable; line-bearing findings keep their hunkHash too.
+			hunkHashes = telemetry.FileHunkHashes(worktree, baseRef, f.Path)
 		}
 		frecs = append(frecs, telemetry.FindingRecord{
 			SessionID:     sid,
@@ -582,6 +586,7 @@ func (r *Runner) recordVerifierRun(batchID string, v Verifier, cur ipc.VerifierS
 			Reason:        f.Reason,
 			HunkHash:      hunkHash,
 			DirtyDiffHash: dirtyDiffHash,
+			HunkHashes:    hunkHashes,
 			TS:            now,
 		})
 	}
