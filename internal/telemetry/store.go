@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS finding (
 	line            INTEGER,
 	distance        REAL NOT NULL,
 	reason          TEXT,
+	hunk_hash       TEXT,
+	dirty_diff_hash TEXT,
 	ts              TIMESTAMP NOT NULL
 );
 
@@ -205,8 +207,8 @@ func (s *Store) RecordFindings(runID int64, findings []FindingRecord) error {
 	}
 	stmt, err := tx.Prepare(
 		`INSERT INTO finding
-		 (verifier_run_id, session_id, batch_id, verifier_name, file_path, symbol, line, distance, reason, ts)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (verifier_run_id, session_id, batch_id, verifier_name, file_path, symbol, line, distance, reason, hunk_hash, dirty_diff_hash, ts)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		_ = tx.Rollback()
@@ -217,7 +219,7 @@ func (s *Store) RecordFindings(runID int64, findings []FindingRecord) error {
 		if _, err := stmt.Exec(
 			runID, f.SessionID, nullStr(f.BatchID), f.VerifierName,
 			nullStr(f.FilePath), nullStr(f.Symbol), nullInt(f.Line),
-			f.Distance, nullStr(f.Reason), f.TS.UTC(),
+			f.Distance, nullStr(f.Reason), nullStr(f.HunkHash), nullStr(f.DirtyDiffHash), f.TS.UTC(),
 		); err != nil {
 			_ = tx.Rollback()
 			return err

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -520,11 +521,19 @@ func (r *Runner) recordVerifierRun(batchID string, v Verifier, cur ipc.VerifierS
 	if emitter == nil || sid == "" {
 		return
 	}
+	// verifier_version is stamped on EVERY run (agent/command/binary, in every
+	// status) so each judgment is join-able to a versioned rubric. A read/marshal
+	// failure is fail-safe: the version is "" and the run is still recorded, but
+	// the failure is logged so silent un-versioned judgments stay observable.
+	ver, verErr := verifierVersionErr(v)
+	if verErr != nil {
+		r.state.LogEvent(daemon.EventError, "telemetry: verifier_version for %s: %v", v.Name, verErr)
+	}
 	rec := telemetry.VerifierRunRecord{
 		BatchID:         batchID,
 		SessionID:       sid,
 		VerifierName:    v.Name,
-		VerifierVersion: verifierVersion(v),
+		VerifierVersion: ver,
 		Distance:        cur.Distance,
 		Reason:          cur.Reason,
 		Status:          cur.Status,
@@ -547,18 +556,33 @@ func (r *Runner) recordVerifierRun(batchID string, v Verifier, cur ipc.VerifierS
 		return
 	}
 	now := time.Now()
+	// Anchor each finding to a stable content hash so a session-time judgment
+	// joins to the eventual committed PR hunk. f.Path is already the repo-
+	// relative key from prepareFindings (post-NormalizeRepoPath); the session
+	// base ref is the stable HEAD the working tree is dirty against. A line-
+	// bearing finding gets a hunkHash; a tree-global / no-line finding (Path==""
+	// or Line==0) carries only the whole-file dirtyDiffHash (both "" when there
+	// is no file or no diff). Empty hashes are tolerated downstream.
+	worktree := r.state.SessionWorktree()
+	baseRef := r.state.SessionBaseRef()
 	frecs := make([]telemetry.FindingRecord, 0, len(findings))
 	for _, f := range findings {
+		var hunkHash, dirtyDiffHash string
+		if f.Path != "" {
+			hunkHash, dirtyDiffHash = telemetry.HunkAnchor(worktree, baseRef, f.Path, f.Line)
+		}
 		frecs = append(frecs, telemetry.FindingRecord{
-			SessionID:    sid,
-			BatchID:      batchID,
-			VerifierName: v.Name,
-			FilePath:     f.Path,
-			Symbol:       f.Symbol,
-			Line:         f.Line,
-			Distance:     f.Distance,
-			Reason:       f.Reason,
-			TS:           now,
+			SessionID:     sid,
+			BatchID:       batchID,
+			VerifierName:  v.Name,
+			FilePath:      f.Path,
+			Symbol:        f.Symbol,
+			Line:          f.Line,
+			Distance:      f.Distance,
+			Reason:        f.Reason,
+			HunkHash:      hunkHash,
+			DirtyDiffHash: dirtyDiffHash,
+			TS:            now,
 		})
 	}
 	if err := emitter.RecordFindings(runID, frecs); err != nil {
@@ -566,15 +590,92 @@ func (r *Runner) recordVerifierRun(batchID string, v Verifier, cur ipc.VerifierS
 	}
 }
 
-// verifierVersion is a stable short hash of a verifier's resolved config, so a
-// before/after comparison can tell whether a config change (not just code)
-// moved the metric. Remote verifiers' content SHA256 is part of the config and
-// therefore folded in.
+// versionInput is the exact, deterministic set of inputs that define a
+// verifier_version. The spec formula is
+//
+//	verifier_version = sha256(resolvedSkillBody + agent + model + thinking + direction)[:12]
+//
+// We serialize these five inputs (plus the type discriminator and the
+// type-appropriate provenance below) as a json.Marshal of this struct, in
+// fixed field order, with no maps — so the bytes are identical across processes,
+// runs, and machines. Any reimplementation (e.g. the weightless worker stamping
+// INDUCTION versions) MUST serialize the same fields in the same order; see
+// docs/anchor-hunk-normalization.md (verifier_version section) for the contract.
+//
+// Why the extra fields beyond the canonical five:
+//   - Type discriminates agent vs command vs binary so two configs that share a
+//     direction but differ in kind never collide.
+//   - SkillBody is the FRONTMATTER-STRIPPED skill contents (not the path), so two
+//     identical rubrics at different paths share a version and a one-byte body
+//     edit changes it. It is hashed verbatim (no whitespace collapse): a reworded
+//     rubric is a re-induction. Empty for command/binary verifiers.
+//   - Command is the resolved argv for command/binary verifiers; empty for agent.
+//   - Source/SourceURL/SHA256 bind a remote rubric's content identity so a
+//     re-fetched, modified remote artifact cannot masquerade as the old version.
+//
+// Fields NOT in this struct (Permissions, Timeout, the skill PATH) are
+// deliberately excluded and MUST NOT affect the version.
+type versionInput struct {
+	Type      string `json:"type"`
+	Agent     string `json:"agent"`
+	Model     string `json:"model"`
+	Thinking  string `json:"thinking"`
+	Direction string `json:"direction"`
+	SkillBody string `json:"skill_body"`
+	Command   string `json:"command"`
+	Source    string `json:"source"`
+	SourceURL string `json:"source_url"`
+	SHA256    string `json:"sha256"`
+}
+
+// verifierVersion is the fail-safe wrapper: it returns the 12-hex version and
+// swallows the error (empty string), for callers and tests that only care about
+// the value. Use verifierVersionErr at the recording site so a read/marshal
+// failure can be logged rather than silently dropped.
 func verifierVersion(v Verifier) string {
-	b, err := json.Marshal(verifierConfig(v))
+	ver, _ := verifierVersionErr(v)
+	return ver
+}
+
+// verifierVersionErr computes verifier_version = sha256(resolvedSkillBody +
+// agent + model + thinking + direction [+ type/command/provenance])[:12].
+//
+// It returns ("", err) when the agent's skill body cannot be read or the input
+// cannot be marshaled — fail-safe, never a panic: the caller still records the
+// run with an empty version and surfaces the error. Direction is case-normalized
+// (uppercased) so "n" and "N" hash identically. Output is exactly 12 lowercase
+// hex chars.
+func verifierVersionErr(v Verifier) (string, error) {
+	in := versionInput{
+		Type:      v.kind(),
+		Direction: strings.ToUpper(strings.TrimSpace(v.Direction)),
+		Source:    v.Source,
+		SourceURL: v.SourceURL,
+		SHA256:    v.SHA256,
+	}
+	switch v.kind() {
+	case TypeAgent:
+		in.Agent = resolveAgent(v.Agent.Agent)
+		in.Model = v.Agent.Model
+		in.Thinking = v.Agent.Thinking
+		// resolvedSkillBody: the frontmatter-stripped file contents, not the
+		// path. A binary/command verifier has no skill and never reads a file.
+		if strings.TrimSpace(v.Agent.Skill) != "" {
+			body, err := skillBody(v.Agent.Skill)
+			if err != nil {
+				return "", err
+			}
+			in.SkillBody = body
+		}
+	case TypeBinary:
+		in.Command = strings.Join(v.Binary.Command, "\x00")
+	case TypeCommand:
+		in.Command = strings.Join(v.Command, "\x00")
+	}
+	b, err := json.Marshal(in)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])[:12]
+	return hex.EncodeToString(sum[:])[:12], nil
 }

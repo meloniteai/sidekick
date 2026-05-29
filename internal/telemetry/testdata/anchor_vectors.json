@@ -1,0 +1,76 @@
+{
+  "_comment": "Shared golden vectors for the anchor-hunk normalization contract (docs/anchor-hunk-normalization.md). `vectors` pins the BACK half: each `body` is the list of hunk body lines AFTER the leading +/space diff marker has been stripped and removed (-) lines have been dropped (i.e. the input to normalizeBody); `expected` is sha256(normalizeBody(body))[:16]. `raw_vectors` pins the FRONT half end-to-end: each `diff` is a raw `git diff -U0` payload (the actual CLI input) and the worker MUST run its real parse -> marker-strip -> normalize -> hash pipeline over it (parseDiffHunks -> hashNormalizedBody, located at `line`) and assert `expected_hunk_hash` / `expected_dirty_diff_hash`. The weightless Go outcome worker MUST load this same file and assert byte-identical hashes for both halves; any divergence in parsing, -U0 handling, marker-strip, or the whitespace-collapse rule fails a test on both sides.",
+  "vectors": [
+    {
+      "name": "canonical_body",
+      "body": [
+        "func Add(a, b int) int {",
+        "\treturn a + b",
+        "}"
+      ],
+      "expected": "becae935df3b19d6"
+    },
+    {
+      "name": "whitespace_reflow_of_canonical",
+      "note": "Same content as canonical_body but with collapsed/expanded whitespace; MUST hash identically.",
+      "body": [
+        "func   Add(a,  b int) int {",
+        "    return a +  b",
+        "}"
+      ],
+      "expected": "becae935df3b19d6"
+    },
+    {
+      "name": "one_char_content_edit",
+      "note": "canonical_body with '+' changed to '-'; MUST differ from canonical.",
+      "body": [
+        "func Add(a, b int) int {",
+        "\treturn a - b",
+        "}"
+      ],
+      "expected": "3945ebb26cf1c908"
+    }
+  ],
+  "raw_vectors": [
+    {
+      "name": "canonical_raw_diff",
+      "note": "A raw `git diff -U0` payload (full file header + @@ + added body) for the canonical Add() hunk. Exercises parseDiffHunks -> marker-strip -> normalize -> hash end-to-end; the resulting hunk_hash MUST equal the BACK-half canonical_body vector (becae935df3b19d6), proving the FRONT half feeds the BACK half byte-identically.",
+      "line": 2,
+      "diff": "diff --git a/math.go b/math.go\nindex 1111111..2222222 100644\n--- a/math.go\n+++ b/math.go\n@@ -1,0 +2,3 @@ package mathx\n+func Add(a, b int) int {\n+\treturn a + b\n+}\n",
+      "expected_hunk_hash": "becae935df3b19d6",
+      "expected_dirty_diff_hash": "becae935df3b19d6"
+    },
+    {
+      "name": "whitespace_reflow_raw_diff_shifted_positions",
+      "note": "Same Add() content but whitespace-reflowed AND at a shifted @@ position (new-side line 41). MUST hash identically to canonical_raw_diff: positions are read only to locate the hunk, never hashed; whitespace runs collapse.",
+      "line": 41,
+      "diff": "diff --git a/math.go b/math.go\nindex 3333333..4444444 100644\n--- a/math.go\n+++ b/math.go\n@@ -40,0 +41,3 @@ func unrelated() {\n+func   Add(a,  b int) int {\n+    return a +  b\n+}\n",
+      "expected_hunk_hash": "becae935df3b19d6",
+      "expected_dirty_diff_hash": "becae935df3b19d6"
+    },
+    {
+      "name": "one_char_content_edit_raw_diff",
+      "note": "canonical_raw_diff with '+' changed to '-' in the body line; MUST differ from canonical (matches BACK-half one_char_content_edit, 3945ebb26cf1c908).",
+      "line": 2,
+      "diff": "diff --git a/math.go b/math.go\nindex 5555555..6666666 100644\n--- a/math.go\n+++ b/math.go\n@@ -1,0 +2,3 @@ package mathx\n+func Add(a, b int) int {\n+\treturn a - b\n+}\n",
+      "expected_hunk_hash": "3945ebb26cf1c908",
+      "expected_dirty_diff_hash": "3945ebb26cf1c908"
+    },
+    {
+      "name": "replace_line_raw_diff_drops_removed",
+      "note": "A `-U0` replace hunk (one removed line, one added line). The removed line is dropped; only the added line contributes. Locks marker-strip + removed-line drop on real -U0 text.",
+      "line": 10,
+      "diff": "@@ -10,1 +10,1 @@\n-oldName := compute()\n+newName := compute()\n",
+      "expected_hunk_hash": "8497a88bd5d3d3c3",
+      "expected_dirty_diff_hash": "8497a88bd5d3d3c3"
+    },
+    {
+      "name": "two_hunk_raw_diff",
+      "note": "A two-hunk `-U0` diff in one file. hunk_hash at line 21 selects ONLY the second (replace) hunk; dirty_diff_hash hashes the concatenation of BOTH hunk bodies. Locks multi-hunk parsing, per-hunk location, and the whole-file coarse anchor on real -U0 text.",
+      "line": 21,
+      "diff": "diff --git a/svc.go b/svc.go\nindex 7777777..8888888 100644\n--- a/svc.go\n+++ b/svc.go\n@@ -5,0 +6,1 @@ func top() {\n+\tlog(\"top\")\n@@ -20,1 +21,1 @@ func bottom() {\n-\told()\n+\tnew()\n",
+      "expected_hunk_hash": "b2bdb619fb0673c5",
+      "expected_dirty_diff_hash": "ef39ced473115940"
+    }
+  ]
+}
