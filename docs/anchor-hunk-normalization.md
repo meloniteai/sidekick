@@ -83,13 +83,22 @@ independent of `line`. For a single-hunk file it equals that hunk's `hunk_hash`.
 It is the anchor for tree-global / no-line findings (which carry only
 `dirty_diff_hash`).
 
+### `hunk_hashes` — the per-file hunk-hash SET
+`FileHunkHashes(worktree, baseRef, file)` returns the `hunk_hash` of **every**
+changed hunk of `file` (steps 3–7 per hunk), in diff order, de-duplicated. A
+line-unset / file-level finding (`line == 0`) carries no `hunk_hash`, so it
+anchors via this set instead — any of the hashes binds it at hunk granularity
+later. `dirty_diff_hash` remains the last-resort coarse anchor. The set is empty
+for tree-global findings (no file) and unchanged by whitespace-only or
+position-shift edits (each hash is computed exactly as the single `hunk_hash`).
+
 ### Grains summary
-| Finding shape                         | `hunk_hash` | `dirty_diff_hash` |
-| ------------------------------------- | ----------- | ----------------- |
-| file + line inside a hunk             | set         | set               |
-| file present, line `0` / no hunk      | `""`        | set               |
-| no file (tree-global)                 | `""`        | `""`              |
-| file present but no diff vs base      | `""`        | `""`              |
+| Finding shape                         | `hunk_hash` | `hunk_hashes` | `dirty_diff_hash` |
+| ------------------------------------- | ----------- | ------------- | ----------------- |
+| file + line inside a hunk             | set         | all hunks     | set               |
+| file present, line `0` / no hunk      | `""`        | all hunks     | set               |
+| no file (tree-global)                 | `""`        | empty         | `""`              |
+| file present but no diff vs base      | `""`        | empty         | `""`              |
 
 ### Stability guarantees (what the contract buys)
 - **Whitespace-only edit** ⇒ identical `hunk_hash` (step 5).

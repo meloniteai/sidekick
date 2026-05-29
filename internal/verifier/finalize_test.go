@@ -116,6 +116,9 @@ func TestFinalizeStampsAnchorAndVersion(t *testing.T) {
 	if cap.findings[0].DirtyDiffHash == "" {
 		t.Fatalf("DirtyDiffHash should be set for a line finding")
 	}
+	if len(cap.findings[0].HunkHashes) == 0 {
+		t.Fatalf("line finding should also carry the file's HunkHashes set")
+	}
 }
 
 // tree-global finding (no path) -> both hashes empty;
@@ -142,12 +145,54 @@ func TestTreeGlobalFindingHashes(t *testing.T) {
 	if global.HunkHash != "" || global.DirtyDiffHash != "" {
 		t.Fatalf("tree-global finding must have empty hashes: %+v", global)
 	}
+	if len(global.HunkHashes) != 0 {
+		t.Fatalf("tree-global finding must have empty HunkHashes, got %v", global.HunkHashes)
+	}
 	fileNoLine := cap.findings[1]
 	if fileNoLine.HunkHash != "" {
 		t.Fatalf("file/no-line finding must have empty HunkHash, got %q", fileNoLine.HunkHash)
 	}
 	if fileNoLine.DirtyDiffHash == "" {
 		t.Fatalf("file/no-line finding must carry a DirtyDiffHash")
+	}
+	// A line-unset finding on a changed file is still hunk-anchorable via the set.
+	if len(fileNoLine.HunkHashes) == 0 {
+		t.Fatalf("file/no-line finding must carry HunkHashes")
+	}
+	for _, h := range fileNoLine.HunkHashes {
+		if !anchorHexRe.MatchString(h) {
+			t.Fatalf("HunkHashes entry %q is not 16-hex", h)
+		}
+	}
+}
+
+// A line-unset finding on a multi-hunk file gets the full hunk-hash set even
+// though its HunkHash is empty.
+func TestFileLevelFindingMultiHunkSet(t *testing.T) {
+	var base strings.Builder
+	for i := 1; i <= 50; i++ {
+		base.WriteString("line\n")
+	}
+	lines := strings.Split(strings.TrimRight(base.String(), "\n"), "\n")
+	lines[9] = "EDITED_TEN"
+	lines[39] = "EDITED_FORTY"
+	dirty := strings.Join(lines, "\n") + "\n"
+	wt, ref := dirtyGitRepo(t, "f.txt", base.String(), dirty)
+
+	r, cap, _ := setupRunner(t, wt, ref)
+	v := agentVerifier(writeSkill(t, "", "rubric\n"))
+	cur := ipc.VerifierStatus{Distance: 0.5, Status: ipc.StatusOK}
+	r.recordVerifierRun("b1", v, cur, 1, nil, []Finding{{Path: "f.txt", Line: 0, Distance: 0.5}})
+
+	if len(cap.findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(cap.findings))
+	}
+	f := cap.findings[0]
+	if f.HunkHash != "" {
+		t.Fatalf("line-unset finding must have empty HunkHash, got %q", f.HunkHash)
+	}
+	if len(f.HunkHashes) != 2 {
+		t.Fatalf("multi-hunk file should yield 2 HunkHashes, got %d: %v", len(f.HunkHashes), f.HunkHashes)
 	}
 }
 

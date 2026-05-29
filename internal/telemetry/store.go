@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS finding (
 	reason          TEXT,
 	hunk_hash       TEXT,
 	dirty_diff_hash TEXT,
+	hunk_hashes     TEXT,
 	ts              TIMESTAMP NOT NULL
 );
 
@@ -207,8 +208,8 @@ func (s *Store) RecordFindings(runID int64, findings []FindingRecord) error {
 	}
 	stmt, err := tx.Prepare(
 		`INSERT INTO finding
-		 (verifier_run_id, session_id, batch_id, verifier_name, file_path, symbol, line, distance, reason, hunk_hash, dirty_diff_hash, ts)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (verifier_run_id, session_id, batch_id, verifier_name, file_path, symbol, line, distance, reason, hunk_hash, dirty_diff_hash, hunk_hashes, ts)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		_ = tx.Rollback()
@@ -219,7 +220,8 @@ func (s *Store) RecordFindings(runID int64, findings []FindingRecord) error {
 		if _, err := stmt.Exec(
 			runID, f.SessionID, nullStr(f.BatchID), f.VerifierName,
 			nullStr(f.FilePath), nullStr(f.Symbol), nullInt(f.Line),
-			f.Distance, nullStr(f.Reason), nullStr(f.HunkHash), nullStr(f.DirtyDiffHash), f.TS.UTC(),
+			f.Distance, nullStr(f.Reason), nullStr(f.HunkHash), nullStr(f.DirtyDiffHash),
+			nullJSON(f.HunkHashes), f.TS.UTC(),
 		); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -253,4 +255,17 @@ func nullInt(n int) any {
 		return nil
 	}
 	return n
+}
+
+// nullJSON encodes a string list as JSON for a nullable TEXT column, mapping an
+// empty list (or a marshal failure) to SQL NULL.
+func nullJSON(v []string) any {
+	if len(v) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return string(b)
 }

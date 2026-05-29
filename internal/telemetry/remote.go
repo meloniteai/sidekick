@@ -254,6 +254,7 @@ func (e *RemoteEmitter) RecordFindings(runID int64, findings []FindingRecord) er
 			Reason:        f.Reason,
 			HunkHash:      f.HunkHash,
 			DirtyDiffHash: f.DirtyDiffHash,
+			HunkHashes:    f.HunkHashes,
 			TS:            f.TS.UTC(),
 		})
 	}
@@ -470,6 +471,7 @@ type findingBody struct {
 	Reason        string    `json:"reason,omitempty"`
 	HunkHash      string    `json:"hunk_hash,omitempty"`
 	DirtyDiffHash string    `json:"dirty_diff_hash,omitempty"`
+	HunkHashes    []string  `json:"hunk_hashes,omitempty"`
 	TS            time.Time `json:"ts"`
 }
 
