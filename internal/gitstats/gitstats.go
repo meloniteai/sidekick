@@ -98,6 +98,14 @@ func Fetch(ctx context.Context, worktree, baseRef string, extraFiles []string) W
 	return ws
 }
 
+// RunGit runs `git args...` in worktree with the same 1.5s cap and
+// empty-string-on-error contract as the internal header queries. It is exported
+// so the anchor helper in internal/telemetry can reuse one git exec wrapper
+// instead of duplicating the LookPath/timeout/Dir handling.
+func RunGit(ctx context.Context, worktree string, args ...string) string {
+	return gitRun(ctx, worktree, args...)
+}
+
 // withTimeout runs `git args...` with a 1.5s cap so the TUI never blocks on
 // a slow git invocation. Empty output is returned on any error.
 func gitRun(ctx context.Context, worktree string, args ...string) string {

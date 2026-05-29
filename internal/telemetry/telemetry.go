@@ -100,7 +100,14 @@ type FindingRecord struct {
 	Line         int
 	Distance     float64
 	Reason       string
-	TS           time.Time
+	// HunkHash and DirtyDiffHash are the stable content-addressed anchors that
+	// join this judgment to a later committed PR hunk (see anchor.go). HunkHash
+	// is the per-hunk anchor for a line-bearing finding; DirtyDiffHash is the
+	// coarse whole-file anchor that also covers tree-global / no-line findings.
+	// Both are "" when no anchor could be computed (stored as NULL).
+	HunkHash      string
+	DirtyDiffHash string
+	TS            time.Time
 }
 
 // HeartbeatRecord is a periodic liveness sample per live session. The end of a

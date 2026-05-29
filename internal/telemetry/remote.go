@@ -244,15 +244,17 @@ func (e *RemoteEmitter) RecordFindings(runID int64, findings []FindingRecord) er
 	body := make([]findingBody, 0, len(findings))
 	for _, f := range findings {
 		body = append(body, findingBody{
-			SessionID:    f.SessionID,
-			BatchID:      f.BatchID,
-			VerifierName: f.VerifierName,
-			FilePath:     f.FilePath,
-			Symbol:       f.Symbol,
-			Line:         f.Line,
-			Distance:     f.Distance,
-			Reason:       f.Reason,
-			TS:           f.TS.UTC(),
+			SessionID:     f.SessionID,
+			BatchID:       f.BatchID,
+			VerifierName:  f.VerifierName,
+			FilePath:      f.FilePath,
+			Symbol:        f.Symbol,
+			Line:          f.Line,
+			Distance:      f.Distance,
+			Reason:        f.Reason,
+			HunkHash:      f.HunkHash,
+			DirtyDiffHash: f.DirtyDiffHash,
+			TS:            f.TS.UTC(),
 		})
 	}
 	return e.post(fmt.Sprintf("/verifier-runs/%d/findings", runID), body, nil)
@@ -458,15 +460,17 @@ type verifierRunBody struct {
 }
 
 type findingBody struct {
-	SessionID    string    `json:"session_id"`
-	BatchID      string    `json:"batch_id,omitempty"`
-	VerifierName string    `json:"verifier_name"`
-	FilePath     string    `json:"file_path,omitempty"`
-	Symbol       string    `json:"symbol,omitempty"`
-	Line         int       `json:"line,omitempty"`
-	Distance     float64   `json:"distance"`
-	Reason       string    `json:"reason,omitempty"`
-	TS           time.Time `json:"ts"`
+	SessionID     string    `json:"session_id"`
+	BatchID       string    `json:"batch_id,omitempty"`
+	VerifierName  string    `json:"verifier_name"`
+	FilePath      string    `json:"file_path,omitempty"`
+	Symbol        string    `json:"symbol,omitempty"`
+	Line          int       `json:"line,omitempty"`
+	Distance      float64   `json:"distance"`
+	Reason        string    `json:"reason,omitempty"`
+	HunkHash      string    `json:"hunk_hash,omitempty"`
+	DirtyDiffHash string    `json:"dirty_diff_hash,omitempty"`
+	TS            time.Time `json:"ts"`
 }
 
 type heartbeatBody struct {

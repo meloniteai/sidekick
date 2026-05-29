@@ -2,7 +2,9 @@
 /sidekick.yaml
 assets/*.mov
 
-docs
+docs/*
+# Track the shared anchor-normalization contract (docs/ is otherwise ignored).
+!docs/anchor-hunk-normalization.md
 .env
 .env.local
 

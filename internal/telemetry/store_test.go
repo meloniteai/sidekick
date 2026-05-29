@@ -137,6 +137,51 @@ func TestBatchlessVerifierRun(t *testing.T) {
 	}
 }
 
+// The finding table + insert carry the two anchor columns; empty
+// hashes (tree-global / no-hunk findings) persist as SQL NULL.
+func TestRecordFindingsHashes(t *testing.T) {
+	s := newTestStore(t)
+	sid := NewID()
+	runID, err := s.RecordVerifierRun(VerifierRunRecord{
+		SessionID: sid, VerifierName: "A", Distance: 0.5, Status: "ok", TS: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("RecordVerifierRun: %v", err)
+	}
+	now := time.Now()
+	if err := s.RecordFindings(runID, []FindingRecord{
+		{SessionID: sid, VerifierName: "A", FilePath: "f.go", Line: 3, Distance: 0.5,
+			HunkHash: "becae935df3b19d6", DirtyDiffHash: "becae935df3b19d6", TS: now},
+		// tree-global finding: empty hashes -> NULL.
+		{SessionID: sid, VerifierName: "A", Distance: 0.5, TS: now},
+	}); err != nil {
+		t.Fatalf("RecordFindings: %v", err)
+	}
+
+	var hunk, dirty *string
+	if err := s.DB().QueryRow(
+		`SELECT hunk_hash, dirty_diff_hash FROM finding WHERE file_path = 'f.go'`,
+	).Scan(&hunk, &dirty); err != nil {
+		t.Fatalf("scan line finding: %v", err)
+	}
+	if hunk == nil || *hunk != "becae935df3b19d6" {
+		t.Fatalf("hunk_hash = %v, want becae935df3b19d6", hunk)
+	}
+	if dirty == nil || *dirty != "becae935df3b19d6" {
+		t.Fatalf("dirty_diff_hash = %v", dirty)
+	}
+
+	var ghunk, gdirty *string
+	if err := s.DB().QueryRow(
+		`SELECT hunk_hash, dirty_diff_hash FROM finding WHERE file_path IS NULL`,
+	).Scan(&ghunk, &gdirty); err != nil {
+		t.Fatalf("scan tree-global finding: %v", err)
+	}
+	if ghunk != nil || gdirty != nil {
+		t.Fatalf("tree-global finding should store NULL hashes: hunk=%v dirty=%v", ghunk, gdirty)
+	}
+}
+
 func TestDumpCSV(t *testing.T) {
 	s := newTestStore(t)
 	sid := NewID()
