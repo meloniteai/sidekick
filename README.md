@@ -126,14 +126,18 @@ local SQLite store. Pair the CLI once per org:
 ```bash
 sidekick login --org acme
 sidekick auth status
+sidekick auth list
+sidekick auth use acme@https://sidekick.melonite.ai/api
 ```
 
 Pass `--api-base` only when pairing with a non-default backend.
 
 The login command opens a browser approval page, polls until the signed-in
 Sidekick user approves the device, and stores an opaque CLI token in
-`~/.sidekick/auth.json` with `0600` permissions. `sidekick logout` revokes and
-removes the active token.
+`~/.sidekick/auth.json` with `0600` permissions. Multiple profiles can coexist
+for the same org across different API bases; `sidekick auth use <profile>`
+switches the default profile. `sidekick logout` revokes and removes the active
+token.
 
 When an auth profile exists, `sidekick start` in auto/backend telemetry mode
 uses the stored org and token, resolves the repo through

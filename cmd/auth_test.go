@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	skauth "github.com/meloniteai/sidekick/internal/auth"
@@ -152,6 +153,48 @@ func TestLogoutRevokesAndRemovesCurrentToken(t *testing.T) {
 	}
 	if _, err := os.Stat(authFile); err != nil {
 		t.Fatalf("auth file should remain readable: %v", err)
+	}
+}
+
+func TestAuthListAndUseProfiles(t *testing.T) {
+	authFile := filepath.Join(t.TempDir(), "auth.json")
+	t.Setenv("SIDEKICK_AUTH_FILE", authFile)
+	if err := skauth.PutProfile(authFile, skauth.Profile{OrgSlug: "acme", APIBase: "https://prod.example/api", Token: "sk_live_prod"}); err != nil {
+		t.Fatalf("PutProfile prod: %v", err)
+	}
+	if err := skauth.PutProfile(authFile, skauth.Profile{OrgSlug: "acme", APIBase: "http://localhost:3000/api", Token: "sk_live_dev"}); err != nil {
+		t.Fatalf("PutProfile dev: %v", err)
+	}
+
+	var out bytes.Buffer
+	root := New("test", nil)
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"auth", "list"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute auth list: %v", err)
+	}
+	if !strings.Contains(out.String(), "* acme@http://localhost:3000/api acme") {
+		t.Fatalf("auth list output = %s", out.String())
+	}
+	if !strings.Contains(out.String(), "  acme@https://prod.example/api acme") {
+		t.Fatalf("auth list output = %s", out.String())
+	}
+
+	out.Reset()
+	root = New("test", nil)
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"auth", "use", "acme@https://prod.example/api"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute auth use: %v", err)
+	}
+	profile, ok, err := skauth.CurrentProfile(authFile)
+	if err != nil {
+		t.Fatalf("CurrentProfile: %v", err)
+	}
+	if !ok || profile.Token != "sk_live_prod" {
+		t.Fatalf("profile = %+v ok=%v", profile, ok)
 	}
 }
 

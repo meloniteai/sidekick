@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -48,8 +49,24 @@ func Load(path string) (Store, error) {
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return st, err
 	}
+	if st.Current == "" && len(st.Profiles) == 0 {
+		var legacy Profile
+		if err := json.Unmarshal(raw, &legacy); err == nil && legacy.OrgSlug != "" && legacy.APIBase != "" && legacy.Token != "" {
+			legacy = normalizeProfile(legacy)
+			st = Store{
+				Current:  ProfileID(legacy),
+				Profiles: map[string]Profile{ProfileID(legacy): legacy},
+			}
+			return st, Save(path, st)
+		}
+	}
 	if st.Profiles == nil {
 		st.Profiles = map[string]Profile{}
+	}
+	if normalizeStore(&st) {
+		if err := Save(path, st); err != nil {
+			return Store{}, err
+		}
 	}
 	return st, nil
 }
@@ -99,9 +116,7 @@ func Save(path string, st Store) error {
 }
 
 func PutProfile(path string, profile Profile) error {
-	profile.OrgSlug = strings.TrimSpace(profile.OrgSlug)
-	profile.APIBase = RootAPIBase(profile.APIBase)
-	profile.Token = strings.TrimSpace(profile.Token)
+	profile = normalizeProfile(profile)
 	if profile.OrgSlug == "" {
 		return fmt.Errorf("auth: org slug is required")
 	}
@@ -118,8 +133,9 @@ func PutProfile(path string, profile Profile) error {
 	if err != nil {
 		return err
 	}
-	st.Profiles[profile.OrgSlug] = profile
-	st.Current = profile.OrgSlug
+	id := ProfileID(profile)
+	st.Profiles[id] = profile
+	st.Current = id
 	return Save(path, st)
 }
 
@@ -138,6 +154,31 @@ func CurrentProfile(path string) (Profile, bool, error) {
 	return profile, true, nil
 }
 
+func ListProfiles(path string) (Store, error) {
+	st, err := Load(path)
+	if err != nil {
+		return Store{}, err
+	}
+	return st, nil
+}
+
+func UseProfile(path, id string) (Profile, bool, error) {
+	st, err := Load(path)
+	if err != nil {
+		return Profile{}, false, err
+	}
+	id = strings.TrimSpace(id)
+	profile, ok := st.Profiles[id]
+	if !ok {
+		return Profile{}, false, nil
+	}
+	st.Current = id
+	if err := Save(path, st); err != nil {
+		return Profile{}, false, err
+	}
+	return profile, true, nil
+}
+
 func RemoveCurrentProfile(path string) (Profile, bool, error) {
 	st, err := Load(path)
 	if err != nil {
@@ -149,9 +190,9 @@ func RemoveCurrentProfile(path string) (Profile, bool, error) {
 	profile, ok := st.Profiles[st.Current]
 	delete(st.Profiles, st.Current)
 	st.Current = ""
-	for slug := range st.Profiles {
-		st.Current = slug
-		break
+	ids := sortedProfileIDs(st.Profiles)
+	if len(ids) > 0 {
+		st.Current = ids[0]
 	}
 	if err := Save(path, st); err != nil {
 		return Profile{}, false, err
@@ -166,11 +207,15 @@ type BackendTarget struct {
 }
 
 func ResolveBackendTarget(path, configuredAPIBase string) (BackendTarget, bool, error) {
-	profile, ok, err := CurrentProfile(path)
-	if err != nil || !ok {
+	st, err := Load(path)
+	if err != nil {
 		return BackendTarget{}, false, err
 	}
-	apiBase := strings.TrimSpace(configuredAPIBase)
+	profile, ok := selectProfile(st, configuredAPIBase)
+	if !ok {
+		return BackendTarget{}, false, nil
+	}
+	apiBase := RootAPIBase(configuredAPIBase)
 	if apiBase == "" {
 		apiBase = profile.APIBase
 	}
@@ -179,4 +224,90 @@ func ResolveBackendTarget(path, configuredAPIBase string) (BackendTarget, bool, 
 		Token:   profile.Token,
 		OrgSlug: profile.OrgSlug,
 	}, true, nil
+}
+
+func ProfileID(profile Profile) string {
+	profile = normalizeProfile(profile)
+	if profile.OrgSlug == "" || profile.APIBase == "" {
+		return strings.TrimSpace(profile.OrgSlug)
+	}
+	return profile.OrgSlug + "@" + profile.APIBase
+}
+
+func normalizeProfile(profile Profile) Profile {
+	profile.OrgSlug = strings.TrimSpace(profile.OrgSlug)
+	profile.APIBase = RootAPIBase(profile.APIBase)
+	profile.Token = strings.TrimSpace(profile.Token)
+	profile.AccountEmail = strings.TrimSpace(profile.AccountEmail)
+	return profile
+}
+
+func normalizeStore(st *Store) bool {
+	changed := false
+	if st.Profiles == nil {
+		st.Profiles = map[string]Profile{}
+		changed = true
+	}
+	profiles := make(map[string]Profile, len(st.Profiles))
+	current := st.Current
+	for id, profile := range st.Profiles {
+		profile = normalizeProfile(profile)
+		newID := ProfileID(profile)
+		if newID == "" {
+			newID = strings.TrimSpace(id)
+		}
+		if id != newID {
+			changed = true
+			if current == id {
+				current = newID
+			}
+		}
+		if profile != st.Profiles[id] {
+			changed = true
+		}
+		profiles[newID] = profile
+	}
+	st.Profiles = profiles
+	if current != "" {
+		if _, ok := st.Profiles[current]; !ok {
+			current = ""
+			changed = true
+		}
+	}
+	if current == "" && len(st.Profiles) > 0 {
+		ids := sortedProfileIDs(st.Profiles)
+		current = ids[0]
+		changed = true
+	}
+	if st.Current != current {
+		st.Current = current
+		changed = true
+	}
+	return changed
+}
+
+func selectProfile(st Store, configuredAPIBase string) (Profile, bool) {
+	configuredRoot := RootAPIBase(configuredAPIBase)
+	if configuredRoot != "" {
+		for _, id := range sortedProfileIDs(st.Profiles) {
+			profile := st.Profiles[id]
+			if RootAPIBase(profile.APIBase) == configuredRoot {
+				return profile, true
+			}
+		}
+	}
+	if st.Current == "" {
+		return Profile{}, false
+	}
+	profile, ok := st.Profiles[st.Current]
+	return profile, ok
+}
+
+func sortedProfileIDs(profiles map[string]Profile) []string {
+	ids := make([]string, 0, len(profiles))
+	for id := range profiles {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
