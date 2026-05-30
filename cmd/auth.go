@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -97,6 +98,8 @@ func newAuthCmd() *cobra.Command {
 		Short: "Manage Sidekick CLI authentication",
 	}
 	c.AddCommand(newAuthStatusCmd())
+	c.AddCommand(newAuthListCmd())
+	c.AddCommand(newAuthUseCmd())
 	return c
 }
 
@@ -118,9 +121,72 @@ func newAuthStatusCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "logged in to %s at %s\n", profile.OrgSlug, profile.APIBase)
+			fmt.Fprintf(cmd.OutOrStdout(), "profile: %s\n", skauth.ProfileID(profile))
 			if profile.AccountEmail != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "account: %s\n", profile.AccountEmail)
 			}
+			return nil
+		},
+	}
+}
+
+func newAuthListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List Sidekick CLI auth profiles",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			authPath, err := skauth.AuthFilePath()
+			if err != nil {
+				return err
+			}
+			st, err := skauth.ListProfiles(authPath)
+			if err != nil {
+				return err
+			}
+			if len(st.Profiles) == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "not logged in\n")
+				return nil
+			}
+			ids := make([]string, 0, len(st.Profiles))
+			for id := range st.Profiles {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			for _, id := range ids {
+				prefix := " "
+				if id == st.Current {
+					prefix = "*"
+				}
+				profile := st.Profiles[id]
+				if profile.AccountEmail != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s %s\n", prefix, id, profile.OrgSlug, profile.AccountEmail)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", prefix, id, profile.OrgSlug)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+func newAuthUseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "use <profile>",
+		Short: "Select the active Sidekick CLI auth profile",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			authPath, err := skauth.AuthFilePath()
+			if err != nil {
+				return err
+			}
+			profile, ok, err := skauth.UseProfile(authPath, args[0])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("auth profile %q not found", args[0])
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "using %s at %s\n", profile.OrgSlug, profile.APIBase)
 			return nil
 		},
 	}
