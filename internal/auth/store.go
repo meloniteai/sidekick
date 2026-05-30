@@ -45,11 +45,26 @@ func Load(path string) (Store, error) {
 	if err != nil {
 		return st, err
 	}
-	if err := json.Unmarshal(raw, &st); err != nil {
+	migrated := false
+	if legacy, ok := legacyProfile(raw); ok {
+		st = Store{
+			Current:  profileKey(legacy),
+			Profiles: map[string]Profile{profileKey(legacy): legacy},
+		}
+		migrated = true
+	} else if err := json.Unmarshal(raw, &st); err != nil {
 		return st, err
 	}
 	if st.Profiles == nil {
 		st.Profiles = map[string]Profile{}
+	}
+	if canonicalizeStore(&st) {
+		migrated = true
+	}
+	if migrated {
+		if err := Save(path, st); err != nil {
+			return Store{}, err
+		}
 	}
 	return st, nil
 }
@@ -118,8 +133,9 @@ func PutProfile(path string, profile Profile) error {
 	if err != nil {
 		return err
 	}
-	st.Profiles[profile.OrgSlug] = profile
-	st.Current = profile.OrgSlug
+	key := profileKey(profile)
+	st.Profiles[key] = profile
+	st.Current = key
 	return Save(path, st)
 }
 
@@ -166,11 +182,15 @@ type BackendTarget struct {
 }
 
 func ResolveBackendTarget(path, configuredAPIBase string) (BackendTarget, bool, error) {
-	profile, ok, err := CurrentProfile(path)
-	if err != nil || !ok {
+	st, err := Load(path)
+	if err != nil {
 		return BackendTarget{}, false, err
 	}
 	apiBase := strings.TrimSpace(configuredAPIBase)
+	profile, ok := st.profileForAPIBase(apiBase)
+	if !ok {
+		return BackendTarget{}, false, nil
+	}
 	if apiBase == "" {
 		apiBase = profile.APIBase
 	}
@@ -179,4 +199,81 @@ func ResolveBackendTarget(path, configuredAPIBase string) (BackendTarget, bool, 
 		Token:   profile.Token,
 		OrgSlug: profile.OrgSlug,
 	}, true, nil
+}
+
+func legacyProfile(raw []byte) (Profile, bool) {
+	var profile Profile
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return Profile{}, false
+	}
+	profile.OrgSlug = strings.TrimSpace(profile.OrgSlug)
+	profile.APIBase = RootAPIBase(profile.APIBase)
+	profile.Token = strings.TrimSpace(profile.Token)
+	return profile, profile.OrgSlug != "" && profile.APIBase != "" && profile.Token != ""
+}
+
+func canonicalizeStore(st *Store) bool {
+	migrated := false
+	next := make(map[string]Profile, len(st.Profiles))
+	currentKey := ""
+	for oldKey, profile := range st.Profiles {
+		profile.OrgSlug = strings.TrimSpace(profile.OrgSlug)
+		profile.APIBase = RootAPIBase(profile.APIBase)
+		profile.Token = strings.TrimSpace(profile.Token)
+		if profile.OrgSlug == "" || profile.APIBase == "" {
+			continue
+		}
+		key := profileKey(profile)
+		next[key] = profile
+		if oldKey != key {
+			migrated = true
+		}
+		if oldKey == st.Current || key == st.Current {
+			currentKey = key
+		}
+	}
+	if len(next) != len(st.Profiles) {
+		migrated = true
+	}
+	if st.Current != "" && currentKey == "" {
+		migrated = true
+	}
+	if currentKey == "" && len(next) == 1 {
+		for key := range next {
+			currentKey = key
+		}
+		migrated = true
+	}
+	if st.Current != currentKey {
+		migrated = true
+	}
+	st.Profiles = next
+	st.Current = currentKey
+	return migrated
+}
+
+func profileKey(profile Profile) string {
+	return RootAPIBase(profile.APIBase) + "|" + strings.TrimSpace(profile.OrgSlug)
+}
+
+func (st Store) profileForAPIBase(apiBase string) (Profile, bool) {
+	if st.Current != "" {
+		profile, ok := st.Profiles[st.Current]
+		if ok && (apiBase == "" || RootAPIBase(profile.APIBase) == RootAPIBase(apiBase)) {
+			return profile, true
+		}
+	}
+	if apiBase != "" {
+		keyBase := RootAPIBase(apiBase)
+		for _, profile := range st.Profiles {
+			if RootAPIBase(profile.APIBase) == keyBase {
+				return profile, true
+			}
+		}
+	}
+	if st.Current != "" {
+		profile, ok := st.Profiles[st.Current]
+		return profile, ok
+	}
+	return Profile{}, false
 }
